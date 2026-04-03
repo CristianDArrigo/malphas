@@ -8,7 +8,7 @@ Padding: plaintext is padded to the nearest multiple of BLOCK_SIZE
 before encryption to obscure the number of contacts.
 
 book_key is derived from the same passphrase seed as the identity,
-but with a different HKDF info string — crytographically independent.
+but with a different HKDF info string — cryptographically independent.
 
 Never stores the passphrase or the book_key. Both exist only in RAM
 for the duration of the process.

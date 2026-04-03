@@ -43,7 +43,7 @@ def create_app(node: MalphasNode, static_dir: str) -> FastAPI:
                 await ws.send_json({"type": "message", "from": from_id, "content": content})
             except Exception:
                 dead.add(ws)
-        ws_clients -= dead
+        ws_clients.difference_update(dead)
 
     node.on_message(_push_message)
 

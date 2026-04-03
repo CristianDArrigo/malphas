@@ -111,7 +111,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
                              │
 ┌────────────────────────────▼────────────────────────────────────┐
 │                           NODE                                  │
-│  malphasNode (node.py)                                          │
+│  MalphasNode (node.py)                                          │
 │  ├── MessageStore     in-memory, TTL-based, zero disk           │
 │  ├── ReceiptTracker   Ed25519 challenge-response                │
 │  ├── PeerDiscovery    Kademlia-inspired routing table           │
@@ -134,7 +134,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 ┌────────────────────────────▼────────────────────────────────────┐
 │                       IDENTITY                                  │
 │  Argon2id(passphrase) → 64-byte seed                           │
-│  HKDF(seed, "keypair-seed") → Ed25519 + X25519 keypairs        │
+│  seed[:32] → Ed25519 private key    seed[32:] → X25519 key     │
 │  HKDF(seed, "addressbook-encryption-key") → ChaCha20 key       │
 │  SHA1(ed25519_pub) → peer_id (40-char hex)                     │
 │  ed25519_pub → .onion address (Tor v3 algorithm)               │
@@ -262,7 +262,7 @@ malphas is a fully peer-to-peer network. There are no servers, no directory node
 
 **Routing table:** Each node maintains a Kademlia-inspired in-memory routing table of known peers, indexed by XOR distance from the node's own peer_id. The table is empty at startup and populated only through manual peer addition or peer exchange during handshakes.
 
-**Handshake:** When two nodes connect, they perform a mutual X25519 ECDH key exchange using ephemeral keypairs. The resulting shared secret is used to derive a symmetric session key (ChaCha20-Poly1305) for the connection. Neither node's long-term identity key is used for the session key — the session key is forward-secret.
+**Handshake:** When two nodes connect, they perform a mutual authenticated X25519 ECDH key exchange. Each peer generates an ephemeral X25519 keypair and signs the ephemeral public key with its Ed25519 identity key. The other peer verifies the signature before proceeding — this prevents man-in-the-middle attacks. The shared secret from ECDH is used to derive a symmetric session key (ChaCha20-Poly1305) via HKDF. Neither node's long-term identity key is used for the session key — the session key is forward-secret.
 
 **Circuit:** A circuit is the ordered list of peers a message traverses to reach its destination. Circuits are selected randomly from known peers at send time. With three or more peers available, a typical circuit is: `sender → relay → destination`. Each peer in the circuit sees only its adjacent hops.
 
@@ -323,8 +323,8 @@ Argon2id(time=3, memory=64MB, parallelism=4)
     │
     ▼
 64-byte seed
-    ├─── HKDF(info="keypair-seed") ──────────► Ed25519 private key → peer_id = SHA1(ed25519_pub)
-    │                                           X25519 private key
+    ├─── seed[:32] ───────────────────────────► Ed25519 private key → peer_id = SHA1(ed25519_pub)
+    ├─── seed[32:] ───────────────────────────► X25519 private key
     │
     └─── HKDF(info="addressbook-encryption-key") ──► 32-byte ChaCha20 key (address book)
 ```
@@ -387,6 +387,21 @@ The passphrase is never used directly as a key. It is processed through Argon2id
 - `parallelism = 4` — four parallel threads
 
 An attacker with a dedicated GPU farm attempting to brute force a four-word passphrase would require years of computation at these parameters. For common passwords (dictionary words, names, dates) the cost remains high but not prohibitive — this is why passphrase choice matters.
+
+### Authenticated Handshake
+
+Every connection begins with a mutually authenticated handshake:
+
+1. Each peer generates an ephemeral X25519 keypair
+2. Each peer signs its ephemeral public key with its Ed25519 identity key
+3. The other peer verifies the signature against the expected Ed25519 public key
+4. ECDH is performed only after authentication succeeds
+
+This prevents man-in-the-middle attacks: an attacker cannot substitute their own ephemeral key without also forging the Ed25519 signature, which requires the victim's private key.
+
+### Message Sender Verification
+
+All incoming messages must be signed by a peer known to the recipient's routing table. Messages claiming to be from an unknown `peer_id` are silently dropped. This prevents message injection attacks where an adversary attempts to deliver forged messages.
 
 ### No-Log Policy
 
@@ -469,7 +484,7 @@ If timeout (30s): circuit issue or peer offline
 ## Testing
 
 ```bash
-# All tests (excludes slow Tor tests requiring real Tor)
+# All tests (excludes Tor and slow tests)
 pytest tests/ -m "not tor and not slow"
 
 # Security tests only
@@ -478,12 +493,21 @@ pytest tests/test_security_*.py -v
 # End-to-end integration tests (real TCP, real nodes)
 pytest tests/test_integration_e2e.py -v
 
+# API and WebSocket tests
+pytest tests/test_api.py -v
+
+# CLI command tests
+pytest tests/test_cli.py -v
+
 # Transport tests (includes mocked Tor)
 pytest tests/test_transport.py -m "not tor" -v
 
-# Tor tests (requires Tor running on localhost)
+# Tor tests (requires Tor running on localhost with ControlPort 9051)
 sudo systemctl start tor
-pytest tests/test_transport.py -m tor -v
+pytest tests/test_transport.py::TestTorIntegration -v
+
+# Tor hidden service E2E (requires Tor, slow — real .onion delivery)
+pytest tests/test_tor_e2e.py -v
 ```
 
 **Test suite summary:**
@@ -497,11 +521,12 @@ pytest tests/test_transport.py -m tor -v
 | `test_security_obfuscation.py` | Padding, cover traffic, read receipts | 22 |
 | `test_security_argon2_panic.py` | Argon2 properties, /panic behavior | 18 |
 | `test_functional_components.py` | Routing table, discovery, message store | 27 |
-| `test_functional_node.py` | Node lifecycle, handshake, connections | 16 |
-| `test_integration_e2e.py` | End-to-end delivery, receipts, relay | 18 |
-| `test_transport.py` | SOCKS5, DirectTransport, TorTransport (mocked) | 28 |
-
-Total: **187 tests**, all passing. 3 skipped when Tor is not running.
+| `test_functional_node.py` | Node lifecycle, authenticated handshake, connections | 19 |
+| `test_integration_e2e.py` | End-to-end delivery, receipts, relay, wire integrity | 18 |
+| `test_transport.py` | SOCKS5, DirectTransport, TorTransport, .onion derivation | 28 |
+| `test_api.py` | REST endpoints, WebSocket push, input validation | — |
+| `test_cli.py` | CLI command parsing, interactive flow | — |
+| `test_tor_e2e.py` | Hidden service registration, .onion message delivery | — |
 
 **What passing tests guarantee:**
 
@@ -509,10 +534,15 @@ Total: **187 tests**, all passing. 3 skipped when Tor is not running.
 - Tampered onion packets are silently dropped at every hop
 - The address book file contains no plaintext when inspected at the byte level
 - Wrong passphrase is rejected by the address book decryption
+- Handshake is authenticated — invalid Ed25519 signatures are rejected
+- Messages from unknown senders are silently dropped
 - `/panic` clears all in-memory state before exit
 - Argon2id is significantly slower than the previous SHA1 derivation (verified by timing assertion)
 - Cover packets are not delivered as messages
 - Read receipts from wrong keys are rejected
+- REST API validates all inputs and returns correct responses
+- CLI commands parse correctly and produce expected state changes
+- Tor hidden service registration succeeds with the node's Ed25519 key
 
 ---
 
@@ -543,7 +573,7 @@ malphas/
 └── tests/               187 tests across 10 files
 ```
 
-**Adding a new transport:** Subclass `BaseTransport` in `transport.py` and implement `connect()`, `start_server()`, and `stop()`. Pass an instance to `malphasNode(transport=...)`.
+**Adding a new transport:** Subclass `BaseTransport` in `transport.py` and implement `connect()`, `start_server()`, and `stop()`. Pass an instance to `MalphasNode(transport=...)`.
 
 **Protocol versioning:** HKDF info strings include a version suffix (`-v1`). Breaking protocol changes should increment the version to prevent cross-version interoperability confusion.
 
