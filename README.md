@@ -477,6 +477,10 @@ If timeout (30s): circuit issue or peer offline
 
 **No deniable authentication:** Messages are signed with Ed25519. If message content is obtained by an adversary (e.g., via device compromise), the signature mathematically proves authorship. Signal's deniable authentication (via MAC instead of asymmetric signatures) would prevent this but is not yet implemented.
 
+**Tor self-rendezvous:** A single Tor process cannot connect to its own hidden service, and two Tor processes sharing the same public IP will also fail the rendezvous. Testing hidden service message delivery requires two machines on different networks (different public IPs). This is a Tor architectural limitation, not a malphas issue.
+
+**Memory wiping in Python:** Python strings and bytes objects are immutable. Overwriting a variable only changes the reference — the original bytes may remain in the heap until garbage collection. The passphrase and seed material in RAM cannot be reliably zeroed in pure Python. This is an inherent limitation of the runtime, documented here for completeness.
+
 **Windows:** The core messaging functionality works on Windows. Tor hidden service support and some signal handling edge cases may behave differently — testing on a production Windows environment is recommended before relying on it.
 
 ---
@@ -524,9 +528,9 @@ pytest tests/test_tor_e2e.py -v
 | `test_functional_node.py` | Node lifecycle, authenticated handshake, connections | 19 |
 | `test_integration_e2e.py` | End-to-end delivery, receipts, relay, wire integrity | 18 |
 | `test_transport.py` | SOCKS5, DirectTransport, TorTransport, .onion derivation | 28 |
-| `test_api.py` | REST endpoints, WebSocket push, input validation | — |
-| `test_cli.py` | CLI command parsing, interactive flow | — |
-| `test_tor_e2e.py` | Hidden service registration, .onion message delivery | — |
+| `test_api.py` | REST endpoints, WebSocket push, input validation | 91 |
+| `test_cli.py` | CLI command parsing, interactive flow, callbacks | 115 |
+| `test_tor_e2e.py` | Hidden service registration, .onion message delivery | 5 |
 
 **What passing tests guarantee:**
 
@@ -570,7 +574,7 @@ malphas/
 ├── frontend/pwa/
 │   ├── index.html       neumorphic PWA (dark/light theme)
 │   └── manifest.json    PWA manifest
-└── tests/               187 tests across 10 files
+└── tests/               420 tests across 13 files
 ```
 
 **Adding a new transport:** Subclass `BaseTransport` in `transport.py` and implement `connect()`, `start_server()`, and `stop()`. Pass an instance to `MalphasNode(transport=...)`.
