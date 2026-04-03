@@ -249,12 +249,12 @@ class TorTransport(BaseTransport):
         # Compute the .onion address from our pubkey
         onion = ed25519_pub_to_onion(ed25519_pub_bytes)
 
-        # Format key for stem: "ED25519-V3:<base64(expanded_priv)>"
-        # Tor expects the 64-byte expanded private key (priv_seed + pub)
+        # Format key for stem: base64(priv_seed(32) + pub(32))
+        # stem adds the "ED25519-V3:" prefix via key_type parameter
         expanded = ed25519_priv_bytes + ed25519_pub_bytes
-        key_str = f"ED25519-V3:{base64.b64encode(expanded).decode()}"
+        key_content = base64.b64encode(expanded).decode()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         controller = await loop.run_in_executor(
             None,
             lambda: Controller.from_port(
@@ -273,7 +273,7 @@ class TorTransport(BaseTransport):
             lambda: controller.create_ephemeral_hidden_service(
                 {80: local_port},
                 key_type="ED25519-V3",
-                key_content=key_str,
+                key_content=key_content,
                 await_publication=False,
             )
         )
@@ -306,7 +306,7 @@ class TorTransport(BaseTransport):
             self._server.close()
             await self._server.wait_closed()
         if self._hidden_service and self._controller:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             try:
                 hs_id = self._onion_address.removesuffix(".onion") if self._onion_address else None
                 if hs_id:
