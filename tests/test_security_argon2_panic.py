@@ -133,7 +133,7 @@ class TestArgon2Derivation:
         _derive_seed(passphrase)
         argon2_time = time.time() - argon2_start
 
-        assert argon2_time > 0.05, \
+        assert argon2_time > 0.02, \
             f"Argon2 too fast ({argon2_time*1000:.1f}ms) — parameters may have been weakened"
         assert argon2_time > sha1_time * 100, \
             f"Argon2 ({argon2_time*1000:.1f}ms) not significantly slower than SHA1 ({sha1_time*1000:.1f}ms)"

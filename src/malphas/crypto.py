@@ -46,7 +46,8 @@ def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> bytes:
     ChaCha20-Poly1305 encrypt.
     Returns: nonce (12) || ciphertext+tag
     """
-    assert len(key) == 32, "Key must be 32 bytes"
+    if len(key) != 32:
+        raise ValueError("Key must be 32 bytes")
     nonce = os.urandom(12)
     aead = ChaCha20Poly1305(key)
     ct = aead.encrypt(nonce, plaintext, aad or None)
@@ -59,7 +60,8 @@ def decrypt(key: bytes, data: bytes, aad: bytes = b"") -> bytes:
     Expects: nonce (12) || ciphertext+tag
     Raises ValueError on authentication failure.
     """
-    assert len(key) == 32, "Key must be 32 bytes"
+    if len(key) != 32:
+        raise ValueError("Key must be 32 bytes")
     if len(data) < 12 + 16:
         raise ValueError("Ciphertext too short")
     nonce, ct = data[:12], data[12:]

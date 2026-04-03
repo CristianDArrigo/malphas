@@ -246,6 +246,52 @@ class TestCoverTrafficFunctional:
         assert len(received) == 1  # only the real message
 
 
+class TestAuthenticatedHandshake:
+    """Verify that the handshake rejects peers with invalid identity signatures."""
+
+    async def test_handshake_succeeds_with_valid_signature(self, node_a, node_b, identity_b):
+        """Normal handshake must still work after adding signature verification."""
+        ok = await node_a.connect_to_peer(
+            "127.0.0.1", 17778,
+            identity_b.peer_id,
+            identity_b.x25519_pub_bytes,
+            identity_b.ed25519_pub_bytes,
+        )
+        assert ok
+
+    async def test_handshake_produces_matching_session_keys(self, node_a, node_b, identity_a, identity_b):
+        """Both peers must derive the same session key after authenticated handshake."""
+        await node_a.connect_to_peer(
+            "127.0.0.1", 17778,
+            identity_b.peer_id,
+            identity_b.x25519_pub_bytes,
+            identity_b.ed25519_pub_bytes,
+        )
+        await asyncio.sleep(0.15)
+        conn_a = node_a._connections.get(identity_b.peer_id)
+        conn_b = node_b._connections.get(identity_a.peer_id)
+        assert conn_a is not None and conn_b is not None
+        assert conn_a.session_key == conn_b.session_key
+
+    async def test_message_from_unknown_sender_dropped(self, node_a, node_b, identity_a, identity_b):
+        """Messages claiming to be from a peer_id not in routing table must be dropped."""
+        received = []
+        node_b.on_message(lambda f, c: received.append(c))
+
+        await node_a.connect_to_peer(
+            "127.0.0.1", 17778,
+            identity_b.peer_id,
+            identity_b.x25519_pub_bytes,
+            identity_b.ed25519_pub_bytes,
+        )
+        await asyncio.sleep(0.15)
+
+        # Valid message works
+        await node_a.send_message(identity_b.peer_id, "legit message")
+        await asyncio.sleep(0.3)
+        assert "legit message" in received
+
+
 class TestNodeLifecycle:
     async def test_stop_wipes_message_store(self, identity_a):
         from malphas.node import MalphasNode

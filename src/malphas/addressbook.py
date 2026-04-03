@@ -72,7 +72,7 @@ def _pad(data: bytes, block_size: int) -> bytes:
     total = len(length_prefix) + len(data)
     remainder = total % block_size
     pad_len = (block_size - remainder) if remainder else 0
-    return length_prefix + data + bytes(pad_len)
+    return length_prefix + data + os.urandom(pad_len)
 
 
 def _unpad(data: bytes) -> bytes:

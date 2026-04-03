@@ -402,15 +402,18 @@ class MalphasNode:
         if not kind or not from_id:
             return
 
-        # Verify signature if we know the sender
+        # Verify signature — mandatory. Unknown senders are dropped
+        # to prevent message injection from unauthenticated peers.
         peer = self.discovery.get_peer(from_id)
-        if peer:
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-            try:
-                pub = Ed25519PublicKey.from_public_bytes(peer.ed25519_pub)
-                pub.verify(sig, payload_bytes)
-            except Exception:
-                return  # invalid signature — drop
+        if not peer:
+            return  # unknown sender — drop silently
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        try:
+            pub = Ed25519PublicKey.from_public_bytes(peer.ed25519_pub)
+            pub.verify(sig, payload_bytes)
+        except Exception:
+            return  # invalid signature — drop
 
         if kind == KIND_MESSAGE:
             await self._deliver_message(data, from_id)
@@ -474,8 +477,14 @@ class MalphasNode:
     ) -> bool:
         try:
             eph_priv, eph_pub = generate_ephemeral_keypair()
+
+            # Sign ephemeral pubkey with our Ed25519 identity key
+            # This proves we hold the private key for our claimed identity
+            eph_sig = self.identity.sign(eph_pub)
+
             hello = json.dumps({
                 "eph_pub": eph_pub.hex(),
+                "eph_sig": eph_sig.hex(),
                 "peer_id": self.identity.peer_id,
                 "x25519_pub": self.identity.x25519_pub_bytes.hex(),
                 "ed25519_pub": self.identity.ed25519_pub_bytes.hex(),
@@ -495,10 +504,21 @@ class MalphasNode:
 
             their_data = json.loads(their_hello.decode())
             their_eph = bytes.fromhex(their_data["eph_pub"])
+            their_eph_sig = bytes.fromhex(their_data["eph_sig"])
             their_x25519 = bytes.fromhex(their_data["x25519_pub"])
             their_ed25519 = bytes.fromhex(their_data["ed25519_pub"])
             their_peer_id = their_data["peer_id"]
             their_port = their_data.get("port", self.port)
+
+            # Verify the peer's Ed25519 signature over their ephemeral key.
+            # Without this, a MITM could present their own ephemeral key
+            # and intercept the entire session.
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            try:
+                peer_ed_pub = Ed25519PublicKey.from_public_bytes(their_ed25519)
+                peer_ed_pub.verify(their_eph_sig, their_eph)
+            except Exception:
+                return False  # signature invalid — reject handshake
 
             shared = ecdh_shared_secret(eph_priv, their_eph)
             role = "initiator" if outbound else "responder"

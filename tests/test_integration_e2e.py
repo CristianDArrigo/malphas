@@ -67,6 +67,10 @@ async def trio():
     # A also knows C via B's routing table (manual add for circuit)
     a.discovery.add_peer(id_c.peer_id, "127.0.0.1", 18005,
                          id_c.x25519_pub_bytes, id_c.ed25519_pub_bytes)
+    # C must know A to accept messages (signature verification requires
+    # the sender to be in the routing table)
+    c.discovery.add_peer(id_a.peer_id, "127.0.0.1", 18003,
+                         id_a.x25519_pub_bytes, id_a.ed25519_pub_bytes)
     yield a, b, c, id_a, id_b, id_c
     await a.stop()
     await b.stop()

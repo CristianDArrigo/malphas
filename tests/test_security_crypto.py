@@ -95,9 +95,9 @@ class TestEncryptDecrypt:
         assert len(nonces) == 100
 
     def test_key_must_be_32_bytes(self):
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             encrypt(os.urandom(16), b"data")
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             decrypt(os.urandom(16), b"x" * 50)
 
 
