@@ -400,6 +400,21 @@ class MalphasCLI:
             else:
                 self._err("index out of range")
                 return
+        elif all(c in "0123456789abcdef" for c in target.lower()) and len(target) >= 4:
+            # Partial peer_id prefix match
+            prefix = target.lower()
+            matches = [
+                p for p in self.node.discovery.all_peers()
+                if p["peer_id"].startswith(prefix)
+            ]
+            if len(matches) == 1:
+                peer_id = matches[0]["peer_id"]
+            elif len(matches) > 1:
+                self._err(f"ambiguous: {len(matches)} peers match '{prefix}'")
+                return
+            else:
+                self._err(f"no peer starts with '{prefix}'")
+                return
         else:
             self._err("peer not found in book or routing table")
             return

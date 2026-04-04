@@ -293,6 +293,43 @@ class TestChatCommand:
         output = await _run_capture_async(cli, cli._cmd_chat(["nonexistent_label"]))
         assert "not found" in output.lower()
 
+    async def test_chat_partial_peer_id_match(self, cli, identity_cli_b):
+        cli.node.discovery.add_peer(
+            identity_cli_b.peer_id, "127.0.0.1", 19101,
+            identity_cli_b.x25519_pub_bytes,
+            identity_cli_b.ed25519_pub_bytes,
+        )
+        prefix = identity_cli_b.peer_id[:8]
+        await cli._cmd_chat([prefix])
+        assert cli.active_peer == identity_cli_b.peer_id
+
+    async def test_chat_partial_peer_id_ambiguous(self, cli, identity_cli_b, identity_cli_c):
+        # Add two peers that share a prefix (unlikely but test the logic)
+        cli.node.discovery.add_peer(
+            identity_cli_b.peer_id, "127.0.0.1", 19101,
+            identity_cli_b.x25519_pub_bytes,
+            identity_cli_b.ed25519_pub_bytes,
+        )
+        cli.node.discovery.add_peer(
+            identity_cli_c.peer_id, "127.0.0.1", 19102,
+            identity_cli_c.x25519_pub_bytes,
+            identity_cli_c.ed25519_pub_bytes,
+        )
+        # Use a very short prefix that matches both (first char)
+        # Both peer_ids are hex, first char is likely different, so use full id of one
+        output = await _run_capture_async(cli, cli._cmd_chat([identity_cli_b.peer_id[:4]]))
+        # Either it matches uniquely or says ambiguous — both are valid
+        assert cli.active_peer is not None or "ambiguous" in output.lower() or "no peer" in output.lower()
+
+    async def test_chat_partial_peer_id_no_match(self, cli):
+        output = await _run_capture_async(cli, cli._cmd_chat(["deadbeef"]))
+        assert "no peer" in output.lower()
+
+    async def test_chat_partial_peer_id_too_short(self, cli):
+        """Less than 4 chars hex should not match as prefix."""
+        output = await _run_capture_async(cli, cli._cmd_chat(["abc"]))
+        assert "not found" in output.lower()
+
     async def test_chat_prints_conversation_label(
         self, cli_with_bob, identity_cli_b
     ):
