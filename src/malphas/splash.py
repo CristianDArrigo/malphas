@@ -70,26 +70,11 @@ CREDITS = """
   |                                                                 |
   |         privacy-first P2P messenger with onion routing          |
   |                                                                 |
-  |  author   Cristian D'Arrigo                                     |
-  |  version  0.1.0                                                 |
+  |  author    Cristian D'Arrigo                                    |
+  |  version   0.1.0                                                |
+  |  source    github.com/CristianDArrigo/malphas                   |
   |                                                                 |
-  |  crypto   X25519 - Ed25519 - ChaCha20-Poly1305 - HKDF-SHA256   |
-  |  auth     HMAC-SHA256 (deniable) - Ed25519 (receipts)           |
-  |  routing  onion routing - cover traffic - read receipts         |
-  |  network  direct TCP - Tor hidden services (v3)                 |
-  |  storage  memory only - zero disk writes - TTL expiry           |
-  |  trust    TOFU key pinning - auto-reconnect - message queue     |
-  +-----------------------------------------------------------------+
-
-  +-----------------------------------------------------------------+
-  |                        DISCLAIMER                               |
-  |                                                                 |
-  |  This software is provided for educational and research         |
-  |  purposes only. Use it only on networks and systems you         |
-  |  own or have explicit permission to access.                     |
-  |                                                                 |
-  |  The authors assume no responsibility for misuse.               |
-  |  You are solely responsible for your actions.                   |
+  |  /help for commands  -  /export to share your identity          |
   +-----------------------------------------------------------------+
 """
 

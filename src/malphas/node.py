@@ -154,8 +154,10 @@ class MalphasNode:
         await self.receipts.start()
         if self._cover:
             await self._cover.start()
-        asyncio.create_task(self._purge_loop())
-        asyncio.create_task(self._ping_loop())
+        self._bg_tasks = [
+            asyncio.create_task(self._purge_loop()),
+            asyncio.create_task(self._ping_loop()),
+        ]
 
         # Receipt callbacks
         self.receipts.on_receipt(self._on_receipt_resolved)
@@ -163,6 +165,12 @@ class MalphasNode:
 
     async def stop(self) -> None:
         self._running = False
+        # Cancel background tasks immediately (don't wait for sleep to finish)
+        for task in getattr(self, '_bg_tasks', []):
+            task.cancel()
+        for task in list(self._reconnect_tasks.values()):
+            task.cancel()
+        self._reconnect_tasks.clear()
         if self._cover:
             await self._cover.stop()
         await self.receipts.stop()

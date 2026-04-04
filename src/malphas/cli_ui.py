@@ -71,8 +71,10 @@ C_BORDER = "grey30"
 
 COMMANDS = [
     "/id", "/peers", "/book", "/add", "/chat", "/history",
-    "/export", "/import", "/trust", "/wipe", "/panic", "/help", "/quit", "/exit",
+    "/export", "/import", "/trust", "/wipe", "/panic", "/help", "/github", "/quit", "/exit",
 ]
+
+GITHUB_URL = "https://github.com/CristianDArrigo/malphas"
 
 
 class MalphasCompleter(Completer):
@@ -270,6 +272,7 @@ class MalphasCLI:
             ("/export", "generate shareable invite URL"),
             ("/import <url>", "import peer from invite URL"),
             ("/trust <peer_id|label>", "reset pinned key for a peer"),
+            ("/github", "open the project page in the browser"),
             ("/wipe", "wipe all messages from memory"),
             ("/panic", "EMERGENCY: wipe everything and exit"),
             ("/quit", "shutdown"),
@@ -534,6 +537,11 @@ class MalphasCLI:
         self.node.pins.trust(peer_id)
         self._ok(f"pin reset for {peer_id[:16]}... — next connection will re-pin")
 
+    def _cmd_github(self) -> None:
+        import webbrowser
+        webbrowser.open(GITHUB_URL)
+        self._info(GITHUB_URL, tag="github")
+
     async def _cmd_panic(self) -> None:
         import gc
         self.active_peer = None
@@ -665,6 +673,8 @@ class MalphasCLI:
                         await self._cmd_import(args)
                     elif cmd == "trust":
                         await self._cmd_trust(args)
+                    elif cmd == "github":
+                        self._cmd_github()
                     elif cmd == "wipe":
                         await self._cmd_wipe()
                     elif cmd == "panic":
