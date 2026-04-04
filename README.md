@@ -337,10 +337,12 @@ The CLI uses prompt_toolkit for readline input (arrow keys, history, tab complet
 /book rm <label>           remove a contact from the address book
 /add <host> <port>         connect to a peer (prompts for their keys)
 /chat <peer_id|label>      open a conversation; auto-connects from address book
+                           accepts partial peer_id (min 4 hex chars) for quick match
 /history                   show message history for the active conversation
 /export                    generate a signed invite URL to share your credentials
 /import <url>              import a peer from an invite URL and connect
 /trust <peer_id|label>     reset the pinned key for a peer (after passphrase change)
+/github                    open the project page in the browser
 /wipe                      wipe all messages and queued messages from memory
 /panic                     EMERGENCY: wipe everything and exit immediately
 /help                      show this list
@@ -750,7 +752,7 @@ malphas/
 ├── frontend/pwa/
 │   ├── index.html       neumorphic PWA (dark/light theme)
 │   └── manifest.json    PWA manifest
-└── tests/               466 tests across 15 files
+└── tests/               470+ tests across 15 files
 ```
 
 **Adding a new transport.** Subclass `BaseTransport` in `transport.py` and implement `connect()`, `start_server()`, and `stop()`. Pass an instance to `MalphasNode(transport=...)`.
