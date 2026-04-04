@@ -128,7 +128,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         APPLICATION                             │
-│  CLI (cli_ui.py)          PWA Frontend (frontend/pwa/)          │
+│  CLI (cli_ui.py)                                                │
 │  prompt_toolkit + rich    FastAPI + WebSocket (api.py)           │
 └────────────────────────────┬────────────────────────────────────┘
                              │
@@ -749,9 +749,8 @@ malphas/
 │   ├── api.py           FastAPI + WebSocket (web mode)
 │   ├── splash.py        ASCII splash screen
 │   └── __main__.py      CLI entry point, argument parsing
-├── frontend/pwa/
-│   ├── index.html       neumorphic PWA (dark/light theme)
-│   └── manifest.json    PWA manifest
+├── frontend/showcase/
+│   └── index.html       project landing page
 └── tests/               470+ tests across 15 files
 ```
 

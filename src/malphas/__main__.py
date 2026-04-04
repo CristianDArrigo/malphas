@@ -24,7 +24,7 @@ from .transport import DirectTransport, TorTransport, tor_is_available
 from .splash import print_splash
 
 DEFAULT_BOOK_PATH = str(Path.home() / ".malphas" / "book")
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "pwa")
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "showcase")
 
 
 def _get_passphrase() -> str:
