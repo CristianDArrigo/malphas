@@ -580,6 +580,7 @@ class MalphasCLI:
         self.node.on_message(self._on_message)
         self.node.on_receipt(self._on_receipt)
         self.node.on_pin_violation(self._on_pin_violation)
+        self.node.set_reconnect_book(self.book)
 
         # Banner
         self._print()

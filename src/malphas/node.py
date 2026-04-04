@@ -133,6 +133,10 @@ class MalphasNode:
         self._receipt_callbacks: Set[Callable] = set()
         self._pin_callbacks: Set[Callable] = set()
         self._running = False
+        self._reconnect_book = None  # set by CLI to enable auto-reconnect
+        self._reconnect_tasks: Dict[str, asyncio.Task] = {}
+        self._message_queue: Dict[str, list] = {}  # peer_id -> [(content, msg_id)]
+        self._queue_limit = 100  # max queued messages per peer
 
         # Cover traffic engine
         self._cover = CoverTrafficEngine(
@@ -226,6 +230,9 @@ class MalphasNode:
                 self._connections[conn.peer_info.peer_id] = conn
                 self.discovery.add_peer(peer_id, host, port, x25519_pub, ed25519_pub)
                 asyncio.create_task(self._read_loop(conn))
+                # Flush queued messages after reconnection
+                if peer_id in self._message_queue:
+                    asyncio.create_task(self._flush_queue(peer_id))
             else:
                 conn.close()
             return ok
@@ -234,14 +241,31 @@ class MalphasNode:
 
     async def send_message(self, dest_peer_id: str, content: str) -> Optional[str]:
         """
-        Send a message. Returns msg_id if queued, None on failure.
+        Send a message. Returns msg_id if sent or queued.
+        Returns None only if peer is completely unknown.
         """
+        msg_id = secrets.token_hex(16)
+
+        # Try to send immediately
+        sent = await self._try_send(dest_peer_id, content, msg_id)
+        if sent:
+            return msg_id
+
+        # If peer is known but offline, queue for later delivery
+        if self.discovery.get_peer(dest_peer_id):
+            self._enqueue(dest_peer_id, content, msg_id)
+            self.store.store(self.identity.peer_id, dest_peer_id, content, msg_id)
+            return msg_id
+
+        return None
+
+    async def _try_send(self, dest_peer_id: str, content: str, msg_id: str) -> bool:
+        """Attempt to send a message immediately. Returns True if sent."""
         try:
             circuit = self.discovery.select_relay_circuit(dest_peer_id, hops=3)
         except ValueError:
-            return None
+            return False
 
-        msg_id = secrets.token_hex(16)
         nonce = secrets.token_bytes(16)
 
         payload_dict = {
@@ -254,36 +278,39 @@ class MalphasNode:
         }
         payload_bytes = json.dumps(payload_dict).encode()
 
-        # Get HMAC key for the destination peer's connection.
-        # We need the dest's hmac_key — but the message routes through
-        # onion layers, so the dest decrypts and needs to verify.
-        # The HMAC key must be known to both sender and dest.
-        # We use the direct connection's hmac_key if dest is directly
-        # connected, or look up from connections.
         dest_conn = self._connections.get(dest_peer_id)
         if dest_conn and dest_conn.hmac_key:
             tag = hmac_sign(dest_conn.hmac_key, payload_bytes)
         else:
-            # Fallback: Ed25519 sig for peers without direct connection
             tag = self.identity.sign(payload_bytes)
         authenticated = tag + payload_bytes
 
-        # Pad to block boundary
         padded = pad_payload(authenticated)
-
-        # Wrap in onion
         packet = wrap_onion(padded, circuit)
 
         first_hop_id = circuit[0][1]
         conn = self._connections.get(first_hop_id)
         if conn and conn.authenticated:
-            await conn.send_encrypted(MSG_ONION, packet[24:])  # strip first_hop_id(20)+len(4)
-            # Track read receipt
+            await conn.send_encrypted(MSG_ONION, packet[24:])
             self.receipts.track(msg_id, nonce, dest_peer_id, content)
-            # Store locally as sent
             self.store.store(self.identity.peer_id, dest_peer_id, content, msg_id)
-            return msg_id
-        return None
+            return True
+        return False
+
+    def _enqueue(self, peer_id: str, content: str, msg_id: str) -> None:
+        """Queue a message for later delivery."""
+        if peer_id not in self._message_queue:
+            self._message_queue[peer_id] = []
+        queue = self._message_queue[peer_id]
+        if len(queue) < self._queue_limit:
+            queue.append((content, msg_id))
+
+    async def _flush_queue(self, peer_id: str) -> None:
+        """Send all queued messages for a peer after reconnection."""
+        queue = self._message_queue.pop(peer_id, [])
+        for content, msg_id in queue:
+            await self._try_send(peer_id, content, msg_id)
+            await asyncio.sleep(0.05)  # avoid flooding
 
     async def _send_cover_packet(self, peer_id: str) -> None:
         """Send a cover traffic packet to a peer. Routed as onion if possible."""
@@ -363,9 +390,17 @@ class MalphasNode:
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
         finally:
-            if conn.peer_info:
-                self._connections.pop(conn.peer_info.peer_id, None)
+            peer_id = conn.peer_info.peer_id if conn.peer_info else None
+            if peer_id:
+                self._connections.pop(peer_id, None)
             conn.close()
+
+            # Schedule reconnect if this peer is in the address book
+            # (set by the CLI layer via set_reconnect_book)
+            if peer_id and self._running and self._reconnect_book:
+                contact = self._reconnect_book.get_by_peer_id(peer_id)
+                if contact:
+                    asyncio.create_task(self._reconnect(contact))
 
     async def _dispatch(
         self, conn: PeerConnection, msg_type: int, payload: bytes
@@ -605,6 +640,40 @@ class MalphasNode:
         except Exception:
             return False
 
+    # ── Auto-reconnect ────────────────────────────────────────────────────────
+
+    def set_reconnect_book(self, book) -> None:
+        """Set the address book to enable auto-reconnect for known peers."""
+        self._reconnect_book = book
+
+    async def _reconnect(self, contact) -> None:
+        """Reconnect to a peer with exponential backoff. Max 5 min between attempts."""
+        peer_id = contact.peer_id
+        if peer_id in self._reconnect_tasks:
+            return  # already reconnecting
+
+        delay = 5  # initial delay in seconds
+        max_delay = 300  # 5 minutes cap
+
+        try:
+            self._reconnect_tasks[peer_id] = asyncio.current_task()
+            while self._running and peer_id not in self._connections:
+                await asyncio.sleep(delay)
+                if not self._running:
+                    break
+                ok = await self.connect_to_peer(
+                    contact.host, contact.port, contact.peer_id,
+                    bytes.fromhex(contact.x25519_pub),
+                    bytes.fromhex(contact.ed25519_pub),
+                )
+                if ok:
+                    break
+                delay = min(delay * 2, max_delay)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._reconnect_tasks.pop(peer_id, None)
+
     # ── Panic wipe ───────────────────────────────────────────────────────────────
 
     def panic(self) -> None:
@@ -625,6 +694,15 @@ class MalphasNode:
 
         # Wipe key pins
         self.pins.wipe()
+
+        # Wipe message queue
+        self._message_queue.clear()
+
+        # Cancel all reconnect tasks
+        for task in list(self._reconnect_tasks.values()):
+            task.cancel()
+        self._reconnect_tasks.clear()
+        self._reconnect_book = None
 
         # Close all active connections immediately
         for conn in list(self._connections.values()):
