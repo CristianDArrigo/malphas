@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>malphas — privacy-first P2P messenger</title>
+  <meta name="description" content="End-to-end encrypted peer-to-peer messenger with onion routing and Tor hidden service support. No servers. No accounts. No logs.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --bg-raised: #111111;
+      --bg-terminal: #0d0d0d;
+      --text: #b8b8b8;
+      --text-bright: #d4d4d4;
+      --text-dim: #555555;
+      --text-dimmer: #333333;
+      --accent: #8b2500;
+      --accent-bright: #cc3a1a;
+      --accent-glow: rgba(139, 37, 0, 0.15);
+      --border: #1a1a1a;
+      --serif: 'Cormorant Garamond', 'Georgia', serif;
+      --mono: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    ::selection {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      scrollbar-width: thin;
+      scrollbar-color: #222 var(--bg);
+    }
+
+    body {
+      font-family: var(--mono);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.7;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Grain overlay ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ── Layout ── */
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 32px;
+    }
+
+    section {
+      padding: 100px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    section:last-of-type { border-bottom: none; }
+
+    /* ── Typography ── */
+    h1, h2, h3 {
+      font-family: var(--serif);
+      font-weight: 300;
+      color: var(--text-bright);
+      letter-spacing: 0.02em;
+    }
+
+    h1 {
+      font-size: clamp(48px, 8vw, 96px);
+      line-height: 1.0;
+      margin-bottom: 24px;
+    }
+
+    h2 {
+      font-size: clamp(28px, 4vw, 42px);
+      margin-bottom: 40px;
+      position: relative;
+    }
+
+    h2::after {
+      content: '';
+      display: block;
+      width: 40px;
+      height: 1px;
+      background: var(--accent);
+      margin-top: 16px;
+    }
+
+    h3 {
+      font-size: 20px;
+      font-weight: 400;
+      margin-bottom: 12px;
+      color: var(--text-bright);
+    }
+
+    p {
+      max-width: 640px;
+      color: var(--text);
+    }
+
+    a {
+      color: var(--accent-bright);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    a:hover { color: var(--text-bright); }
+
+    .dim { color: var(--text-dim); }
+    .accent { color: var(--accent-bright); }
+
+    /* ── Hero ── */
+    #hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding-top: 60px;
+      padding-bottom: 60px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .hero-ascii {
+      font-family: var(--mono);
+      font-size: clamp(4px, 0.85vw, 8px);
+      line-height: 1.2;
+      color: var(--text-dimmer);
+      white-space: pre;
+      margin-bottom: 48px;
+      opacity: 0;
+      animation: fadeIn 2s ease forwards;
+      overflow: hidden;
+    }
+
+    .hero-subtitle {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 300;
+      color: var(--text-dim);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 48px;
+      opacity: 0;
+      animation: fadeIn 1.5s ease 0.5s forwards;
+    }
+
+    .hero-tagline {
+      font-family: var(--serif);
+      font-size: clamp(18px, 2.5vw, 26px);
+      font-weight: 300;
+      font-style: italic;
+      color: var(--text-dim);
+      max-width: 500px;
+      line-height: 1.5;
+      margin-bottom: 48px;
+      opacity: 0;
+      animation: fadeIn 1.5s ease 0.8s forwards;
+    }
+
+    .hero-cta {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+      opacity: 0;
+      animation: fadeIn 1.5s ease 1.1s forwards;
+    }
+
+    .btn-primary {
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 14px 32px;
+      background: var(--accent);
+      color: #ddd;
+      border: none;
+      cursor: pointer;
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-bright);
+      color: #fff;
+      box-shadow: 0 0 30px var(--accent-glow);
+    }
+
+    .btn-ghost {
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 14px 32px;
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--text-dimmer);
+      cursor: pointer;
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .btn-ghost:hover {
+      color: var(--text-bright);
+      border-color: var(--text-dim);
+    }
+
+    /* ── Features ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 40px;
+      margin-top: 40px;
+    }
+
+    .feature {
+      padding: 28px;
+      border: 1px solid var(--border);
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+
+    .feature:hover {
+      border-color: #2a2a2a;
+      box-shadow: 0 0 40px rgba(0,0,0,0.3);
+    }
+
+    .feature-icon {
+      font-family: var(--mono);
+      font-size: 18px;
+      color: var(--accent-bright);
+      margin-bottom: 16px;
+      display: block;
+    }
+
+    .feature h3 {
+      font-size: 16px;
+      font-family: var(--mono);
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .feature p {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    /* ── Terminal ── */
+    .terminal {
+      background: var(--bg-terminal);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 32px 0;
+    }
+
+    .terminal-bar {
+      height: 32px;
+      background: #141414;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .terminal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .terminal-dot.red { background: #5c2020; }
+    .terminal-dot.yellow { background: #5c4a20; }
+    .terminal-dot.green { background: #2a5c20; }
+
+    .terminal-title {
+      flex: 1;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dimmer);
+      letter-spacing: 0.1em;
+    }
+
+    .terminal-body {
+      padding: 20px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+
+    .terminal-body .prompt { color: var(--text-dim); }
+    .terminal-body .cmd { color: var(--text-bright); }
+    .terminal-body .output { color: var(--text-dim); }
+    .terminal-body .accent { color: var(--accent-bright); }
+    .terminal-body .green { color: #4a7a3a; }
+    .terminal-body .yellow { color: #8a7a3a; }
+    .terminal-body .dim { color: #383838; }
+
+    /* ── How it works ── */
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 48px;
+      margin-top: 40px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 24px;
+    }
+
+    .step-number {
+      font-family: var(--serif);
+      font-size: 36px;
+      font-weight: 300;
+      color: var(--text-dimmer);
+      line-height: 1;
+    }
+
+    .step-content h3 {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .step-content p {
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    /* ── Architecture ── */
+    .arch-diagram {
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-dim);
+      white-space: pre;
+      overflow-x: auto;
+      padding: 32px;
+      border: 1px solid var(--border);
+      margin: 32px 0;
+    }
+
+    .arch-diagram .highlight { color: var(--accent-bright); }
+
+    /* ── Crypto table ── */
+    .crypto-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 32px 0;
+      font-size: 13px;
+    }
+
+    .crypto-table th {
+      text-align: left;
+      font-family: var(--mono);
+      font-weight: 500;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .crypto-table td {
+      padding: 10px 16px;
+      border-bottom: 1px solid #141414;
+      color: var(--text-dim);
+    }
+
+    .crypto-table td:first-child {
+      color: var(--text);
+      font-weight: 400;
+    }
+
+    .crypto-table tr:hover td {
+      color: var(--text-bright);
+    }
+
+    /* ── Download ── */
+    #download {
+      text-align: center;
+      padding: 120px 0;
+    }
+
+    #download h2::after {
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    #download p {
+      margin: 0 auto 40px;
+      text-align: center;
+    }
+
+    .download-actions {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+    }
+
+    .install-cmd {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text-dim);
+      padding: 14px 24px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      display: inline-block;
+      cursor: pointer;
+      transition: border-color 0.3s;
+      user-select: all;
+    }
+
+    .install-cmd:hover {
+      border-color: var(--text-dimmer);
+    }
+
+    /* ── Footer ── */
+    footer {
+      padding: 48px 0;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dimmer);
+      letter-spacing: 0.08em;
+    }
+
+    footer a { color: var(--text-dim); }
+
+    /* ── Nav ── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(10, 10, 10, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(26, 26, 26, 0.5);
+      transition: opacity 0.3s;
+    }
+
+    .nav-logo {
+      font-family: var(--serif);
+      font-size: 20px;
+      font-weight: 300;
+      color: var(--text-bright);
+      text-decoration: none;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--text-bright); }
+
+    /* ── Animations ── */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .container { padding: 0 20px; }
+      section { padding: 64px 0; }
+      .nav-links { display: none; }
+      .step { grid-template-columns: 1fr; }
+      .step-number { font-size: 24px; }
+      .hero-ascii { font-size: 3.5px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <a href="#" class="nav-logo">malphas</a>
+  <ul class="nav-links">
+    <li><a href="#features">features</a></li>
+    <li><a href="#how">how it works</a></li>
+    <li><a href="#crypto">crypto</a></li>
+    <li><a href="#download">download</a></li>
+  </ul>
+</nav>
+
+<!-- Hero -->
+<section id="hero">
+  <div class="container">
+    <div class="hero-ascii">                                ************
+                           *********#**#**#**#*********
+                       ****#*****     ***# ***   **#*******
+                      ***#***            ******          *******
+                   ******              *******#            #**#**
+                 *****              *#*******#**              **#**
+             **#**          *****              *****          **#**
+             ****#         ***                        **#         *****
+              ***#****     **                              **         ****
+               **### ***** ***                                  ***      *##***</div>
+    <h1>malphas</h1>
+    <div class="hero-subtitle">privacy-first p2p messenger</div>
+    <div class="hero-tagline">
+      No servers. No accounts. No logs.<br>
+      End-to-end encrypted. Onion routed. Tor integrated.
+    </div>
+    <div class="hero-cta">
+      <a href="https://github.com/CristianDArrigo/malphas/releases" class="btn-primary">download</a>
+      <a href="https://github.com/CristianDArrigo/malphas" class="btn-ghost">source code</a>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section id="features">
+  <div class="container">
+    <h2 class="reveal">What it does</h2>
+    <p class="reveal">malphas is a peer-to-peer encrypted messenger designed for people who need privacy guarantees stronger than what centralized services can offer. Every message is encrypted, authenticated, and routed through an onion network. Nothing touches disk. Nothing touches a server.</p>
+
+    <div class="features-grid">
+      <div class="feature reveal">
+        <span class="feature-icon">&gt;_</span>
+        <h3>Zero infrastructure</h3>
+        <p>No servers, no cloud, no accounts. Your node runs on your machine. The only external dependency is Tor, and even that is optional.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">{}</span>
+        <h3>Onion routing</h3>
+        <p>Messages traverse multiple peers in layered encryption. Each relay sees only the previous and next hop. No relay can read your content or know the full path.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">.onion</span>
+        <h3>Tor hidden services</h3>
+        <p>Your node registers a Tor v3 hidden service. No port forwarding, no public IP needed. Your .onion address is permanent and derived from your passphrase.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">#!</span>
+        <h3>Deniable authentication</h3>
+        <p>Messages use HMAC, not digital signatures. Both peers can produce the same tag. If your device is seized, no one can prove who wrote what.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">[=]</span>
+        <h3>Key pinning (TOFU)</h3>
+        <p>On first contact, your peer's key is pinned. If it changes on reconnect, the handshake is rejected. Detects impersonation and passphrase changes.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">/!</span>
+        <h3>Emergency wipe</h3>
+        <p>/panic clears all messages, peer data, encryption keys, and queues from memory in milliseconds. Then exits. The encrypted address book on disk is useless without the passphrase.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">~~</span>
+        <h3>Cover traffic</h3>
+        <p>Encrypted dummy packets at random intervals, indistinguishable from real messages on the wire. Makes traffic analysis significantly harder.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">@</span>
+        <h3>Signed invites</h3>
+        <p>Share a malphas:// URL containing your public keys, signed with Ed25519. Your peer imports it and connects instantly. No manual key exchange needed.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section id="how">
+  <div class="container">
+    <h2 class="reveal">How it works</h2>
+
+    <div class="steps">
+      <div class="step reveal">
+        <div class="step-number">1</div>
+        <div class="step-content">
+          <h3>Launch and derive identity</h3>
+          <p>Enter a passphrase. Argon2id (64MB, ~200ms) derives a 64-byte seed. From that seed: an Ed25519 signing keypair, an X25519 key exchange keypair, a .onion address, and an encrypted address book key. Same passphrase, same identity, always. Nothing is stored.</p>
+        </div>
+      </div>
+
+      <div class="step reveal">
+        <div class="step-number">2</div>
+        <div class="step-content">
+          <h3>Share your invite</h3>
+          <p>/export generates a signed malphas:// URL with your public keys and .onion address. Send it over any channel. It contains only public information — the privacy is in the Tor transport, not the secrecy of the invite.</p>
+        </div>
+      </div>
+
+      <div class="step reveal">
+        <div class="step-number">3</div>
+        <div class="step-content">
+          <h3>Authenticated handshake</h3>
+          <p>Your peer imports your invite. The connection goes through Tor to your .onion. Both peers sign ephemeral X25519 keys with their Ed25519 identity. Keys are pinned. A shared session key is derived via ECDH + HKDF. No identity keys touch the wire.</p>
+        </div>
+      </div>
+
+      <div class="step reveal">
+        <div class="step-number">4</div>
+        <div class="step-content">
+          <h3>Onion-routed messaging</h3>
+          <p>Messages are wrapped in layers of encryption — one per hop. Each relay decrypts its layer, reads the next hop, and forwards. The destination decrypts the final layer. Authentication is HMAC (deniable). Delivery is confirmed by Ed25519-signed read receipts.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terminal example -->
+    <div class="terminal reveal">
+      <div class="terminal-bar">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">malphas</div>
+      </div>
+      <div class="terminal-body">
+<span class="dim">  ┌─ malphas ──────────────────────────────────────────┐</span>
+<span class="dim">  │</span>  <span class="output">peer_id</span>  a0f8e7d83391a0c9dd9f9b3ba97f7a490dafae91
+<span class="dim">  │</span>  <span class="output">port</span>     7777
+<span class="dim">  │</span>  <span class="output">onion</span>    jfxuslbltos66...6in6myd.onion
+<span class="dim">  │</span>
+<span class="dim">  │</span>  <span class="output">/help for commands</span>
+<span class="dim">  └──────────────────────────────────────────────────────┘</span>
+
+<span class="prompt">&gt;</span> <span class="cmd">/import malphas://eyJ0eXBlIjoiaW52aXRl...</span>
+  <span class="green">[ok]</span> connected  b3c4d5e6f7081920...
+  save to address book? [y/N] <span class="cmd">y</span>
+  label: <span class="cmd">fonte</span>
+
+<span class="prompt">&gt;</span> <span class="cmd">/chat fonte</span>
+  <span class="output">conversation with</span> <span class="accent">fonte</span>
+
+<span class="prompt">&gt;</span> <span class="cmd">ho le prove della gara truccata</span>
+  <span class="dim">02:14  you</span>  ho le prove della gara truccata
+  <span class="green">&#10003;</span>
+
+  <span class="dim">02:15</span>  <span class="accent">fonte</span>  ti mando tutto, grazie
+
+<span class="prompt">&gt;</span> <span class="cmd">/panic</span>
+  <span class="accent">wiped.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Crypto -->
+<section id="crypto">
+  <div class="container">
+    <h2 class="reveal">Cryptographic stack</h2>
+    <p class="reveal">Every primitive from the <code>cryptography</code> library (OpenSSL). No custom cryptography. No novel constructions. Battle-tested algorithms assembled for a specific threat model.</p>
+
+    <table class="crypto-table reveal">
+      <thead>
+        <tr>
+          <th>Primitive</th>
+          <th>Algorithm</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Password hashing</td>
+          <td>Argon2id</td>
+          <td>Passphrase to seed (64MB, ~200ms per attempt)</td>
+        </tr>
+        <tr>
+          <td>Key derivation</td>
+          <td>HKDF-SHA256</td>
+          <td>Seed to keys, session to HMAC key</td>
+        </tr>
+        <tr>
+          <td>Key exchange</td>
+          <td>X25519 (ECDH)</td>
+          <td>Ephemeral session keys</td>
+        </tr>
+        <tr>
+          <td>Encryption</td>
+          <td>ChaCha20-Poly1305</td>
+          <td>All message and storage encryption</td>
+        </tr>
+        <tr>
+          <td>Signing</td>
+          <td>Ed25519</td>
+          <td>Handshake auth, receipts, invites</td>
+        </tr>
+        <tr>
+          <td>Message auth</td>
+          <td>HMAC-SHA256</td>
+          <td>Deniable message authentication</td>
+        </tr>
+        <tr>
+          <td>Onion layer</td>
+          <td>X25519 + ChaCha20</td>
+          <td>Per-hop circuit encryption</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="arch-diagram reveal"><span class="highlight">passphrase</span>
+    |
+    v
+<span class="highlight">Argon2id</span>(time=3, memory=64MB, parallelism=4)
+    |
+    v
+64-byte seed
+    |--- seed[:32] ----> <span class="highlight">Ed25519</span> private key ---> peer_id = SHA1(ed25519_pub)
+    |--- seed[32:] ----> <span class="highlight">X25519</span> private key      ed25519_pub ---> .onion address
+    |
+    '--- HKDF(info="addressbook-encryption-key") ---> <span class="highlight">ChaCha20</span> key (address book + pins)</div>
+  </div>
+</section>
+
+<!-- Download -->
+<section id="download">
+  <div class="container">
+    <h2 class="reveal">Get malphas</h2>
+    <p class="reveal">Open source. Educational and research purposes. Python 3.11+</p>
+
+    <div class="download-actions reveal">
+      <a href="https://github.com/CristianDArrigo/malphas/releases" class="btn-primary">download latest release</a>
+      <a href="https://github.com/CristianDArrigo/malphas" class="btn-ghost">view source</a>
+    </div>
+
+    <div class="install-cmd reveal">pip install git+https://github.com/CristianDArrigo/malphas.git</div>
+
+    <div class="terminal reveal" style="max-width: 520px; margin: 40px auto 0; text-align: left;">
+      <div class="terminal-bar">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">quickstart</div>
+      </div>
+      <div class="terminal-body">
+<span class="output">$ </span><span class="cmd">pip install -e .</span>
+<span class="output">$ </span><span class="cmd">malphas --tor --port 7777</span>
+<span class="output">  passphrase: </span><span class="dim">••••••••••••••••••</span>
+
+<span class="prompt">&gt;</span> <span class="cmd">/export</span>
+<span class="output">  malphas://eyJ0eXBlIjoiaW52aXRl...</span>
+<span class="dim">  share this with your peer.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>malphas is provided for educational and research purposes.<br>
+    Not audited. Use at your own risk.</p>
+    <br>
+    <p>built by <a href="https://github.com/CristianDArrigo">Cristian D'Arrigo</a></p>
+  </div>
+</footer>
+
+<!-- Scroll reveal -->
+<script>
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>
