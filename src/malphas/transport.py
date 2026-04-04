@@ -271,10 +271,10 @@ class TorTransport(BaseTransport):
         hs = await loop.run_in_executor(
             None,
             lambda: controller.create_ephemeral_hidden_service(
-                {local_port: local_port},
+                {80: local_port},
                 key_type="ED25519-V3",
                 key_content=key_content,
-                await_publication=False,
+                await_publication=True,
             )
         )
 

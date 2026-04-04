@@ -489,11 +489,12 @@ class MalphasCLI:
             self._info("cancelled")
             return
 
-        # Prefer .onion if available, keep original port
+        # Prefer .onion if available — hidden service maps port 80 to local port
         host = data["host"]
         port = data["port"]
         if "onion" in data:
             host = data["onion"]
+            port = 80
 
         self._info(f"connecting to {host}:{port}...", tag="...")
         ok = await self.node.connect_to_peer(
