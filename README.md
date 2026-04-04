@@ -442,6 +442,59 @@ wrap_onion builds from innermost (destination) to outermost (first relay):
 
 Each relay decrypts its layer, reads the next hop peer_id, and forwards the inner payload. The destination decrypts the final layer and gets the authenticated plaintext. No relay can decrypt more than its own layer.
 
+### Connection lifecycle: what both peers see
+
+Understanding what happens on both sides of a connection is important for reasoning about the system's behavior.
+
+**Alice publishes her invite. Bob imports it.**
+
+```
+Alice                                          Bob
+  |                                              |
+  |  /export                                     |
+  |  → generates malphas://... URL               |
+  |  → sends URL to Bob (Signal, email, etc)     |
+  |                                              |
+  |                         /import malphas://...|
+  |                         Bob's node connects  |
+  |                         to Alice's host:port |
+  |                         (or .onion via Tor)  |
+  |                                              |
+  |  ←──────── TCP connection established ──────→|
+  |                                              |
+  |  ←───────── mutual handshake ───────────────→|
+  |  both peers exchange:                        |
+  |    peer_id, x25519_pub, ed25519_pub,         |
+  |    ephemeral key + Ed25519 signature         |
+  |                                              |
+  |  Alice's node adds Bob                       |
+  |  to routing table (automatic)                |
+  |                         Bob's node adds Alice|
+  |                         to routing table     |
+  |                                              |
+  |  ←────── both can now send messages ────────→|
+```
+
+After the handshake, **both peers know each other's credentials** and can send messages in both directions over the same TCP connection. The handshake is symmetric in knowledge — neither peer needs to have the other's invite beforehand.
+
+**What each peer has after the connection:**
+
+| | Alice (was imported) | Bob (did the import) |
+|---|---|---|
+| Peer in routing table | Yes (automatic from handshake) | Yes (automatic from handshake) |
+| Peer in address book | No (unless Bob does `/book add`) | Yes (if he chose to save during `/import`) |
+| Can send messages | Yes | Yes |
+| Can reconnect after drop | Only if Bob is in her book | Yes (auto-reconnect from book) |
+
+**The asymmetry is in persistence, not in capability.** During the session, both peers are equal. The difference emerges when the connection drops:
+
+- **Bob** saved Alice in his address book during `/import`. When he restarts malphas, auto-connect tries to reach Alice. If she's online, they reconnect automatically.
+- **Alice** never received Bob's credentials in a persistent form. When the connection drops, Bob disappears from her routing table (which is in-memory only). She cannot reconnect to Bob unless he connects to her again.
+
+**To make the relationship fully symmetric**, Bob sends his `/export` URL to Alice during the conversation, and Alice does `/import`. Now both have each other in their address books, and either can reconnect independently.
+
+**For the journalist-source scenario**, this asymmetry is a feature: the journalist publishes her invite, the source connects when they choose to. The journalist never needs to know how to reach the source — the source is always the initiator. This protects the source's identity even from the journalist's address book.
+
 ---
 
 ## Tor Hidden Services
