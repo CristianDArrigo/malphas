@@ -18,10 +18,13 @@ from typing import Callable, Dict, Optional, Set
 
 from .crypto import (
     decrypt,
+    derive_hmac_key,
     derive_session_key,
     ecdh_shared_secret,
     encrypt,
     generate_ephemeral_keypair,
+    hmac_sign,
+    hmac_verify,
 )
 from .discovery import PeerDiscovery, PeerInfo
 from .identity import Identity
@@ -35,6 +38,7 @@ from .obfuscation import (
 )
 from .onion import peel_layer, wrap_onion
 from .transport import BaseTransport, DirectTransport
+from .pinstore import PinStore
 from .receipts import ReceiptTracker, sign_receipt
 
 # Wire message types
@@ -77,6 +81,7 @@ class PeerConnection:
         self.writer = writer
         self.peer_info = peer_info
         self.session_key: Optional[bytes] = None
+        self.hmac_key: Optional[bytes] = None
         self.authenticated = False
 
     async def send(self, msg_type: int, payload: bytes) -> None:
@@ -112,6 +117,7 @@ class MalphasNode:
         message_ttl: int = 3600,
         cover_traffic: bool = True,
         transport: Optional[BaseTransport] = None,
+        pin_store: Optional[PinStore] = None,
     ):
         self.identity = identity
         self.host = host
@@ -120,10 +126,12 @@ class MalphasNode:
         self.discovery = PeerDiscovery(identity.peer_id)
         self.store = MessageStore(ttl_seconds=message_ttl)
         self.receipts = ReceiptTracker()
+        self.pins = pin_store or PinStore()
         self._connections: Dict[str, PeerConnection] = {}
         self._server: Optional[asyncio.AbstractServer] = None
         self._callbacks: Set[Callable] = set()
         self._receipt_callbacks: Set[Callable] = set()
+        self._pin_callbacks: Set[Callable] = set()
         self._running = False
 
         # Cover traffic engine
@@ -173,6 +181,10 @@ class MalphasNode:
     def on_receipt(self, callback: Callable) -> None:
         """callback(msg_id, dest_peer_id, received: bool)"""
         self._receipt_callbacks.add(callback)
+
+    def on_pin_violation(self, callback: Callable) -> None:
+        """callback(peer_id, expected_key_hex, received_key_hex)"""
+        self._pin_callbacks.add(callback)
 
     def _notify_message(self, from_id: str, content: str) -> None:
         for cb in self._callbacks:
@@ -242,12 +254,22 @@ class MalphasNode:
         }
         payload_bytes = json.dumps(payload_dict).encode()
 
-        # Sign
-        sig = self.identity.sign(payload_bytes)
-        signed = sig + payload_bytes
+        # Get HMAC key for the destination peer's connection.
+        # We need the dest's hmac_key — but the message routes through
+        # onion layers, so the dest decrypts and needs to verify.
+        # The HMAC key must be known to both sender and dest.
+        # We use the direct connection's hmac_key if dest is directly
+        # connected, or look up from connections.
+        dest_conn = self._connections.get(dest_peer_id)
+        if dest_conn and dest_conn.hmac_key:
+            tag = hmac_sign(dest_conn.hmac_key, payload_bytes)
+        else:
+            # Fallback: Ed25519 sig for peers without direct connection
+            tag = self.identity.sign(payload_bytes)
+        authenticated = tag + payload_bytes
 
         # Pad to block boundary
-        padded = pad_payload(signed)
+        padded = pad_payload(authenticated)
 
         # Wrap in onion
         packet = wrap_onion(padded, circuit)
@@ -295,10 +317,16 @@ class MalphasNode:
         }
         payload_bytes = json.dumps(payload_dict).encode()
 
-        # Sign the receipt payload — _deliver expects sig(64) + json for all non-cover packets
-        outer_sig = self.identity.sign(payload_bytes)
-        signed = outer_sig + payload_bytes
-        padded = pad_payload(signed)
+        # HMAC the receipt payload for deniable outer authentication.
+        # The inner Ed25519 sig (in the JSON "sig" field) provides
+        # non-repudiation for the receipt itself.
+        sender_conn = self._connections.get(from_id)
+        if sender_conn and sender_conn.hmac_key:
+            tag = hmac_sign(sender_conn.hmac_key, payload_bytes)
+        else:
+            tag = self.identity.sign(payload_bytes)
+        authenticated = tag + payload_bytes
+        padded = pad_payload(authenticated)
 
         # Route back to sender if we have them in routing table
         try:
@@ -380,16 +408,36 @@ class MalphasNode:
         except ValueError:
             return
 
-        # Check for cover traffic first (no signature prefix)
+        # Check for cover traffic first (no signature/hmac prefix)
         if is_cover(signed):
             return  # silently drop — this is correct behavior
 
-        # Real payload: 64-byte Ed25519 sig + JSON
-        if len(signed) < 64:
+        # Authenticated payload: tag + JSON
+        # Tag is either 32 bytes (HMAC-SHA256, deniable) or 64 bytes (Ed25519, legacy)
+        # We try HMAC first (preferred), then Ed25519 fallback.
+        if len(signed) < 33:  # minimum: 32-byte HMAC + 1 byte JSON
             return
 
-        sig = signed[:64]
-        payload_bytes = signed[64:]
+        # Try to parse JSON at offset 32 (HMAC) and 64 (Ed25519)
+        tag = None
+        payload_bytes = None
+        tag_len = 0
+
+        for tl in (32, 64):
+            if len(signed) < tl + 1:
+                continue
+            try:
+                candidate = signed[tl:]
+                json.loads(candidate.decode())
+                tag = signed[:tl]
+                payload_bytes = candidate
+                tag_len = tl
+                break
+            except Exception:
+                continue
+
+        if tag is None or payload_bytes is None:
+            return
 
         try:
             data = json.loads(payload_bytes.decode())
@@ -402,18 +450,26 @@ class MalphasNode:
         if not kind or not from_id:
             return
 
-        # Verify signature — mandatory. Unknown senders are dropped
-        # to prevent message injection from unauthenticated peers.
+        # Verify authentication — mandatory. Unknown senders are dropped.
         peer = self.discovery.get_peer(from_id)
         if not peer:
             return  # unknown sender — drop silently
 
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-        try:
-            pub = Ed25519PublicKey.from_public_bytes(peer.ed25519_pub)
-            pub.verify(sig, payload_bytes)
-        except Exception:
-            return  # invalid signature — drop
+        if tag_len == 32:
+            # HMAC verification — use the connection's hmac_key
+            sender_conn = self._connections.get(from_id)
+            if not sender_conn or not sender_conn.hmac_key:
+                return  # no HMAC key available — drop
+            if not hmac_verify(sender_conn.hmac_key, payload_bytes, tag):
+                return  # HMAC mismatch — drop
+        else:
+            # Ed25519 fallback
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            try:
+                pub = Ed25519PublicKey.from_public_bytes(peer.ed25519_pub)
+                pub.verify(tag, payload_bytes)
+            except Exception:
+                return  # invalid signature — drop
 
         if kind == KIND_MESSAGE:
             await self._deliver_message(data, from_id)
@@ -520,11 +576,24 @@ class MalphasNode:
             except Exception:
                 return False  # signature invalid — reject handshake
 
+            # Key pinning (TOFU): verify Ed25519 key matches the pinned key
+            # for this peer_id. First contact pins the key; subsequent contacts
+            # must match or the handshake is rejected.
+            ok, pinned = self.pins.check_and_pin(their_peer_id, their_ed25519)
+            if not ok:
+                for cb in self._pin_callbacks:
+                    try:
+                        cb(their_peer_id, pinned, their_ed25519.hex())
+                    except Exception:
+                        pass
+                return False  # key mismatch — reject
+
             shared = ecdh_shared_secret(eph_priv, their_eph)
             role = "initiator" if outbound else "responder"
             session_key = derive_session_key(shared, eph_pub, their_eph, role)
 
             conn.session_key = session_key
+            conn.hmac_key = derive_hmac_key(session_key)
             conn.authenticated = True
 
             host = conn.writer.get_extra_info("peername")[0]
@@ -553,6 +622,9 @@ class MalphasNode:
 
         # Wipe pending receipts
         self.receipts.wipe()
+
+        # Wipe key pins
+        self.pins.wipe()
 
         # Close all active connections immediately
         for conn in list(self._connections.values()):

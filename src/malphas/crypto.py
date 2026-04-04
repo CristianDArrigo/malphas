@@ -100,6 +100,28 @@ def derive_session_key(
     return hkdf_derive(shared_secret, salt=salt, info=info, length=32)
 
 
+# --- HMAC (deniable authentication) ------------------------------------------
+
+def derive_hmac_key(session_key: bytes) -> bytes:
+    """Derive a 32-byte HMAC key from the session key. Used for deniable
+    message authentication — both peers can produce the same HMAC, so
+    neither can prove the other authored a message."""
+    return hkdf_derive(session_key, salt=b"malphas-hmac-v1", info=b"message-auth")
+
+
+def hmac_sign(key: bytes, data: bytes) -> bytes:
+    """HMAC-SHA256. Returns 32-byte tag."""
+    import hmac as _hmac
+    return _hmac.digest(key, data, "sha256")
+
+
+def hmac_verify(key: bytes, data: bytes, tag: bytes) -> bool:
+    """Verify HMAC-SHA256 tag. Constant-time comparison."""
+    import hmac as _hmac
+    expected = _hmac.digest(key, data, "sha256")
+    return _hmac.compare_digest(expected, tag)
+
+
 # --- Onion layer helpers -----------------------------------------------------
 
 def pack_u16(n: int) -> bytes:

@@ -71,7 +71,7 @@ C_BORDER = "grey30"
 
 COMMANDS = [
     "/id", "/peers", "/book", "/add", "/chat", "/history",
-    "/export", "/import", "/wipe", "/panic", "/help", "/quit", "/exit",
+    "/export", "/import", "/trust", "/wipe", "/panic", "/help", "/quit", "/exit",
 ]
 
 
@@ -269,6 +269,7 @@ class MalphasCLI:
             ("/history", "show conversation history"),
             ("/export", "generate shareable invite URL"),
             ("/import <url>", "import peer from invite URL"),
+            ("/trust <peer_id|label>", "reset pinned key for a peer"),
             ("/wipe", "wipe all messages from memory"),
             ("/panic", "EMERGENCY: wipe everything and exit"),
             ("/quit", "shutdown"),
@@ -499,6 +500,25 @@ class MalphasCLI:
         else:
             self._err("connection failed")
 
+    async def _cmd_trust(self, args: list) -> None:
+        if not args:
+            self._err("usage: /trust <peer_id|label>")
+            return
+        target = args[0].strip()
+
+        # Resolve label to peer_id
+        contact = self.book.get(target)
+        if contact:
+            peer_id = contact.peer_id
+        elif PEER_ID_RE.match(target.lower()):
+            peer_id = target.lower()
+        else:
+            self._err("peer not found")
+            return
+
+        self.node.pins.trust(peer_id)
+        self._ok(f"pin reset for {peer_id[:16]}... — next connection will re-pin")
+
     async def _cmd_panic(self) -> None:
         import gc
         self.active_peer = None
@@ -549,9 +569,17 @@ class MalphasCLI:
 
     # ── Main loop ────────────────────────────────────────────────────────
 
+    def _on_pin_violation(self, peer_id: str, expected: str, received: str):
+        contact = self.book.get_by_peer_id(peer_id)
+        label = contact.label if contact else peer_id[:8]
+        self._plain(f"  \033[31m!!! KEY MISMATCH for {label} !!!\033[0m")
+        self._plain(f"  \033[31mexpected {expected[:16]}... got {received[:16]}...\033[0m")
+        self._plain(f"  \033[31mconnection rejected. use /trust {peer_id[:8]} to reset\033[0m")
+
     async def run(self) -> None:
         self.node.on_message(self._on_message)
         self.node.on_receipt(self._on_receipt)
+        self.node.on_pin_violation(self._on_pin_violation)
 
         # Banner
         self._print()
@@ -619,6 +647,8 @@ class MalphasCLI:
                         await self._cmd_export()
                     elif cmd == "import":
                         await self._cmd_import(args)
+                    elif cmd == "trust":
+                        await self._cmd_trust(args)
                     elif cmd == "wipe":
                         await self._cmd_wipe()
                     elif cmd == "panic":

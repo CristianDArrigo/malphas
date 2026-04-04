@@ -19,6 +19,7 @@ from pathlib import Path
 from .identity import create_identity_with_book_key
 from .node import MalphasNode
 from .addressbook import AddressBook
+from .pinstore import PinStore
 from .transport import DirectTransport, TorTransport, tor_is_available
 from .splash import print_splash
 
@@ -77,12 +78,18 @@ async def _run_cli(args) -> None:
             control_port=args.control_port,
         )
 
+    # Pin store — same directory as address book, encrypted with same key
+    pin_path = str(book_path.parent / "pins")
+    pins = PinStore(pin_path, book_key)
+    pins.load()
+
     node = MalphasNode(
         identity=identity,
         host=args.host,
         port=args.port,
         message_ttl=args.ttl,
         transport=transport,
+        pin_store=pins,
     )
     await node.start()
 
