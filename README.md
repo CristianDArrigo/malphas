@@ -201,13 +201,14 @@ At startup malphas shows the ASCII splash, then asks for a passphrase:
   passphrase:
 ```
 
-**With Tor:**
+**With Tor (recommended for remote peers):**
 
 ```bash
+# Requires Tor running: sudo apt install tor && sudo systemctl start tor
 malphas --tor --port 7777
 ```
 
-malphas will display your `.onion` address after registering the hidden service.
+malphas registers a Tor v3 hidden service and displays your `.onion` address. No port forwarding needed — it works behind any NAT.
 
 **Web mode (PWA):**
 
@@ -216,26 +217,38 @@ malphas --mode web --api-port 8080
 # open http://127.0.0.1:8080
 ```
 
----
+### Connecting via invite (recommended)
 
-## CLI Reference
+The easiest way to connect two peers is the invite system:
 
 ```
-/id                     show peer_id, public keys, and port — share this to receive connections
-/peers                  list peers currently in the routing table
-/book                   list address book contacts
-/book add <label>       save the active conversation peer to the address book
-/book rm <label>        remove a contact from the address book
-/add <host> <port>      connect to a peer (prompts for their keys)
-/chat <peer_id|label>   open a conversation; if label is in address book, auto-connects
-/history                show message history for the active conversation
-/wipe                   wipe all messages from memory (asks for confirmation)
-/panic                  EMERGENCY: wipe everything and exit immediately — no confirmation
-/help                   show this list
-<text>                  send a message to the active conversation
+# Alice generates her invite:
+/export
+  malphas://eyJ0eXBlIjoiaW52aXRl...
+
+  Alice sends this URL to Bob via any channel (Signal, email, in person).
+  The URL contains her public keys, host:port, and .onion address (if --tor).
+
+# Bob imports Alice's invite:
+/import malphas://eyJ0eXBlIjoiaW52aXRl...
+  peer_id    a0f8e7d83391a0c9dd9f9b3ba97f7a490dafae91
+  host       192.168.1.10:7777
+  onion      abc...xyz.onion
+  connect? [Y/n] y
+  save to address book? [y/N] y
+  label: alice
+
+# Bob is now connected to Alice. If both use --tor, the connection
+# goes through Alice's .onion address automatically.
+/chat alice
+hello alice
 ```
 
-### Connecting to a peer
+If Alice also wants Bob's credentials (for reconnecting if the session drops), Bob runs `/export` and sends his URL to Alice.
+
+### Connecting via /add (manual)
+
+For manual key exchange without the invite system:
 
 ```
 # On peer A:
@@ -252,6 +265,97 @@ malphas --mode web --api-port 8080
   ed25519_pub (64-char hex): 8b2c...
   save to address book? [y/N] y
   label: alice
+```
+
+### Quickstart: two peers over Tor
+
+Step-by-step for two people on different networks who want to chat privately via Tor:
+
+**Both peers** install and launch:
+
+```bash
+# Install Tor
+sudo apt install tor          # Linux
+brew install tor              # macOS
+
+# Enable the control port (needed for hidden service registration)
+# Edit /etc/tor/torrc (Linux) or /usr/local/etc/tor/torrc (macOS):
+#   ControlPort 9051
+#   CookieAuthentication 1
+# Then restart Tor:
+sudo systemctl restart tor    # Linux
+brew services restart tor     # macOS
+
+# Install malphas
+git clone https://github.com/CristianDArrigo/malphas.git
+cd malphas
+pip install -e .
+
+# Launch with Tor
+malphas --tor --port 7777
+# Enter a strong passphrase (same passphrase = same identity, always)
+```
+
+**Peer A** (initiator):
+
+```
+/export
+→ copies the malphas://... URL and sends it to Peer B
+  (via Signal, email, or any other channel)
+```
+
+**Peer B** (receiver):
+
+```
+/import malphas://...
+→ automatically connects to Peer A via .onion
+  connect? [Y/n] y
+  save to address book? [y/N] y
+  label: alice
+
+/chat alice
+hello from the other side
+```
+
+Messages are now end-to-end encrypted and routed through Tor. Neither peer's IP is exposed to the other. The `.onion` address is permanent — as long as the passphrase stays the same, the address never changes.
+
+If Peer B also wants to be reachable when Peer A is offline and reconnects later, Peer B runs `/export` and sends the URL back to Peer A.
+
+### Multiple peers
+
+Each node can connect to multiple peers simultaneously. With 3+ peers, malphas uses onion routing (messages relay through intermediate peers, each seeing only adjacent hops):
+
+```
+/import malphas://...alice...
+/import malphas://...bob...
+/import malphas://...charlie...
+/peers
+  0  a0f8e7d83391a0c9...  alice
+  1  b3c4d5e6f7081920...  bob
+  2  c5d6e7f809102030...  charlie
+/chat alice
+hello — this message may route through bob or charlie as relay
+```
+
+---
+
+## CLI Reference
+
+```
+/id                     show peer_id, public keys, and port
+/peers                  list peers currently in the routing table
+/book                   list address book contacts
+/book add <label>       save the active conversation peer to the address book
+/book rm <label>        remove a contact from the address book
+/add <host> <port>      connect to a peer (prompts for their keys)
+/chat <peer_id|label>   open a conversation; if label is in address book, auto-connects
+/history                show message history for the active conversation
+/export                 generate a signed invite URL to share your credentials
+/import <url>           import a peer from an invite URL and connect
+/wipe                   wipe all messages from memory (asks for confirmation)
+/panic                  EMERGENCY: wipe everything and exit immediately — no confirmation
+/help                   show this list
+<text>                  send a message to the active conversation
 ```
 
 ---
