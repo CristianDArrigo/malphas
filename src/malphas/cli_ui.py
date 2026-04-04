@@ -170,6 +170,13 @@ class MalphasCLI:
         return "  |  ".join(parts)
 
     # ── Callbacks ────────────────────────────────────────────────────────
+    # These fire asynchronously — use plain print() to avoid
+    # rich ANSI issues outside patch_stdout context.
+
+    def _plain(self, msg: str):
+        """Print plain text, clearing the current line first."""
+        sys.stdout.write(f"\r\033[2K{msg}\n")
+        sys.stdout.flush()
 
     async def _on_message(self, from_id: str, content: str) -> None:
         contact = self.book.get_by_peer_id(from_id)
@@ -177,17 +184,17 @@ class MalphasCLI:
         ts = time.strftime("%H:%M")
 
         if from_id == self.active_peer:
-            self._print(f"  [{C_DIM}]{ts}[/{C_DIM}] [{C_ACCENT}]{label}[/{C_ACCENT}]  {content}")
+            self._plain(f"  \033[90m{ts}\033[0m \033[31m{label}\033[0m  {content}")
         else:
-            self._warn(f"new message from [{C_ACCENT}]{label}[/{C_ACCENT}]  (/chat {from_id[:8]})")
+            self._plain(f"  \033[33m<\033[0m {label}: {content}")
 
     async def _on_receipt(self, msg_id: str, dest_peer_id: str, received: bool) -> None:
-        contact = self.book.get_by_peer_id(dest_peer_id)
-        label = contact.label if contact else dest_peer_id[:8]
         if received:
-            self._ok(f"read by {label}")
+            self._plain("  \033[32m\u2713\033[0m")
         else:
-            self._warn(f"no receipt from {label}")
+            contact = self.book.get_by_peer_id(dest_peer_id)
+            label = contact.label if contact else dest_peer_id[:8]
+            self._plain(f"  \033[33m!\033[0m no receipt from {label}")
 
     # ── Commands ─────────────────────────────────────────────────────────
 
@@ -244,11 +251,11 @@ class MalphasCLI:
         for m in msgs:
             ts = time.strftime("%H:%M", time.localtime(m["timestamp"]))
             if m["from_peer"] == self.node.identity.peer_id:
-                self._print(f"  [{C_DIM}]{ts}  you[/{C_DIM}]  {m['content']}")
+                self._plain(f"  \033[90m{ts}  you\033[0m  {m['content']}")
             else:
                 contact = self.book.get_by_peer_id(m["from_peer"])
                 name = contact.label if contact else m["from_peer"][:8]
-                self._print(f"  [{C_DIM}]{ts}[/{C_DIM}]  [{C_ACCENT}]{name}[/{C_ACCENT}]  {m['content']}")
+                self._plain(f"  \033[90m{ts}\033[0m \033[31m{name}\033[0m  {m['content']}")
 
     def _print_help(self):
         cmds = [
@@ -507,7 +514,10 @@ class MalphasCLI:
         ok = await self.node.send_message(self.active_peer, text)
         if ok:
             ts = time.strftime("%H:%M")
-            self._print(f"  [{C_DIM}]{ts}  you[/{C_DIM}]  {text}")
+            # Clear the echoed prompt line, then print formatted message
+            sys.stdout.write("\033[A\033[2K")
+            sys.stdout.flush()
+            self._plain(f"  \033[90m{ts}  you\033[0m  {text}")
         else:
             self._err("send failed: peer unreachable or no circuit")
 

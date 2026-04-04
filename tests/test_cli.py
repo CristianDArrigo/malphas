@@ -195,17 +195,29 @@ def _capture(cli) -> StringIO:
 
 
 def _run_capture(cli, func, *args, **kwargs):
-    """Run a sync method on cli, capturing rich output. Returns output string."""
+    """Run a sync method on cli, capturing rich + plain output. Returns output string."""
     buf = _capture(cli)
-    func(*args, **kwargs)
-    return buf.getvalue()
+    stdout_buf = StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = stdout_buf
+    try:
+        func(*args, **kwargs)
+    finally:
+        sys.stdout = old_stdout
+    return buf.getvalue() + stdout_buf.getvalue()
 
 
 async def _run_capture_async(cli, coro):
-    """Await an async coroutine on cli, capturing rich output. Returns output string."""
+    """Await an async coroutine on cli, capturing rich + plain output. Returns output string."""
     buf = _capture(cli)
-    await coro
-    return buf.getvalue()
+    stdout_buf = StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = stdout_buf
+    try:
+        await coro
+    finally:
+        sys.stdout = old_stdout
+    return buf.getvalue() + stdout_buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -816,7 +828,9 @@ class TestCallbacks:
         output = await _run_capture_async(
             cli, cli._on_message(identity_cli_b.peer_id, "hello from bob")
         )
-        assert "new message" in output.lower()
+        # New format: "< bob: hello from bob"
+        assert "bob" in output.lower()
+        assert "hello from bob" in output
 
     async def test_on_message_uses_label_from_book(
         self, cli_with_bob, identity_cli_b
@@ -841,8 +855,8 @@ class TestCallbacks:
         output = await _run_capture_async(
             cli, cli._on_receipt("msg123", identity_cli_b.peer_id, True)
         )
-        assert "read by" in output.lower()
-        assert "bob" in output.lower()
+        # Positive receipt is now a checkmark
+        assert "\u2713" in output
 
     async def test_on_receipt_not_received(self, cli_with_bob, identity_cli_b):
         cli = cli_with_bob
@@ -854,7 +868,7 @@ class TestCallbacks:
     async def test_on_receipt_unknown_peer_shows_truncated_id(self, cli):
         fake_peer_id = "b" * 40
         output = await _run_capture_async(
-            cli, cli._on_receipt("msg123", fake_peer_id, True)
+            cli, cli._on_receipt("msg123", fake_peer_id, False)
         )
         assert fake_peer_id[:8] in output
 
