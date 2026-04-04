@@ -423,14 +423,24 @@ class MalphasCLI:
         self._print()
         self._print(f"  {url}")
         self._print()
-        self._print(Panel(
-            "[dim]this invite contains your current host and port.\n"
-            "it will stop working if your IP changes.\n"
-            "if running with --tor, the .onion address is permanent.[/dim]",
-            border_style=C_BORDER,
-            title=f"[{C_WARN}]warning[/{C_WARN}]",
-            title_align="left",
-        ))
+        if onion_addr:
+            self._print(Panel(
+                f"[dim]your peer will connect via your .onion address.\n"
+                f"the .onion is permanent — same passphrase, same address.\n"
+                f"host:port in the invite is a fallback for LAN/direct connections.[/dim]",
+                border_style=C_BORDER,
+                title=f"[{C_DIM}]tor[/{C_DIM}]",
+                title_align="left",
+            ))
+        else:
+            self._print(Panel(
+                "[dim]this invite contains your current host and port.\n"
+                "it will stop working if your IP changes.\n"
+                "use --tor for a permanent .onion address.[/dim]",
+                border_style=C_BORDER,
+                title=f"[{C_WARN}]warning[/{C_WARN}]",
+                title_align="left",
+            ))
 
     async def _cmd_import(self, args: list) -> None:
         if not args:
