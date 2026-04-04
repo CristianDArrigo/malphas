@@ -395,7 +395,7 @@ class MalphasNode:
             while self._running:
                 msg_type, payload = await conn.recv_raw()
                 await self._dispatch(conn, msg_type, payload)
-        except (asyncio.IncompleteReadError, ConnectionResetError):
+        except (asyncio.IncompleteReadError, ConnectionResetError, OSError, Exception):
             pass
         finally:
             peer_id = conn.peer_info.peer_id if conn.peer_info else None
@@ -677,7 +677,7 @@ class MalphasNode:
                 if ok:
                     break
                 delay = min(delay * 2, max_delay)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, Exception):
             pass
         finally:
             self._reconnect_tasks.pop(peer_id, None)

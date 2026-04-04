@@ -580,14 +580,17 @@ class MalphasCLI:
             return
         self._info(f"auto-connecting {len(contacts)} contact(s)...", tag="book")
         for c in contacts:
-            ok = await self.node.connect_to_peer(
-                c.host, c.port, c.peer_id,
-                bytes.fromhex(c.x25519_pub),
-                bytes.fromhex(c.ed25519_pub),
-            )
-            if ok:
-                self._ok(f"connected: {c.label}")
-            else:
+            try:
+                ok = await self.node.connect_to_peer(
+                    c.host, c.port, c.peer_id,
+                    bytes.fromhex(c.x25519_pub),
+                    bytes.fromhex(c.ed25519_pub),
+                )
+                if ok:
+                    self._ok(f"connected: {c.label}")
+                else:
+                    self._info(f"unreachable: {c.label}", tag="-")
+            except Exception:
                 self._info(f"unreachable: {c.label}", tag="-")
 
     # ── Main loop ────────────────────────────────────────────────────────
