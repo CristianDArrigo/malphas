@@ -1,0 +1,9 @@
+name = "malphas"
+compatibility_date = "2024-12-01"
+
+[assets]
+directory = "."
+
+[[routes]]
+pattern = "malphas.cdarrigo.com/*"
+zone_name = "cdarrigo.com"
