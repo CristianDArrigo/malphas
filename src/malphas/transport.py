@@ -274,7 +274,7 @@ class TorTransport(BaseTransport):
                 {80: local_port},
                 key_type="ED25519-V3",
                 key_content=key_content,
-                await_publication=True,
+                await_publication=False,
             )
         )
 
