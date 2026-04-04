@@ -250,33 +250,28 @@ class TorTransport(BaseTransport):
         onion = ed25519_pub_to_onion(ed25519_pub_bytes)
 
         # Format key for stem: base64(priv_seed(32) + pub(32))
-        # stem adds the "ED25519-V3:" prefix via key_type parameter
         expanded = ed25519_priv_bytes + ed25519_pub_bytes
         key_content = base64.b64encode(expanded).decode()
 
-        loop = asyncio.get_running_loop()
-        controller = await loop.run_in_executor(
-            None,
-            lambda: Controller.from_port(
+        # Run all stem operations in a single executor call.
+        # stem's Controller is not thread-safe — splitting across
+        # multiple executor calls causes silent registration failures.
+        def _register():
+            ctrl = Controller.from_port(
                 address=self._control_host,
                 port=self._control_port,
             )
-        )
-
-        await loop.run_in_executor(
-            None,
-            lambda: controller.authenticate(password=self._control_password)
-        )
-
-        hs = await loop.run_in_executor(
-            None,
-            lambda: controller.create_ephemeral_hidden_service(
+            ctrl.authenticate(password=self._control_password)
+            hs = ctrl.create_ephemeral_hidden_service(
                 {80: local_port},
                 key_type="ED25519-V3",
                 key_content=key_content,
                 await_publication=False,
             )
-        )
+            return ctrl, hs
+
+        loop = asyncio.get_running_loop()
+        controller, hs = await loop.run_in_executor(None, _register)
 
         self._controller = controller
         self._hidden_service = hs
