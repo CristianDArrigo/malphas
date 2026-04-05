@@ -224,12 +224,20 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 
 ### Automated setup (Linux, recommended)
 
-The setup script installs Tor, configures ControlPort, sets permissions, and installs malphas:
+The setup script installs Tor, configures ControlPort, sets permissions, and prepares the hidden service directory:
 
 ```bash
 git clone https://github.com/CristianDArrigo/malphas.git
 cd malphas
 sudo bash scripts/setup.sh
+pip install -e .
+malphas --tor --port 7777
+```
+
+To remove all malphas traces from the system (Tor config, hidden service keys, address book, pins):
+
+```bash
+sudo bash scripts/cleanup.sh
 ```
 
 ### Manual setup
@@ -909,7 +917,8 @@ malphas/
 ├── frontend/showcase/
 │   └── index.html       project landing page
 ├── scripts/
-│   └── setup.sh         automated Tor + malphas setup (Linux)
+│   ├── setup.sh         automated Tor setup (Linux)
+│   └── cleanup.sh       remove all malphas traces from the system
 └── tests/               470+ tests across 15 files
 ```
 
