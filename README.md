@@ -222,14 +222,14 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 
 **Requirements:** Python 3.10+ (or Docker)
 
-### Docker (simplest)
+### Docker (WIP)
 
 ```bash
 docker build -t malphas https://github.com/CristianDArrigo/malphas.git
 docker run -it -v malphas-data:/root/.malphas malphas
 ```
 
-Tor is configured inside the container. The `-v` flag persists the address book across restarts. No setup needed on the host.
+Tor hidden services do not work reliably inside Docker containers due to Tor self-rendezvous limitations. Use Docker for direct TCP messaging only. For Tor support, use the native setup below.
 
 ### Automated setup (Linux)
 
