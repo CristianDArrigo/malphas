@@ -208,11 +208,11 @@ if [ "$PASS" = true ]; then
     echo "    malphas --tor --port 7777"
     echo "  ─────────────────────────────────────────"
 
-    # Apply group membership immediately without re-login
+    # Group membership requires a new shell to take effect
     if [ -n "$SUDO_USER_NAME" ] && [ "$SUDO_USER_NAME" != "root" ] && [ -n "$TOR_GROUP" ]; then
         echo ""
-        echo "  applying group membership..."
-        exec su - "$SUDO_USER_NAME" -c "cd $(pwd) && exec \$SHELL"
+        echo "  run this to apply group membership:"
+        echo "    newgrp $TOR_GROUP"
     fi
 else
     echo "  setup finished with errors — check above"
