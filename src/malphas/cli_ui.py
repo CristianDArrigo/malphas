@@ -29,7 +29,9 @@ from io import StringIO
 from typing import Optional
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit import print_formatted_text as ptk_print
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
@@ -176,9 +178,8 @@ class MalphasCLI:
     # rich ANSI issues outside patch_stdout context.
 
     def _plain(self, msg: str):
-        """Print plain text, clearing the current line first."""
-        sys.stdout.write(f"\r\033[2K{msg}\n")
-        sys.stdout.flush()
+        """Print with ANSI colors, compatible with prompt_toolkit."""
+        ptk_print(ANSI(msg))
 
     async def _on_message(self, from_id: str, content: str) -> None:
         contact = self.book.get_by_peer_id(from_id)
@@ -567,9 +568,6 @@ class MalphasCLI:
         ok = await self.node.send_message(self.active_peer, text)
         if ok:
             ts = time.strftime("%H:%M")
-            # Clear the echoed prompt line, then print formatted message
-            sys.stdout.write("\033[A\033[2K")
-            sys.stdout.flush()
             self._plain(f"  \033[90m{ts}  you\033[0m  {text}")
         else:
             self._err("send failed: peer unreachable or no circuit")
