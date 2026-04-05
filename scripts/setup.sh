@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 #
-# malphas setup script
+# malphas Tor setup script
 #
-# Installs Tor, configures ControlPort, sets permissions,
-# installs malphas, and verifies everything works.
+# Installs and configures Tor for use with malphas hidden services.
+# Does NOT install malphas itself — do that with: pip install -e .
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/CristianDArrigo/malphas/main/scripts/setup.sh | sudo bash
-#   or:
+#   git clone https://github.com/CristianDArrigo/malphas.git
+#   cd malphas
 #   sudo bash scripts/setup.sh
+#   pip install -e .
+#   sudo malphas --tor --port 7777
 #
 
 set -e
@@ -23,14 +25,14 @@ err()  { echo -e "  ${RED}[err]${NC} $1"; }
 info() { echo -e "  ${DIM}[...]${NC} $1"; }
 
 echo ""
-echo "  malphas setup"
-echo "  ─────────────"
+echo "  malphas tor setup"
+echo "  ─────────────────"
 echo ""
 
 # ── Check root ──────────────────────────────────────────────────────────────
 
 if [ "$EUID" -ne 0 ]; then
-    err "this script must be run as root (sudo bash scripts/setup.sh)"
+    err "run as root: sudo bash scripts/setup.sh"
     exit 1
 fi
 
@@ -39,13 +41,12 @@ fi
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$ID
-    VER=$VERSION_ID
 else
     err "cannot detect OS"
     exit 1
 fi
 
-info "detected $OS $VER"
+info "detected $OS"
 
 # ── Install Tor ─────────────────────────────────────────────────────────────
 
@@ -61,13 +62,13 @@ else
     elif [ "$OS" = "arch" ] || [ "$OS" = "manjaro" ]; then
         pacman -S --noconfirm tor
     else
-        err "unsupported OS: $OS. install tor manually and re-run."
+        err "unsupported OS: $OS — install tor manually and re-run"
         exit 1
     fi
     ok "tor installed"
 fi
 
-# ── Configure Tor ControlPort ───────────────────────────────────────────────
+# ── Configure ControlPort ───────────────────────────────────────────────────
 
 TORRC="/etc/tor/torrc"
 
@@ -75,19 +76,17 @@ if grep -q "^ControlPort 9051" "$TORRC" 2>/dev/null; then
     ok "ControlPort 9051 already enabled"
 else
     info "enabling ControlPort 9051..."
-    # Try to uncomment first, then append if not found
     if grep -q "#ControlPort 9051" "$TORRC" 2>/dev/null; then
         sed -i 's/#ControlPort 9051/ControlPort 9051/' "$TORRC"
     else
         echo "ControlPort 9051" >> "$TORRC"
     fi
-    ok "ControlPort 9051 enabled"
+    ok "ControlPort enabled"
 fi
 
 if grep -q "^CookieAuthentication 1" "$TORRC" 2>/dev/null; then
     ok "CookieAuthentication already enabled"
 else
-    info "enabling CookieAuthentication..."
     if grep -q "#CookieAuthentication 1" "$TORRC" 2>/dev/null; then
         sed -i 's/#CookieAuthentication 1/CookieAuthentication 1/' "$TORRC"
     else
@@ -96,7 +95,7 @@ else
     ok "CookieAuthentication enabled"
 fi
 
-# ── Start/restart Tor ───────────────────────────────────────────────────────
+# ── Start Tor ───────────────────────────────────────────────────────────────
 
 info "restarting tor..."
 if systemctl is-active --quiet tor@default 2>/dev/null; then
@@ -111,22 +110,15 @@ ok "tor running"
 
 # ── Fix cookie permissions ──────────────────────────────────────────────────
 
-COOKIE="/run/tor/control.authcookie"
-if [ -f "$COOKIE" ]; then
-    chmod o+r "$COOKIE"
-    ok "cookie permissions set"
-else
-    # Try alternative location
-    COOKIE="/var/run/tor/control.authcookie"
+for COOKIE in /run/tor/control.authcookie /var/run/tor/control.authcookie; do
     if [ -f "$COOKIE" ]; then
         chmod o+r "$COOKIE"
-        ok "cookie permissions set"
-    else
-        err "cookie file not found — tor may not have started correctly"
+        ok "cookie permissions set ($COOKIE)"
+        break
     fi
-fi
+done
 
-# ── Add user to debian-tor group (persistent fix) ───────────────────────────
+# ── Add user to tor group ───────────────────────────────────────────────────
 
 SUDO_USER_NAME="${SUDO_USER:-$USER}"
 if [ "$SUDO_USER_NAME" != "root" ]; then
@@ -139,94 +131,36 @@ if [ "$SUDO_USER_NAME" != "root" ]; then
     fi
 fi
 
-# ── Verify Tor is working ──────────────────────────────────────────────────
+# ── Verify ──────────────────────────────────────────────────────────────────
 
-info "verifying tor..."
+info "verifying..."
+PASS=true
+
 if ss -tlnp | grep -q ":9050 "; then
     ok "SOCKS5 proxy on port 9050"
 else
     err "SOCKS5 proxy not listening on 9050"
+    PASS=false
 fi
 
 if ss -tlnp | grep -q ":9051 "; then
     ok "ControlPort on port 9051"
 else
     err "ControlPort not listening on 9051"
+    PASS=false
 fi
 
-# ── Install Python 3.11+ if needed ─────────────────────────────────────────
+# ── Done ────────────────────────────────────────────────────────────────────
 
-PYTHON=""
-for py in python3.13 python3.12 python3.11 python3; do
-    if command -v $py &>/dev/null; then
-        PY_VER=$($py -c "import sys; print(sys.version_info[:2])" 2>/dev/null)
-        PY_MAJOR=$($py -c "import sys; print(sys.version_info[0])" 2>/dev/null)
-        PY_MINOR=$($py -c "import sys; print(sys.version_info[1])" 2>/dev/null)
-        if [ "$PY_MAJOR" -ge 3 ] && [ "$PY_MINOR" -ge 11 ]; then
-            PYTHON=$py
-            break
-        fi
-    fi
-done
-
-if [ -n "$PYTHON" ]; then
-    ok "python: $($PYTHON --version)"
+echo ""
+if [ "$PASS" = true ]; then
+    echo "  ─────────────────────────────────────────"
+    echo "  tor setup complete. now install malphas:"
+    echo ""
+    echo "    pip install -e ."
+    echo "    sudo malphas --tor --port 7777"
+    echo "  ─────────────────────────────────────────"
 else
-    info "installing python 3.12..."
-    if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
-        add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
-        apt-get update -qq
-        apt-get install -y -qq python3.12 python3.12-venv 2>/dev/null || apt-get install -y -qq python3.11 python3.11-venv 2>/dev/null
-    fi
-    for py in python3.12 python3.11; do
-        if command -v $py &>/dev/null; then
-            PYTHON=$py
-            break
-        fi
-    done
-    if [ -n "$PYTHON" ]; then
-        ok "python: $($PYTHON --version)"
-    else
-        err "could not install python 3.11+. install manually and re-run."
-        exit 1
-    fi
+    echo "  setup finished with errors — check above"
 fi
-
-# ── Install malphas ─────────────────────────────────────────────────────────
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-
-if [ -f "$PROJECT_DIR/pyproject.toml" ]; then
-    info "installing malphas from local directory..."
-    cd "$PROJECT_DIR"
-    if [ ! -d ".venv" ]; then
-        $PYTHON -m venv .venv
-    fi
-    . .venv/bin/activate
-    pip install -e . -q
-    ok "malphas installed"
-else
-    info "installing malphas from github..."
-    pip install git+https://github.com/CristianDArrigo/malphas.git -q 2>/dev/null || {
-        err "could not install from github. clone the repo first:"
-        echo "    git clone https://github.com/CristianDArrigo/malphas.git"
-        echo "    cd malphas && sudo bash scripts/setup.sh"
-        exit 1
-    }
-    ok "malphas installed from github"
-fi
-
-# ── Summary ─────────────────────────────────────────────────────────────────
-
-echo ""
-echo "  ─────────────────────────────────────────"
-echo "  setup complete. launch malphas with:"
-echo ""
-echo "    malphas --tor --port 7777"
-echo ""
-echo "  note: malphas needs sudo for hidden service"
-echo "  registration (writes to /var/lib/tor/)."
-echo "  run with: sudo malphas --tor --port 7777"
-echo "  ─────────────────────────────────────────"
 echo ""
