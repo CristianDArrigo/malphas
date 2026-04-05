@@ -121,14 +121,61 @@ done
 # ── Add user to tor group ───────────────────────────────────────────────────
 
 SUDO_USER_NAME="${SUDO_USER:-$USER}"
-if [ "$SUDO_USER_NAME" != "root" ]; then
-    if getent group debian-tor &>/dev/null; then
-        usermod -aG debian-tor "$SUDO_USER_NAME"
-        ok "added $SUDO_USER_NAME to debian-tor group"
-    elif getent group tor &>/dev/null; then
-        usermod -aG tor "$SUDO_USER_NAME"
-        ok "added $SUDO_USER_NAME to tor group"
-    fi
+TOR_GROUP=""
+
+if getent group debian-tor &>/dev/null; then
+    TOR_GROUP="debian-tor"
+elif getent group tor &>/dev/null; then
+    TOR_GROUP="tor"
+fi
+
+if [ -n "$TOR_GROUP" ] && [ "$SUDO_USER_NAME" != "root" ]; then
+    usermod -aG "$TOR_GROUP" "$SUDO_USER_NAME"
+    ok "added $SUDO_USER_NAME to $TOR_GROUP group"
+fi
+
+# ── Pre-create hidden service directory ─────────────────────────────────────
+# malphas writes HS key files here. The directory must be owned by the
+# Tor user (debian-tor) with group write so the launching user can write
+# key files without sudo. Tor requires 700 on the directory, but we use
+# 770 with the tor group so the user (added above) can also write.
+
+HS_DIR="/var/lib/tor/malphas_hs"
+info "preparing hidden service directory..."
+mkdir -p "$HS_DIR"
+
+if [ -n "$TOR_GROUP" ]; then
+    chown "$TOR_GROUP:$TOR_GROUP" "$HS_DIR"
+    chmod 770 "$HS_DIR"
+    ok "hidden service directory ready ($HS_DIR, group $TOR_GROUP)"
+else
+    chmod 700 "$HS_DIR"
+    ok "hidden service directory ready ($HS_DIR)"
+fi
+
+# ── Pre-configure torrc for malphas hidden service ──────────────────────────
+# Add HiddenServiceDir and HiddenServicePort if not already present.
+# malphas will write the key files; Tor reads them on reload.
+# The port 80 maps to the local malphas port (default 7777).
+# Users can change the local port — malphas will update on first launch.
+
+TORRC="/etc/tor/torrc"
+if ! grep -q "malphas_hs" "$TORRC" 2>/dev/null; then
+    info "adding hidden service config to torrc..."
+    echo "" >> "$TORRC"
+    echo "HiddenServiceDir $HS_DIR" >> "$TORRC"
+    echo "HiddenServicePort 80 127.0.0.1:7777" >> "$TORRC"
+    ok "hidden service config added to torrc"
+else
+    ok "hidden service config already in torrc"
+fi
+
+# ── Make torrc writable by tor group (so malphas can update port) ───────────
+
+if [ -n "$TOR_GROUP" ]; then
+    chgrp "$TOR_GROUP" "$TORRC"
+    chmod g+w "$TORRC"
+    ok "torrc writable by $TOR_GROUP group"
 fi
 
 # ── Verify ──────────────────────────────────────────────────────────────────

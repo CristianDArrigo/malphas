@@ -290,14 +290,17 @@ class TorTransport(BaseTransport):
             header_public = b"== ed25519v1-public: type0 ==\x00\x00\x00"
             public_key_content = header_public + ed25519_pub_bytes
 
-            # Write key files
+            # Write key files.
+            # The directory should already exist with correct group
+            # permissions (created by scripts/setup.sh). If not, try
+            # to create it — may fail without sudo.
+            hs_path.mkdir(parents=True, exist_ok=True)
             (hs_path / "hs_ed25519_secret_key").write_bytes(secret_key_content)
             (hs_path / "hs_ed25519_public_key").write_bytes(public_key_content)
             (hs_path / "hostname").write_text(onion + "\n")
 
-            # Set ownership and permissions.
-            # Tor runs as debian-tor (or tor on some distros) and requires
-            # 700 on the directory and 600 on key files.
+            # Set ownership to Tor user so Tor can read the keys.
+            # This requires being in the debian-tor group (setup.sh handles this).
             import pwd
             try:
                 tor_user = pwd.getpwnam("debian-tor")
@@ -307,24 +310,30 @@ class TorTransport(BaseTransport):
                 except KeyError:
                     tor_user = None
 
-            os.chmod(hs_path, 0o700)
-            for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                os.chmod(hs_path / f, 0o600)
-
-            if tor_user:
-                os.chown(hs_path, tor_user.pw_uid, tor_user.pw_gid)
+            try:
+                os.chmod(hs_path, 0o700)
                 for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                    os.chown(hs_path / f, tor_user.pw_uid, tor_user.pw_gid)
+                    os.chmod(hs_path / f, 0o600)
+                if tor_user:
+                    os.chown(hs_path, tor_user.pw_uid, tor_user.pw_gid)
+                    for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
+                        os.chown(hs_path / f, tor_user.pw_uid, tor_user.pw_gid)
+            except PermissionError:
+                pass  # setup.sh already set correct group permissions
 
-            # Add HiddenService config to torrc if not already present
+            # Add HiddenService config to torrc if not already present.
+            # setup.sh pre-configures this, but if the port changed or
+            # setup.sh wasn't run, we try to add it here.
             torrc_path = Path("/etc/tor/torrc")
-            torrc = torrc_path.read_text()
-            hs_config = f"\nHiddenServiceDir {hs_path}\nHiddenServicePort 80 127.0.0.1:{local_port}\n"
+            try:
+                torrc = torrc_path.read_text()
+                hs_config = f"\nHiddenServiceDir {hs_path}\nHiddenServicePort 80 127.0.0.1:{local_port}\n"
+                if str(hs_path) not in torrc:
+                    torrc_path.write_text(torrc + hs_config)
+            except PermissionError:
+                pass  # torrc already configured by setup.sh
 
-            if str(hs_path) not in torrc:
-                torrc_path.write_text(torrc + hs_config)
-
-            # Reload Tor to pick up the new hidden service.
+            # Reload Tor to pick up the key files.
             # stem's signal("RELOAD") can crash when Tor drops the
             # control connection during reload, so we catch and ignore.
             ctrl = Controller.from_port(
