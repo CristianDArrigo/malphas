@@ -220,9 +220,18 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 
 ## Installation
 
-**Requirements:** Python 3.10+
+**Requirements:** Python 3.10+ (or Docker)
 
-### Automated setup (Linux, recommended)
+### Docker (simplest)
+
+```bash
+docker build -t malphas https://github.com/CristianDArrigo/malphas.git
+docker run -it -v malphas-data:/root/.malphas malphas
+```
+
+Tor is configured inside the container. The `-v` flag persists the address book across restarts. No setup needed on the host.
+
+### Automated setup (Linux)
 
 The setup script installs Tor, configures ControlPort, sets permissions, and prepares the hidden service directory:
 
@@ -916,9 +925,11 @@ malphas/
 │   └── __main__.py      CLI entry point, argument parsing
 ├── frontend/showcase/
 │   └── index.html       project landing page
+├── Dockerfile           containerized malphas + Tor
 ├── scripts/
 │   ├── setup.sh         automated Tor setup (Linux)
-│   └── cleanup.sh       remove all malphas traces from the system
+│   ├── cleanup.sh       remove all malphas traces from the system
+│   └── audit.sh         self-audit: 15 verifiable security checks
 └── tests/               470+ tests across 15 files
 ```
 
