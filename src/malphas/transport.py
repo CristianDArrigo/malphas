@@ -290,9 +290,10 @@ class TorTransport(BaseTransport):
             header_public = b"== ed25519v1-public: type0 ==\x00\x00\x00"
             public_key_content = header_public + ed25519_pub_bytes
 
-            # Write key files to a temp location, then sudo mv into the
-            # Tor HS directory. This avoids permission issues — the user
-            # writes to /tmp, then sudo moves and chowns in one step.
+            # Write key files to /tmp, then use sudo to copy into the
+            # Tor HS directory and set correct ownership/permissions.
+            # All file operations in /var/lib/tor/ go through sudo because
+            # the directory is owned by debian-tor with mode 700.
             import subprocess
             import tempfile
 
@@ -309,26 +310,16 @@ class TorTransport(BaseTransport):
                 (tmp / "hs_ed25519_public_key").write_bytes(public_key_content)
                 (tmp / "hostname").write_text(onion + "\n")
 
-                # Copy files into HS dir with correct ownership via sudo
+                def _sudo(cmd):
+                    subprocess.run(cmd, capture_output=True, timeout=5)
+
+                _sudo(["sudo", "-n", "mkdir", "-p", str(hs_path)])
                 for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                    subprocess.run(
-                        ["sudo", "-n", "cp", str(tmp / f), str(hs_path / f)],
-                        capture_output=True, timeout=5,
-                    )
-                # Set ownership and permissions
-                subprocess.run(
-                    ["sudo", "-n", "chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)],
-                    capture_output=True, timeout=5,
-                )
-                subprocess.run(
-                    ["sudo", "-n", "chmod", "700", str(hs_path)],
-                    capture_output=True, timeout=5,
-                )
+                    _sudo(["sudo", "-n", "cp", str(tmp / f), str(hs_path / f)])
+                _sudo(["sudo", "-n", "chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)])
+                _sudo(["sudo", "-n", "chmod", "700", str(hs_path)])
                 for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                    subprocess.run(
-                        ["sudo", "-n", "chmod", "600", str(hs_path / f)],
-                        capture_output=True, timeout=5,
-                    )
+                    _sudo(["sudo", "-n", "chmod", "600", str(hs_path / f)])
 
             # Add HiddenService config to torrc if not already present.
             # setup.sh pre-configures this, but if the port changed or

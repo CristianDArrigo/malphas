@@ -163,6 +163,8 @@ if [ -n "$SUDO_USER_NAME" ] && [ "$SUDO_USER_NAME" != "root" ]; then
     if [ ! -f "$SUDOERS_FILE" ]; then
         cat > "$SUDOERS_FILE" << SUDOEOF
 # malphas: allow hidden service operations without password
+$SUDO_USER_NAME ALL=(ALL) NOPASSWD: /bin/mkdir -p /var/lib/tor/malphas_hs
+$SUDO_USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/mkdir -p /var/lib/tor/malphas_hs
 $SUDO_USER_NAME ALL=(ALL) NOPASSWD: /bin/cp * /var/lib/tor/malphas_hs/*
 $SUDO_USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/cp * /var/lib/tor/malphas_hs/*
 $SUDO_USER_NAME ALL=(ALL) NOPASSWD: /bin/chown -R debian-tor\:debian-tor /var/lib/tor/malphas_hs
