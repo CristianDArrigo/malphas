@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update -qq && \
-    apt-get install -y -qq --no-install-recommends tor && \
+    apt-get install -y -qq --no-install-recommends tor procps && \
     rm -rf /var/lib/apt/lists/*
 
 # Configure Tor

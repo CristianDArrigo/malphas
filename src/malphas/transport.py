@@ -308,16 +308,19 @@ class TorTransport(BaseTransport):
                 (tmp / "hs_ed25519_public_key").write_bytes(public_key_content)
                 (tmp / "hostname").write_text(onion + "\n")
 
-                def _sudo(cmd):
-                    subprocess.run(cmd, capture_output=True, timeout=5)
+                # Use sudo only if not running as root
+                prefix = [] if os.getuid() == 0 else ["sudo", "-n"]
 
-                _sudo(["sudo", "-n", "mkdir", "-p", str(hs_path)])
+                def _run(cmd):
+                    subprocess.run(prefix + cmd, capture_output=True, timeout=5)
+
+                _run(["mkdir", "-p", str(hs_path)])
                 for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                    _sudo(["sudo", "-n", "cp", str(tmp / f), str(hs_path / f)])
-                _sudo(["sudo", "-n", "chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)])
-                _sudo(["sudo", "-n", "chmod", "700", str(hs_path)])
+                    _run(["cp", str(tmp / f), str(hs_path / f)])
+                _run(["chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)])
+                _run(["chmod", "700", str(hs_path)])
                 for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                    _sudo(["sudo", "-n", "chmod", "600", str(hs_path / f)])
+                    _run(["chmod", "600", str(hs_path / f)])
 
             # Add HiddenService config to torrc if not already present.
             # setup.sh pre-configures this, but if the port changed or
@@ -332,23 +335,27 @@ class TorTransport(BaseTransport):
                 pass  # torrc already configured by setup.sh
 
             # Reload Tor to pick up the key files.
-            # stem's signal("RELOAD") blocks indefinitely on some Tor
-            # versions, so we use SIGHUP directly via subprocess.
-            import subprocess
+            prefix = [] if os.getuid() == 0 else ["sudo", "-n"]
             try:
-                # Try systemctl first (most Linux systems)
                 subprocess.run(
-                    ["sudo", "-n", "systemctl", "reload", "tor@default"],
+                    prefix + ["systemctl", "reload", "tor@default"],
                     capture_output=True, timeout=10,
                 )
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 try:
                     subprocess.run(
-                        ["sudo", "-n", "systemctl", "reload", "tor"],
+                        prefix + ["systemctl", "reload", "tor"],
                         capture_output=True, timeout=10,
                     )
                 except Exception:
-                    pass
+                    # Fallback: send SIGHUP directly to Tor process
+                    try:
+                        subprocess.run(
+                            prefix + ["killall", "-HUP", "tor"],
+                            capture_output=True, timeout=5,
+                        )
+                    except Exception:
+                        pass
 
         await loop.run_in_executor(None, _setup_hs)
 

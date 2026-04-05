@@ -20,6 +20,13 @@
 
 set -e
 
+# Activate venv first if available
+if [ -f ".venv/bin/activate" ]; then
+    source .venv/bin/activate
+elif [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+fi
+
 # Find Python
 PYTHON=""
 for py in python3.13 python3.12 python3.11 python3.10 python3; do
@@ -30,18 +37,12 @@ for py in python3.13 python3.12 python3.11 python3.10 python3; do
 done
 
 if [ -z "$PYTHON" ]; then
-    # Try venv
     if [ -f ".venv/bin/python3" ]; then
         PYTHON=".venv/bin/python3"
     else
         echo "  [err] python3 not found"
         exit 1
     fi
-fi
-
-# Activate venv if available
-if [ -f ".venv/bin/activate" ]; then
-    source .venv/bin/activate
 fi
 
 echo ""
