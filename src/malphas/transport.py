@@ -220,8 +220,7 @@ class TorTransport(BaseTransport):
         self._control_port = control_port
         self._control_password = control_password
         self._onion_address: Optional[str] = None
-        self._hidden_service = None
-        self._controller = None
+        self._hs_dir = None
         self._server: Optional[asyncio.AbstractServer] = None
 
     async def start_hidden_service(
@@ -229,53 +228,126 @@ class TorTransport(BaseTransport):
         ed25519_pub_bytes: bytes,
         ed25519_priv_bytes: bytes,
         local_port: int,
+        hs_dir: Optional[str] = None,
     ) -> str:
         """
         Register a Tor v3 hidden service using our Ed25519 keypair.
         Returns the .onion address.
 
-        The hidden service listens on the Tor network and forwards
-        connections to 127.0.0.1:local_port.
+        Uses a persistent hidden service directory on disk.
+        Tor manages the descriptor publication — this is the standard
+        and reliable way to run hidden services, unlike ephemeral HS
+        via stem which has compatibility issues across Tor versions.
+
+        Requires:
+        - Write access to the HS directory (or sudo/debian-tor group)
+        - stem for ControlPort communication (SIGHUP reload)
         """
+        import os
+        from pathlib import Path
+
         try:
             from stem.control import Controller
-            from stem.descriptor.hidden_service import HiddenServiceDescriptor
         except ImportError:
             raise RuntimeError(
                 "stem is required for Tor hidden service support.\n"
                 "Install it with: pip install stem"
             )
 
-        # Compute the .onion address from our pubkey
         onion = ed25519_pub_to_onion(ed25519_pub_bytes)
 
-        # Format key for stem: base64(priv_seed(32) + pub(32))
-        expanded = ed25519_priv_bytes + ed25519_pub_bytes
-        key_content = base64.b64encode(expanded).decode()
+        # Determine HS directory
+        if hs_dir:
+            hs_path = Path(hs_dir)
+        else:
+            hs_path = Path("/var/lib/tor/malphas_hs")
 
-        # Run all stem operations in a single executor call.
-        # stem's Controller is not thread-safe — splitting across
-        # multiple executor calls causes silent registration failures.
-        def _register():
+        # Write key files in Tor's expected format
+        loop = asyncio.get_running_loop()
+
+        def _setup_hs():
+            # Create directory with correct permissions
+            hs_path.mkdir(parents=True, exist_ok=True)
+
+            # Tor v3 secret key format: "== ed25519v1-secret: type0 ==\x00\x00\x00"
+            # followed by the 64-byte expanded private key.
+            # Ed25519 expanded key = SHA512(seed), with clamping on first 32 bytes.
+            # This is NOT the same as seed+pub — Tor requires the expanded form.
+            import hashlib
+            h = hashlib.sha512(ed25519_priv_bytes).digest()
+            # Clamp: clear bottom 3 bits of first byte, clear top bit and set
+            # second-to-top bit of last byte of the first 32 bytes
+            expanded = bytearray(h)
+            expanded[0] &= 248
+            expanded[31] &= 127
+            expanded[31] |= 64
+
+            header_secret = b"== ed25519v1-secret: type0 ==\x00\x00\x00"
+            secret_key_content = header_secret + bytes(expanded)
+
+            # Tor v3 public key format: "== ed25519v1-public: type0 ==\x00\x00\x00"
+            # followed by the 32-byte public key
+            header_public = b"== ed25519v1-public: type0 ==\x00\x00\x00"
+            public_key_content = header_public + ed25519_pub_bytes
+
+            # Write key files
+            (hs_path / "hs_ed25519_secret_key").write_bytes(secret_key_content)
+            (hs_path / "hs_ed25519_public_key").write_bytes(public_key_content)
+            (hs_path / "hostname").write_text(onion + "\n")
+
+            # Set ownership and permissions.
+            # Tor runs as debian-tor (or tor on some distros) and requires
+            # 700 on the directory and 600 on key files.
+            import pwd
+            try:
+                tor_user = pwd.getpwnam("debian-tor")
+            except KeyError:
+                try:
+                    tor_user = pwd.getpwnam("tor")
+                except KeyError:
+                    tor_user = None
+
+            os.chmod(hs_path, 0o700)
+            for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
+                os.chmod(hs_path / f, 0o600)
+
+            if tor_user:
+                os.chown(hs_path, tor_user.pw_uid, tor_user.pw_gid)
+                for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
+                    os.chown(hs_path / f, tor_user.pw_uid, tor_user.pw_gid)
+
+            # Add HiddenService config to torrc if not already present
+            torrc_path = Path("/etc/tor/torrc")
+            torrc = torrc_path.read_text()
+            hs_config = f"\nHiddenServiceDir {hs_path}\nHiddenServicePort 80 127.0.0.1:{local_port}\n"
+
+            if str(hs_path) not in torrc:
+                torrc_path.write_text(torrc + hs_config)
+
+            # Reload Tor to pick up the new hidden service.
+            # stem's signal("RELOAD") can crash when Tor drops the
+            # control connection during reload, so we catch and ignore.
             ctrl = Controller.from_port(
                 address=self._control_host,
                 port=self._control_port,
             )
             ctrl.authenticate(password=self._control_password)
-            hs = ctrl.create_ephemeral_hidden_service(
-                {80: local_port},
-                key_type="ED25519-V3",
-                key_content=key_content,
-                await_publication=False,
-            )
-            return ctrl, hs
+            try:
+                ctrl.signal("RELOAD")
+            except Exception:
+                pass  # Tor drops connection during reload — expected
+            try:
+                ctrl.close()
+            except Exception:
+                pass
 
-        loop = asyncio.get_running_loop()
-        controller, hs = await loop.run_in_executor(None, _register)
+        await loop.run_in_executor(None, _setup_hs)
 
-        self._controller = controller
-        self._hidden_service = hs
+        # Wait for Tor to publish the descriptor
+        await asyncio.sleep(5)
+
         self._onion_address = onion
+        self._hs_dir = hs_path
         return onion
 
     async def connect(self, host: str, port: int):
@@ -300,18 +372,8 @@ class TorTransport(BaseTransport):
         if self._server:
             self._server.close()
             await self._server.wait_closed()
-        if self._hidden_service and self._controller:
-            loop = asyncio.get_running_loop()
-            try:
-                hs_id = self._onion_address.removesuffix(".onion") if self._onion_address else None
-                if hs_id:
-                    await loop.run_in_executor(
-                        None,
-                        lambda: self._controller.remove_ephemeral_hidden_service(hs_id)
-                    )
-                await loop.run_in_executor(None, self._controller.close)
-            except Exception:
-                pass
+        # Persistent HS stays registered in Tor — no cleanup needed.
+        # The HS directory on disk persists across restarts (by design).
 
 
 # ── Tor availability check ────────────────────────────────────────────────────
