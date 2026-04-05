@@ -266,8 +266,6 @@ class TorTransport(BaseTransport):
         loop = asyncio.get_running_loop()
 
         def _setup_hs():
-            # Create directory with correct permissions
-            hs_path.mkdir(parents=True, exist_ok=True)
 
             # Tor v3 secret key format: "== ed25519v1-secret: type0 ==\x00\x00\x00"
             # followed by the 64-byte expanded private key.
