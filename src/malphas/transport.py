@@ -291,10 +291,18 @@ class TorTransport(BaseTransport):
             public_key_content = header_public + ed25519_pub_bytes
 
             # Write key files.
-            # The directory should already exist with correct group
-            # permissions (created by scripts/setup.sh). If not, try
-            # to create it — may fail without sudo.
+            # Remove existing files first — they may be owned by debian-tor
+            # with mode 600 from a previous run, making them unwritable.
+            import subprocess
             hs_path.mkdir(parents=True, exist_ok=True)
+            for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
+                fpath = hs_path / f
+                if fpath.exists():
+                    try:
+                        fpath.unlink()
+                    except PermissionError:
+                        subprocess.run(["sudo", "-n", "rm", "-f", str(fpath)],
+                                       capture_output=True, timeout=5)
             (hs_path / "hs_ed25519_secret_key").write_bytes(secret_key_content)
             (hs_path / "hs_ed25519_public_key").write_bytes(public_key_content)
             (hs_path / "hostname").write_text(onion + "\n")
@@ -336,21 +344,23 @@ class TorTransport(BaseTransport):
                 pass  # torrc already configured by setup.sh
 
             # Reload Tor to pick up the key files.
-            # stem's signal("RELOAD") can crash when Tor drops the
-            # control connection during reload, so we catch and ignore.
-            ctrl = Controller.from_port(
-                address=self._control_host,
-                port=self._control_port,
-            )
-            ctrl.authenticate(password=self._control_password)
+            # stem's signal("RELOAD") blocks indefinitely on some Tor
+            # versions, so we use SIGHUP directly via subprocess.
+            import subprocess
             try:
-                ctrl.signal("RELOAD")
-            except Exception:
-                pass  # Tor drops connection during reload — expected
-            try:
-                ctrl.close()
-            except Exception:
-                pass
+                # Try systemctl first (most Linux systems)
+                subprocess.run(
+                    ["sudo", "-n", "systemctl", "reload", "tor@default"],
+                    capture_output=True, timeout=10,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                try:
+                    subprocess.run(
+                        ["sudo", "-n", "systemctl", "reload", "tor"],
+                        capture_output=True, timeout=10,
+                    )
+                except Exception:
+                    pass
 
         await loop.run_in_executor(None, _setup_hs)
 
