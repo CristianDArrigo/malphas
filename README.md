@@ -220,7 +220,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 
 ## Installation
 
-**Requirements:** Python 3.11+
+**Requirements:** Python 3.10+
 
 ### Automated setup (Linux, recommended)
 
