@@ -195,29 +195,29 @@ def _capture(cli) -> StringIO:
 
 
 def _run_capture(cli, func, *args, **kwargs):
-    """Run a sync method on cli, capturing rich + plain output. Returns output string."""
+    """Run a sync method on cli, capturing rich + _plain output. Returns output string."""
     buf = _capture(cli)
-    stdout_buf = StringIO()
-    old_stdout = sys.stdout
-    sys.stdout = stdout_buf
+    plain_buf = StringIO()
+    original_plain = cli._plain
+    cli._plain = lambda msg: plain_buf.write(msg + "\n")
     try:
         func(*args, **kwargs)
     finally:
-        sys.stdout = old_stdout
-    return buf.getvalue() + stdout_buf.getvalue()
+        cli._plain = original_plain
+    return buf.getvalue() + plain_buf.getvalue()
 
 
 async def _run_capture_async(cli, coro):
-    """Await an async coroutine on cli, capturing rich + plain output. Returns output string."""
+    """Await an async coroutine on cli, capturing rich + _plain output. Returns output string."""
     buf = _capture(cli)
-    stdout_buf = StringIO()
-    old_stdout = sys.stdout
-    sys.stdout = stdout_buf
+    plain_buf = StringIO()
+    original_plain = cli._plain
+    cli._plain = lambda msg: plain_buf.write(msg + "\n")
     try:
         await coro
     finally:
-        sys.stdout = old_stdout
-    return buf.getvalue() + stdout_buf.getvalue()
+        cli._plain = original_plain
+    return buf.getvalue() + plain_buf.getvalue()
 
 
 # ---------------------------------------------------------------------------

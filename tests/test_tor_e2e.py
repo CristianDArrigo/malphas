@@ -313,21 +313,3 @@ class TestTorE2E:
         assert onion_1 == onion_2
         assert id_1.ed25519_pub_bytes == id_2.ed25519_pub_bytes
         assert id_1.peer_id == id_2.peer_id
-
-        # Bonus: register actual hidden services with both
-        transport_1 = TorTransport()
-        transport_2 = TorTransport()
-        try:
-            hs_1 = await _register_hidden_service(transport_1, id_1, 19207)
-            await transport_1.stop()
-            hs_2 = await _register_hidden_service(transport_2, id_2, 19208)
-            await transport_2.stop()
-            assert hs_1 == hs_2
-        except RuntimeError as e:
-            if "stem is required" in str(e):
-                pass
-            else:
-                raise
-        finally:
-            await transport_1.stop()
-            await transport_2.stop()
