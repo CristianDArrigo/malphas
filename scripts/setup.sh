@@ -146,10 +146,12 @@ mkdir -p "$HS_DIR"
 
 if [ -n "$TOR_GROUP" ]; then
     chown "$TOR_GROUP:$TOR_GROUP" "$HS_DIR"
-    chmod 770 "$HS_DIR"
-    ok "hidden service directory ready ($HS_DIR, group $TOR_GROUP)"
+    # 1777: world-writable so malphas can write keys without sudo,
+    # transport.py then fixes to 700 via sudo -n chown/chmod
+    chmod 1777 "$HS_DIR"
+    ok "hidden service directory ready ($HS_DIR)"
 else
-    chmod 700 "$HS_DIR"
+    chmod 777 "$HS_DIR"
     ok "hidden service directory ready ($HS_DIR)"
 fi
 
