@@ -290,27 +290,12 @@ class TorTransport(BaseTransport):
             header_public = b"== ed25519v1-public: type0 ==\x00\x00\x00"
             public_key_content = header_public + ed25519_pub_bytes
 
-            # Write key files.
-            # Remove existing files first — they may be owned by debian-tor
-            # with mode 600 from a previous run, making them unwritable.
+            # Write key files to a temp location, then sudo mv into the
+            # Tor HS directory. This avoids permission issues — the user
+            # writes to /tmp, then sudo moves and chowns in one step.
             import subprocess
-            hs_path.mkdir(parents=True, exist_ok=True)
-            for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                fpath = hs_path / f
-                if fpath.exists():
-                    try:
-                        fpath.unlink()
-                    except PermissionError:
-                        subprocess.run(["sudo", "-n", "rm", "-f", str(fpath)],
-                                       capture_output=True, timeout=5)
-            (hs_path / "hs_ed25519_secret_key").write_bytes(secret_key_content)
-            (hs_path / "hs_ed25519_public_key").write_bytes(public_key_content)
-            (hs_path / "hostname").write_text(onion + "\n")
+            import tempfile
 
-            # Set ownership and permissions so Tor accepts the directory.
-            # Tor requires: dir=700 owned by debian-tor, files=600 owned by debian-tor.
-            # The user can't chown without sudo, so we use subprocess.
-            import subprocess
             tor_user = "debian-tor"
             try:
                 import pwd
@@ -318,18 +303,32 @@ class TorTransport(BaseTransport):
             except KeyError:
                 tor_user = "tor"
 
-            for cmd in [
-                ["sudo", "-n", "chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)],
-                ["sudo", "-n", "chmod", "700", str(hs_path)],
-                ["sudo", "-n", "chmod", "600",
-                 str(hs_path / "hs_ed25519_secret_key"),
-                 str(hs_path / "hs_ed25519_public_key"),
-                 str(hs_path / "hostname")],
-            ]:
-                try:
-                    subprocess.run(cmd, check=True, capture_output=True)
-                except (subprocess.CalledProcessError, FileNotFoundError):
-                    pass
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                (tmp / "hs_ed25519_secret_key").write_bytes(secret_key_content)
+                (tmp / "hs_ed25519_public_key").write_bytes(public_key_content)
+                (tmp / "hostname").write_text(onion + "\n")
+
+                # Copy files into HS dir with correct ownership via sudo
+                for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
+                    subprocess.run(
+                        ["sudo", "-n", "cp", str(tmp / f), str(hs_path / f)],
+                        capture_output=True, timeout=5,
+                    )
+                # Set ownership and permissions
+                subprocess.run(
+                    ["sudo", "-n", "chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)],
+                    capture_output=True, timeout=5,
+                )
+                subprocess.run(
+                    ["sudo", "-n", "chmod", "700", str(hs_path)],
+                    capture_output=True, timeout=5,
+                )
+                for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
+                    subprocess.run(
+                        ["sudo", "-n", "chmod", "600", str(hs_path / f)],
+                        capture_output=True, timeout=5,
+                    )
 
             # Add HiddenService config to torrc if not already present.
             # setup.sh pre-configures this, but if the port changed or
