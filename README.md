@@ -222,6 +222,18 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 
 **Requirements:** Python 3.11+
 
+### Automated setup (Linux, recommended)
+
+The setup script installs Tor, configures ControlPort, sets permissions, and installs malphas:
+
+```bash
+git clone https://github.com/CristianDArrigo/malphas.git
+cd malphas
+sudo bash scripts/setup.sh
+```
+
+### Manual setup
+
 ```bash
 git clone https://github.com/CristianDArrigo/malphas.git
 cd malphas
@@ -237,12 +249,15 @@ sudo apt install tor
 #   ControlPort 9051
 #   CookieAuthentication 1
 sudo systemctl restart tor
+sudo chmod o+r /run/tor/control.authcookie
 
 # macOS
 brew install tor
 # Enable ControlPort in /usr/local/etc/tor/torrc
 brew services restart tor
 ```
+
+**Note:** launching with `--tor` requires root or `debian-tor` group membership, because malphas writes hidden service key files to `/var/lib/tor/`. The setup script handles this automatically.
 
 **Dependencies installed automatically:**
 
@@ -519,6 +534,42 @@ This means:
 
 **Defense in depth.** When using Tor, malphas adds its own onion routing layer on top of Tor's. An adversary who compromises the Tor circuit still cannot read malphas-level content, because the application layer uses independent keys.
 
+### Hidden service implementation
+
+malphas uses persistent hidden services (files on disk in `/var/lib/tor/malphas_hs/`) rather than ephemeral hidden services via stem's `create_ephemeral_hidden_service`.
+
+This is a deliberate choice driven by extensive testing. The ephemeral approach (ADD_ONION via the Tor control protocol) accepts custom Ed25519 keys without error but silently fails to publish the descriptor on multiple Tor versions (tested on 0.4.2.7, 0.4.6.10, 0.4.8.16). The hidden service appears registered locally but is never reachable from the Tor network. This failure is silent — no error is returned by stem or by Tor's control protocol.
+
+The persistent approach writes the key files directly to disk in the format Tor expects:
+
+```
+/var/lib/tor/malphas_hs/
+    hs_ed25519_secret_key   — header(32) + expanded_private_key(64) = 96 bytes
+    hs_ed25519_public_key   — header(32) + public_key(32) = 64 bytes
+    hostname                — the .onion address
+```
+
+**Critical detail: the Ed25519 expanded key.** Tor does not use the raw 32-byte Ed25519 seed. It requires the 64-byte expanded private key, computed as `SHA-512(seed)` with clamping (clear bits 0-2 of byte 0, clear bit 7 and set bit 6 of byte 31). Writing the raw seed instead of the expanded key causes Tor to silently generate a different key pair, producing a different `.onion` address than expected — or failing to publish the descriptor entirely. This is not documented in Tor's specification and was discovered through binary analysis of working vs non-working key files.
+
+**Permissions.** Tor runs as user `debian-tor` (or `tor` on some distributions) and requires strict ownership: the hidden service directory must be owned by the Tor user with mode 700, and key files must be mode 600. malphas sets these permissions automatically, but launching with `--tor` requires root or membership in the `debian-tor` group.
+
+**Setup script.** The included `scripts/setup.sh` automates Tor installation, ControlPort configuration, permission setup, and malphas installation:
+
+```bash
+sudo bash scripts/setup.sh
+```
+
+### Verified behavior
+
+The Tor hidden service integration has been tested end-to-end between a local machine (Tor 0.4.8.16, Ubuntu 25.04) and an Oracle Cloud VPS (Tor 0.4.6.10, Ubuntu 22.04) on different public IP addresses. Messages sent from the local machine via the VPS's `.onion` address were received and decrypted successfully.
+
+Key findings from testing:
+- Ephemeral hidden services (ADD_ONION with custom key) do not work reliably across Tor versions
+- Persistent hidden services with correctly formatted expanded keys work on the first attempt
+- The descriptor typically publishes within 30-60 seconds of Tor reload
+- Tor self-rendezvous (connecting to your own .onion from the same machine or NAT) fails on all tested configurations — this is a Tor architectural limitation, not a malphas issue
+- Docker containers sharing the same host cannot reach each other's hidden services for the same reason
+
 ---
 
 ## Identity System
@@ -750,11 +801,15 @@ Messages are encrypted at send time (after reconnection), not at queue time. Thi
 
 **Traffic correlation.** A sophisticated adversary monitoring both endpoints simultaneously can correlate message timing even through Tor and cover traffic, given enough observations. This is a fundamental limitation of low-latency anonymous communication.
 
-**Tor self-rendezvous.** A single Tor process cannot connect to its own hidden service, and two Tor processes sharing the same public IP also fail the rendezvous. Testing hidden service delivery requires two machines on different networks (different public IPs).
+**Tor hidden service requires sudo.** The persistent hidden service writes key files to `/var/lib/tor/malphas_hs/`, which is owned by the Tor user. Launching malphas with `--tor` requires root privileges or membership in the `debian-tor` group. The setup script (`scripts/setup.sh`) configures this automatically.
+
+**Tor self-rendezvous.** A single Tor process cannot connect to its own hidden service. Two machines sharing the same public IP (e.g., Docker containers on the same host, or two processes behind the same NAT) also fail. This is a Tor architectural constraint, not a malphas issue. Testing hidden service delivery requires two machines on genuinely different networks.
+
+**Tor descriptor propagation.** After registering a hidden service, the descriptor must propagate to HSDir relay nodes before the `.onion` address becomes reachable. This typically takes 30-60 seconds but can take longer on freshly started Tor instances. Avoid reloading Tor during a session — each reload triggers descriptor re-publication and temporary unreachability.
 
 **Memory wiping in Python.** Python strings and bytes objects are immutable. Overwriting a variable only changes the reference — the original bytes may remain in the heap until garbage collection. The passphrase and seed material in RAM cannot be reliably zeroed in pure Python.
 
-**Windows.** The core messaging functionality works on Windows. Tor hidden service support and some signal handling edge cases may behave differently.
+**Windows.** The core messaging functionality works on Windows. Tor hidden service support requires manual configuration — the setup script is Linux-only.
 
 ---
 
@@ -853,6 +908,8 @@ malphas/
 │   └── __main__.py      CLI entry point, argument parsing
 ├── frontend/showcase/
 │   └── index.html       project landing page
+├── scripts/
+│   └── setup.sh         automated Tor + malphas setup (Linux)
 └── tests/               470+ tests across 15 files
 ```
 
