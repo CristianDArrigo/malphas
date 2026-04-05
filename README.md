@@ -938,4 +938,39 @@ malphas is not audited. Do not use it in situations where the cost of a security
 
 ---
 
+## References
+
+### Cryptographic primitives
+
+- [Argon2](https://github.com/P-H-C/phc-winner-argon2) — Password Hashing Competition winner. Memory-hard key derivation function. [RFC 9106](https://datatracker.ietf.org/doc/rfc9106/)
+- [HKDF-SHA256](https://datatracker.ietf.org/doc/rfc5869/) — HMAC-based Key Derivation Function. RFC 5869.
+- [X25519](https://datatracker.ietf.org/doc/rfc7748/) — Elliptic Curve Diffie-Hellman key exchange. RFC 7748.
+- [Ed25519](https://datatracker.ietf.org/doc/rfc8032/) — Edwards-Curve Digital Signature Algorithm. RFC 8032.
+- [ChaCha20-Poly1305](https://datatracker.ietf.org/doc/rfc8439/) — Authenticated encryption with associated data. RFC 8439.
+- [HMAC-SHA256](https://datatracker.ietf.org/doc/rfc2104/) — Keyed-Hash Message Authentication Code. RFC 2104.
+
+### Protocols and designs
+
+- [Signal Protocol — Double Ratchet](https://signal.org/docs/specifications/doubleratchet/) — Per-message forward secrecy. Not yet implemented in malphas; listed as the primary planned improvement.
+- [Signal Protocol — X3DH](https://signal.org/docs/specifications/x3dh/) — Extended Triple Diffie-Hellman for asynchronous key agreement.
+- [Tor Rendezvous Specification v3](https://spec.torproject.org/rend-spec-v3) — Tor v3 hidden service protocol, .onion address derivation.
+- [Kademlia DHT](https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf) — Distributed hash table. malphas uses a simplified Kademlia routing table (XOR distance) without the full DHT protocol.
+- [TOFU (Trust On First Use)](https://developer.mozilla.org/en-US/docs/Web/Security/Certificate_Transparency) — Key pinning model used by SSH and adopted by malphas for Ed25519 identity keys.
+
+### Libraries
+
+- [cryptography (Python)](https://cryptography.io/) — All cryptographic primitives in malphas. Backed by OpenSSL/libssl.
+- [argon2-cffi](https://argon2-cffi.readthedocs.io/) — Python bindings for the Argon2 reference implementation.
+- [stem](https://stem.torproject.org/) — Python controller library for Tor.
+- [prompt_toolkit](https://python-prompt-toolkit.readthedocs.io/) — Interactive CLI with readline, completion, and split-pane layout.
+- [rich](https://rich.readthedocs.io/) — Terminal formatting: tables, panels, colors.
+
+### Related work
+
+- [Signal](https://signal.org/) — End-to-end encrypted messenger. Centralized servers, phone number required. Cryptographic foundation (Double Ratchet, X3DH) that malphas aims to adopt.
+- [Briar](https://briarproject.org/) — P2P messenger over Tor. No onion routing at the application layer, no deniable authentication.
+- [Ember](https://arxiv.org/abs/2603.16735) — Serverless P2P messenger over IPv6 mesh. Academic paper (2026). Uses Double Ratchet and MLS but no Tor integration.
+
+---
+
 *malphas — built by Cristian D'Arrigo*
