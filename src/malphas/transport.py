@@ -299,27 +299,29 @@ class TorTransport(BaseTransport):
             (hs_path / "hs_ed25519_public_key").write_bytes(public_key_content)
             (hs_path / "hostname").write_text(onion + "\n")
 
-            # Set ownership to Tor user so Tor can read the keys.
-            # This requires being in the debian-tor group (setup.sh handles this).
-            import pwd
+            # Set ownership and permissions so Tor accepts the directory.
+            # Tor requires: dir=700 owned by debian-tor, files=600 owned by debian-tor.
+            # The user can't chown without sudo, so we use subprocess.
+            import subprocess
+            tor_user = "debian-tor"
             try:
-                tor_user = pwd.getpwnam("debian-tor")
+                import pwd
+                pwd.getpwnam(tor_user)
             except KeyError:
-                try:
-                    tor_user = pwd.getpwnam("tor")
-                except KeyError:
-                    tor_user = None
+                tor_user = "tor"
 
-            try:
-                os.chmod(hs_path, 0o700)
-                for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                    os.chmod(hs_path / f, 0o600)
-                if tor_user:
-                    os.chown(hs_path, tor_user.pw_uid, tor_user.pw_gid)
-                    for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                        os.chown(hs_path / f, tor_user.pw_uid, tor_user.pw_gid)
-            except PermissionError:
-                pass  # setup.sh already set correct group permissions
+            for cmd in [
+                ["sudo", "-n", "chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)],
+                ["sudo", "-n", "chmod", "700", str(hs_path)],
+                ["sudo", "-n", "chmod", "600",
+                 str(hs_path / "hs_ed25519_secret_key"),
+                 str(hs_path / "hs_ed25519_public_key"),
+                 str(hs_path / "hostname")],
+            ]:
+                try:
+                    subprocess.run(cmd, check=True, capture_output=True)
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    pass
 
             # Add HiddenService config to torrc if not already present.
             # setup.sh pre-configures this, but if the port changed or

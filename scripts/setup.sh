@@ -153,6 +153,26 @@ else
     ok "hidden service directory ready ($HS_DIR)"
 fi
 
+# ── Allow passwordless sudo for malphas HS operations ───────────────────────
+# malphas needs to chown files to debian-tor and reload Tor without a password.
+
+if [ -n "$SUDO_USER_NAME" ] && [ "$SUDO_USER_NAME" != "root" ]; then
+    SUDOERS_FILE="/etc/sudoers.d/malphas"
+    if [ ! -f "$SUDOERS_FILE" ]; then
+        cat > "$SUDOERS_FILE" << SUDOEOF
+# malphas: allow hidden service file ownership and Tor reload without password
+$SUDO_USER_NAME ALL=(ALL) NOPASSWD: /bin/chown -R debian-tor\:debian-tor /var/lib/tor/malphas_hs
+$SUDO_USER_NAME ALL=(ALL) NOPASSWD: /bin/chown -R tor\:tor /var/lib/tor/malphas_hs
+$SUDO_USER_NAME ALL=(ALL) NOPASSWD: /bin/chmod 700 /var/lib/tor/malphas_hs
+$SUDO_USER_NAME ALL=(ALL) NOPASSWD: /bin/chmod 600 /var/lib/tor/malphas_hs/*
+SUDOEOF
+        chmod 440 "$SUDOERS_FILE"
+        ok "sudoers rules added for $SUDO_USER_NAME"
+    else
+        ok "sudoers rules already configured"
+    fi
+fi
+
 # ── Pre-configure torrc for malphas hidden service ──────────────────────────
 # Add HiddenServiceDir and HiddenServicePort if not already present.
 # malphas will write the key files; Tor reads them on reload.

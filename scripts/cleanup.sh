@@ -87,6 +87,15 @@ if [ -n "$SUDO_USER_NAME" ] && [ "$SUDO_USER_NAME" != "root" ]; then
     fi
 fi
 
+# ── Remove sudoers rules ────────────────────────────────────────────────────
+
+if [ -f /etc/sudoers.d/malphas ]; then
+    rm -f /etc/sudoers.d/malphas
+    ok "removed sudoers rules"
+else
+    info "no sudoers rules found, skipping"
+fi
+
 # ── Reload Tor ──────────────────────────────────────────────────────────────
 
 if systemctl is-active --quiet tor@default 2>/dev/null; then
