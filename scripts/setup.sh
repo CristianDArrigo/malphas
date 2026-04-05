@@ -205,8 +205,15 @@ if [ "$PASS" = true ]; then
     echo "  tor setup complete. now install malphas:"
     echo ""
     echo "    pip install -e ."
-    echo "    sudo malphas --tor --port 7777"
+    echo "    malphas --tor --port 7777"
     echo "  ─────────────────────────────────────────"
+
+    # Apply group membership immediately without re-login
+    if [ -n "$SUDO_USER_NAME" ] && [ "$SUDO_USER_NAME" != "root" ] && [ -n "$TOR_GROUP" ]; then
+        echo ""
+        echo "  applying group membership..."
+        exec su - "$SUDO_USER_NAME" -c "cd $(pwd) && exec \$SHELL"
+    fi
 else
     echo "  setup finished with errors — check above"
 fi
