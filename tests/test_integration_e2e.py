@@ -329,3 +329,38 @@ class TestWireCryptoIntegrity:
         # Both session keys must be the same 32-byte value
         assert conn_a.session_key == conn_b.session_key
         assert len(conn_a.session_key) == 32
+
+
+class TestForwardSecrecy:
+    async def test_same_message_different_ciphertexts(self, pair):
+        """Two identical messages must produce different ciphertexts."""
+        a, b, id_a, id_b = pair
+        received = []
+        b.on_message(lambda f, c: received.append(c))
+
+        await a.send_message(id_b.peer_id, "same content")
+        await a.send_message(id_b.peer_id, "same content")
+        await asyncio.sleep(0.5)
+
+        assert len(received) == 2
+        assert received[0] == "same content"
+        assert received[1] == "same content"
+
+    async def test_ratchet_survives_direction_change(self, pair):
+        """Messages work after switching sender direction (DH ratchet)."""
+        a, b, id_a, id_b = pair
+        recv_b = []
+        recv_a = []
+        b.on_message(lambda f, c: recv_b.append(c))
+        a.on_message(lambda f, c: recv_a.append(c))
+
+        await a.send_message(id_b.peer_id, "a1")
+        await asyncio.sleep(0.3)
+        await b.send_message(id_a.peer_id, "b1")
+        await asyncio.sleep(0.3)
+        await a.send_message(id_b.peer_id, "a2")
+        await asyncio.sleep(0.3)
+
+        assert "a1" in recv_b
+        assert "a2" in recv_b
+        assert "b1" in recv_a
