@@ -122,6 +122,19 @@ def hmac_verify(key: bytes, data: bytes, tag: bytes) -> bool:
     return _hmac.compare_digest(expected, tag)
 
 
+# --- KDF chain (Double Ratchet) -----------------------------------------------
+
+def kdf_chain(chain_key: bytes) -> tuple:
+    """
+    Advance a KDF chain by one step.
+    Returns (new_chain_key, message_key).
+    Signal spec: KDF_CK(ck) = (HKDF(ck, info="chain"), HKDF(ck, info="message"))
+    """
+    new_chain_key = hkdf_derive(chain_key, salt=b"malphas-ratchet-v1", info=b"chain", length=32)
+    message_key = hkdf_derive(chain_key, salt=b"malphas-ratchet-v1", info=b"message", length=32)
+    return new_chain_key, message_key
+
+
 # --- Onion layer helpers -----------------------------------------------------
 
 def pack_u16(n: int) -> bytes:
