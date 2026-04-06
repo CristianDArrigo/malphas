@@ -28,6 +28,7 @@ from .crypto import (
 )
 from .discovery import PeerDiscovery, PeerInfo
 from .identity import Identity
+from .ratchet import RatchetState, MessageHeader
 from .memory import MessageStore
 from .obfuscation import (
     CoverTrafficEngine,
@@ -70,6 +71,44 @@ def _unpack_header(data: bytes):
     return msg_type, length
 
 
+def _snapshot_ratchet(r: "RatchetState") -> dict:
+    """Save mutable ratchet state so it can be restored after a failed trial decrypt."""
+    from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+    priv_bytes = None
+    if r._dh_priv is not None:
+        priv_bytes = r._dh_priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+    return {
+        "priv": priv_bytes,
+        "pub": r._dh_pub,
+        "remote": r._remote_dh_pub,
+        "root": r._root_key,
+        "send_ck": r._send_chain_key,
+        "recv_ck": r._recv_chain_key,
+        "send_n": r._send_msg_num,
+        "recv_n": r._recv_msg_num,
+        "prev": r._prev_send_count,
+        "skipped": dict(r._skipped),
+    }
+
+
+def _restore_ratchet(r: "RatchetState", snap: dict) -> None:
+    """Restore ratchet state from a snapshot after a failed trial decrypt."""
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    if snap["priv"] is not None:
+        r._dh_priv = X25519PrivateKey.from_private_bytes(snap["priv"])
+    else:
+        r._dh_priv = None
+    r._dh_pub = snap["pub"]
+    r._remote_dh_pub = snap["remote"]
+    r._root_key = snap["root"]
+    r._send_chain_key = snap["send_ck"]
+    r._recv_chain_key = snap["recv_ck"]
+    r._send_msg_num = snap["send_n"]
+    r._recv_msg_num = snap["recv_n"]
+    r._prev_send_count = snap["prev"]
+    r._skipped = snap["skipped"]
+
+
 class PeerConnection:
     def __init__(
         self,
@@ -82,6 +121,7 @@ class PeerConnection:
         self.peer_info = peer_info
         self.session_key: Optional[bytes] = None
         self.hmac_key: Optional[bytes] = None
+        self.ratchet: Optional[RatchetState] = None
         self.authenticated = False
 
     async def send(self, msg_type: int, payload: bytes) -> None:
@@ -287,11 +327,15 @@ class MalphasNode:
         payload_bytes = json.dumps(payload_dict).encode()
 
         dest_conn = self._connections.get(dest_peer_id)
-        if dest_conn and dest_conn.hmac_key:
+        if dest_conn and dest_conn.ratchet and dest_conn.ratchet._send_chain_key:
+            header, ciphertext = dest_conn.ratchet.encrypt(payload_bytes)
+            authenticated = b"R" + header.serialize() + ciphertext
+        elif dest_conn and dest_conn.hmac_key:
             tag = hmac_sign(dest_conn.hmac_key, payload_bytes)
+            authenticated = tag + payload_bytes
         else:
             tag = self.identity.sign(payload_bytes)
-        authenticated = tag + payload_bytes
+            authenticated = tag + payload_bytes
 
         padded = pad_payload(authenticated)
         packet = wrap_onion(padded, circuit)
@@ -352,15 +396,20 @@ class MalphasNode:
         }
         payload_bytes = json.dumps(payload_dict).encode()
 
-        # HMAC the receipt payload for deniable outer authentication.
+        # Authenticate the receipt payload.
+        # Ratchet preferred (forward secrecy), then HMAC (deniable), then Ed25519.
         # The inner Ed25519 sig (in the JSON "sig" field) provides
         # non-repudiation for the receipt itself.
         sender_conn = self._connections.get(from_id)
-        if sender_conn and sender_conn.hmac_key:
+        if sender_conn and sender_conn.ratchet and sender_conn.ratchet._send_chain_key:
+            header, ciphertext = sender_conn.ratchet.encrypt(payload_bytes)
+            authenticated = b"R" + header.serialize() + ciphertext
+        elif sender_conn and sender_conn.hmac_key:
             tag = hmac_sign(sender_conn.hmac_key, payload_bytes)
+            authenticated = tag + payload_bytes
         else:
             tag = self.identity.sign(payload_bytes)
-        authenticated = tag + payload_bytes
+            authenticated = tag + payload_bytes
         padded = pad_payload(authenticated)
 
         # Route back to sender if we have them in routing table
@@ -454,6 +503,59 @@ class MalphasNode:
         # Check for cover traffic first (no signature/hmac prefix)
         if is_cover(signed):
             return  # silently drop — this is correct behavior
+
+        # Check for ratchet-encrypted payload: b"R" + header(40) + ciphertext
+        if len(signed) > 41 and signed[0:1] == b"R":
+            header_bytes = signed[1:41]
+            ciphertext = signed[41:]
+            header = MessageHeader.deserialize(header_bytes)
+
+            # Try each connection's ratchet to find the right one.
+            # Ratchet decrypt is stateful, so we must protect against
+            # corrupting state on a wrong-connection attempt.  We save
+            # the mutable fields before the attempt and restore on failure.
+            for peer_id, conn in list(self._connections.items()):
+                if not conn.ratchet:
+                    continue
+                ratchet = conn.ratchet
+                # Snapshot mutable ratchet state before trial decrypt
+                snap = _snapshot_ratchet(ratchet)
+                try:
+                    payload_bytes = ratchet.decrypt(header, ciphertext)
+                except Exception:
+                    # Restore ratchet state — this attempt was wrong
+                    _restore_ratchet(ratchet, snap)
+                    continue
+
+                # Decryption succeeded — parse and verify sender
+                try:
+                    data = json.loads(payload_bytes.decode())
+                except Exception:
+                    # Decrypted to garbage — restore and skip
+                    _restore_ratchet(ratchet, snap)
+                    continue
+
+                from_id = data.get("from", "")
+                kind = data.get("kind")
+                if not from_id or not kind:
+                    _restore_ratchet(ratchet, snap)
+                    continue
+
+                # Verify sender is known
+                peer = self.discovery.get_peer(from_id)
+                if not peer:
+                    _restore_ratchet(ratchet, snap)
+                    continue
+
+                # Success — deliver
+                if kind == KIND_MESSAGE:
+                    await self._deliver_message(data, from_id)
+                elif kind == KIND_RECEIPT:
+                    await self._deliver_receipt(data, from_id, peer)
+                return
+
+            # No ratchet could decrypt — drop
+            return
 
         # Authenticated payload: tag + JSON
         # Tag is either 32 bytes (HMAC-SHA256, deniable) or 64 bytes (Ed25519, legacy)
@@ -637,6 +739,9 @@ class MalphasNode:
 
             conn.session_key = session_key
             conn.hmac_key = derive_hmac_key(session_key)
+            conn.ratchet = RatchetState.from_shared_secret(
+                shared, eph_priv, their_eph, is_initiator=outbound
+            )
             conn.authenticated = True
 
             host = conn.writer.get_extra_info("peername")[0]
