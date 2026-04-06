@@ -160,6 +160,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 | Authenticated encryption | ChaCha20-Poly1305 | All message and storage encryption |
 | Signing | Ed25519 | Handshake authentication, read receipts, invites, Tor identity |
 | Message authentication | HMAC-SHA256 | Deniable message authentication (derived from session key) |
+| Ratchet | Double Ratchet (KDF chain + DH) | Per-message forward secrecy |
 | Onion layer | X25519 + ChaCha20-Poly1305 | Per-hop encryption in circuit |
 
 **Key properties:**
@@ -808,7 +809,7 @@ Messages are encrypted at send time (after reconnection), not at queue time. Thi
 
 ## Limitations
 
-**No forward secrecy per message.** Session keys are established once per connection and used for all messages in that session. If a session key is compromised (e.g., via memory dump), all messages from that session are at risk. The Double Ratchet protocol (used by Signal) would provide per-message forward secrecy but is not yet implemented.
+**Forward secrecy.** malphas implements the Double Ratchet protocol for per-message forward secrecy. Each message is encrypted with a unique key derived from a ratcheting KDF chain. Compromising a single message key does not expose past or future messages. The DH ratchet rotates X25519 keys on each direction change, providing break-in recovery. Ratchet state is in-memory only — on reconnect, a fresh ratchet is initialized from the new handshake.
 
 **No automatic NAT traversal.** malphas does not implement STUN, ICE, UDP hole punching, or UPnP. These mechanisms require external infrastructure and expose metadata. Use Tor hidden services for connectivity behind NAT.
 
@@ -962,7 +963,7 @@ malphas is not audited. Do not use it in situations where the cost of a security
 
 ### Protocols and designs
 
-- [Signal Protocol — Double Ratchet](https://signal.org/docs/specifications/doubleratchet/) — Per-message forward secrecy. Not yet implemented in malphas; listed as the primary planned improvement.
+- [Signal Protocol — Double Ratchet](https://signal.org/docs/specifications/doubleratchet/) — Per-message forward secrecy. Implemented in malphas for per-message forward secrecy.
 - [Signal Protocol — X3DH](https://signal.org/docs/specifications/x3dh/) — Extended Triple Diffie-Hellman for asynchronous key agreement.
 - [Tor Rendezvous Specification v3](https://spec.torproject.org/rend-spec-v3) — Tor v3 hidden service protocol, .onion address derivation.
 - [Kademlia DHT](https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf) — Distributed hash table. malphas uses a simplified Kademlia routing table (XOR distance) without the full DHT protocol.

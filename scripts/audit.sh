@@ -413,6 +413,29 @@ assert argon2_time > sha1_time * 100, f'Argon2 not slow enough: {argon2_time:.3f
 " 2>/dev/null
 check "Argon2id significantly slower than SHA1 (brute force resistant)" "$?"
 
+# ── 16. Double Ratchet per-message keys ──────────────────────────────────────
+
+$PYTHON -c "
+from malphas.ratchet import RatchetState
+from malphas.crypto import generate_ephemeral_keypair, ecdh_shared_secret
+
+priv_a, pub_a = generate_ephemeral_keypair()
+priv_b, pub_b = generate_ephemeral_keypair()
+shared = ecdh_shared_secret(priv_a, pub_b)
+
+a = RatchetState.from_shared_secret(shared, priv_a, pub_b, is_initiator=True)
+b = RatchetState.from_shared_secret(shared, priv_b, pub_a, is_initiator=False)
+
+_, c1 = a.encrypt(b'msg1')
+_, c2 = a.encrypt(b'msg1')
+assert c1 != c2, 'same ciphertext for different ratchet steps'
+
+h, c = a.encrypt(b'test')
+pt = b.decrypt(h, c)
+assert pt == b'test', 'ratchet decrypt failed'
+" 2>/dev/null
+check "Double Ratchet: per-message forward secrecy" "$?"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 echo ""
