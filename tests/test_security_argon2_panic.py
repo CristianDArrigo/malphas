@@ -216,6 +216,31 @@ class TestPanicWipe:
         await node_a.stop()
         await node_b.stop()
 
+    async def test_panic_clears_ratchet_state(self):
+        from malphas.node import MalphasNode
+        id_a = create_identity("panic-ratchet-a")
+        id_b = create_identity("panic-ratchet-b")
+        node_a = MalphasNode(id_a, "127.0.0.1", 18108, cover_traffic=False)
+        node_b = MalphasNode(id_b, "127.0.0.1", 18109, cover_traffic=False)
+        await node_a.start()
+        await node_b.start()
+
+        await node_a.connect_to_peer(
+            "127.0.0.1", 18109,
+            id_b.peer_id, id_b.x25519_pub_bytes, id_b.ed25519_pub_bytes,
+        )
+        await asyncio.sleep(0.15)
+
+        conn = node_a._connections.get(id_b.peer_id)
+        assert conn is not None
+        assert conn.ratchet is not None
+
+        node_a.panic()
+        assert len(node_a._connections) == 0
+
+        await node_a.stop()
+        await node_b.stop()
+
     async def test_panic_clears_callbacks(self):
         """
         After panic, no callbacks should fire — the node is dead.

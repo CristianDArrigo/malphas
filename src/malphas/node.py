@@ -817,6 +817,11 @@ class MalphasNode:
         self._reconnect_tasks.clear()
         self._reconnect_book = None
 
+        # Wipe ratchet states
+        for conn in self._connections.values():
+            if hasattr(conn, 'ratchet'):
+                conn.ratchet = None
+
         # Close all active connections immediately
         for conn in list(self._connections.values()):
             try:
