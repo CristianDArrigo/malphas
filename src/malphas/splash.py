@@ -71,7 +71,7 @@ CREDITS = """
   |         privacy-first P2P messenger with onion routing          |
   |                                                                 |
   |  author    Cristian D'Arrigo                                    |
-  |  version   0.1.0                                                |
+  |  version   0.2.0                                                |
   |  source    github.com/CristianDArrigo/malphas                   |
   |                                                                 |
   |  /help for commands  -  /export to share your identity          |

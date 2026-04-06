@@ -597,6 +597,11 @@
         <p>Messages use HMAC-SHA256 instead of digital signatures. Both peers can produce the same authentication tag. If a device is seized, no one can cryptographically prove who wrote what.</p>
       </div>
       <div class="feature reveal">
+        <span class="feature-icon">||</span>
+        <h3>Double Ratchet</h3>
+        <p>Per-message forward secrecy via the Signal Double Ratchet protocol. Each message is encrypted with a unique key. Compromising one message does not expose past or future messages. DH ratchet rotates keys on each direction change.</p>
+      </div>
+      <div class="feature reveal">
         <span class="feature-icon">[=]</span>
         <h3>Key pinning (TOFU)</h3>
         <p>On first contact, the peer's Ed25519 key is pinned. If it changes on reconnect, the handshake is rejected and a warning is displayed. Detects impersonation attempts.</p>
@@ -760,6 +765,11 @@
           <td>Message auth</td>
           <td>HMAC-SHA256</td>
           <td>Deniable message authentication</td>
+        </tr>
+        <tr>
+          <td>Ratchet</td>
+          <td>Double Ratchet (KDF + DH)</td>
+          <td>Per-message forward secrecy</td>
         </tr>
         <tr>
           <td>Onion layer</td>
