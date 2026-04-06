@@ -509,9 +509,12 @@ class MalphasCLI:
             if save == "y":
                 label = input("  label: ").strip()
                 if label:
+                    # Save .onion as host if available — enables auto-reconnect via Tor
+                    save_host = data.get("onion", data["host"])
+                    save_port = 80 if "onion" in data else data["port"]
                     self.book.add(Contact(
                         label=label, peer_id=data["peer_id"],
-                        host=data["host"], port=data["port"],
+                        host=save_host, port=save_port,
                         x25519_pub=data["x25519_pub"],
                         ed25519_pub=data["ed25519_pub"],
                     ))
