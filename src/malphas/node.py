@@ -14,7 +14,7 @@ import asyncio
 import json
 import secrets
 import time
-from typing import Callable, Dict, Optional, Set
+from collections.abc import Callable
 
 from .crypto import (
     decrypt,
@@ -28,7 +28,6 @@ from .crypto import (
 )
 from .discovery import PeerDiscovery, PeerInfo
 from .identity import Identity
-from .ratchet import RatchetState, MessageHeader
 from .memory import MessageStore
 from .obfuscation import (
     CoverTrafficEngine,
@@ -38,9 +37,11 @@ from .obfuscation import (
     unpad_payload,
 )
 from .onion import peel_layer, wrap_onion
-from .transport import BaseTransport, DirectTransport
 from .pinstore import PinStore
+from .ratchet import MessageHeader, RatchetState
 from .receipts import ReceiptTracker, sign_receipt
+from .replay import ReplayCache
+from .transport import BaseTransport, DirectTransport
 
 # Wire message types
 MSG_HANDSHAKE     = 0x01
@@ -73,7 +74,7 @@ def _unpack_header(data: bytes):
 
 def _snapshot_ratchet(r: "RatchetState") -> dict:
     """Save mutable ratchet state so it can be restored after a failed trial decrypt."""
-    from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
     priv_bytes = None
     if r._dh_priv is not None:
         priv_bytes = r._dh_priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
@@ -114,14 +115,14 @@ class PeerConnection:
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
-        peer_info: Optional[PeerInfo] = None,
+        peer_info: PeerInfo | None = None,
     ):
         self.reader = reader
         self.writer = writer
         self.peer_info = peer_info
-        self.session_key: Optional[bytes] = None
-        self.hmac_key: Optional[bytes] = None
-        self.ratchet: Optional[RatchetState] = None
+        self.session_key: bytes | None = None
+        self.hmac_key: bytes | None = None
+        self.ratchet: RatchetState | None = None
         self.authenticated = False
 
     async def send(self, msg_type: int, payload: bytes) -> None:
@@ -156,8 +157,8 @@ class MalphasNode:
         port: int = 7777,
         message_ttl: int = 3600,
         cover_traffic: bool = True,
-        transport: Optional[BaseTransport] = None,
-        pin_store: Optional[PinStore] = None,
+        transport: BaseTransport | None = None,
+        pin_store: PinStore | None = None,
     ):
         self.identity = identity
         self.host = host
@@ -167,15 +168,16 @@ class MalphasNode:
         self.store = MessageStore(ttl_seconds=message_ttl)
         self.receipts = ReceiptTracker()
         self.pins = pin_store or PinStore()
-        self._connections: Dict[str, PeerConnection] = {}
-        self._server: Optional[asyncio.AbstractServer] = None
-        self._callbacks: Set[Callable] = set()
-        self._receipt_callbacks: Set[Callable] = set()
-        self._pin_callbacks: Set[Callable] = set()
+        self._replay = ReplayCache(ttl=message_ttl)
+        self._connections: dict[str, PeerConnection] = {}
+        self._server: asyncio.AbstractServer | None = None
+        self._callbacks: set[Callable] = set()
+        self._receipt_callbacks: set[Callable] = set()
+        self._pin_callbacks: set[Callable] = set()
         self._running = False
         self._reconnect_book = None  # set by CLI to enable auto-reconnect
-        self._reconnect_tasks: Dict[str, asyncio.Task] = {}
-        self._message_queue: Dict[str, list] = {}  # peer_id -> [(content, msg_id)]
+        self._reconnect_tasks: dict[str, asyncio.Task] = {}
+        self._message_queue: dict[str, list] = {}  # peer_id -> [(content, msg_id)]
         self._queue_limit = 100  # max queued messages per peer
 
         # Cover traffic engine
@@ -222,7 +224,7 @@ class MalphasNode:
 
 
     @property
-    def public_address(self) -> Optional[str]:
+    def public_address(self) -> str | None:
         return self.transport.public_address or self.host
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
@@ -287,7 +289,7 @@ class MalphasNode:
         except Exception:
             return False
 
-    async def send_message(self, dest_peer_id: str, content: str) -> Optional[str]:
+    async def send_message(self, dest_peer_id: str, content: str) -> str | None:
         """
         Send a message. Returns msg_id if sent or queued.
         Returns None only if peer is completely unknown.
@@ -638,6 +640,13 @@ class MalphasNode:
         except ValueError:
             return
 
+        # Replay protection: drop duplicates of (from_id, msg_id).
+        # Applies on top of Double Ratchet's msg_num counter to also cover
+        # the HMAC/Ed25519 fallback paths and the brief grace window after
+        # a fresh handshake when ratchet state has been re-initialized.
+        if self._replay.seen(from_id, msg_id):
+            return
+
         self.store.store(from_id, self.identity.peer_id, content, msg_id)
         self._notify_message(from_id, content)
 
@@ -760,10 +769,19 @@ class MalphasNode:
         self._reconnect_book = book
 
     async def _reconnect(self, contact) -> None:
-        """Reconnect to a peer with exponential backoff. Max 5 min between attempts."""
+        """
+        Reconnect to a peer with exponential backoff + jitter.
+
+        Jitter (±20%) avoids the thundering-herd pattern where many
+        peers behind the same NAT/AP retry in lockstep when the network
+        comes back, swamping the gateway.
+        """
         peer_id = contact.peer_id
         if peer_id in self._reconnect_tasks:
             return  # already reconnecting
+
+        import secrets as _secrets
+        rng = _secrets.SystemRandom()
 
         delay = 5  # initial delay in seconds
         max_delay = 300  # 5 minutes cap
@@ -771,7 +789,10 @@ class MalphasNode:
         try:
             self._reconnect_tasks[peer_id] = asyncio.current_task()
             while self._running and peer_id not in self._connections:
-                await asyncio.sleep(delay)
+                # Apply ±20% jitter to the planned delay
+                jitter_factor = 1.0 + (rng.random() - 0.5) * 0.4
+                jittered = max(0.1, delay * jitter_factor)
+                await asyncio.sleep(jittered)
                 if not self._running:
                     break
                 ok = await self.connect_to_peer(
@@ -807,6 +828,9 @@ class MalphasNode:
 
         # Wipe key pins
         self.pins.wipe()
+
+        # Wipe replay cache
+        self._replay.wipe()
 
         # Wipe message queue
         self._message_queue.clear()
@@ -845,6 +869,7 @@ class MalphasNode:
             await asyncio.sleep(60)
             self.store.purge_expired()
             self.discovery.table.purge_stale()
+            self._replay.purge_expired()
 
     async def _ping_loop(self) -> None:
         while self._running:

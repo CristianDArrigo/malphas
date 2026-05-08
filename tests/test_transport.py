@@ -17,12 +17,11 @@ import asyncio
 import base64
 import hashlib
 import struct
-import sys
 
 import pytest
 
+from malphas.identity import create_identity
 from malphas.transport import (
-    BaseTransport,
     DirectTransport,
     TorTransport,
     ed25519_pub_to_onion,
@@ -30,8 +29,6 @@ from malphas.transport import (
     socks5_connect,
     tor_is_available,
 )
-from malphas.identity import create_identity
-
 
 # ── Markers ───────────────────────────────────────────────────────────────────
 
@@ -508,7 +505,9 @@ class TestTorIntegration:
         Requires stem and a Tor control port accessible.
         """
         from cryptography.hazmat.primitives.serialization import (
-            Encoding, PrivateFormat, NoEncryption
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
         )
 
         ident = create_identity("hidden-service-test")
@@ -646,9 +645,12 @@ class TestTorTransportMocked:
         start_hidden_service() must call stem with the correct key type
         and the Ed25519 key derived from the identity.
         """
-        from unittest.mock import MagicMock, patch, AsyncMock
+        from unittest.mock import MagicMock, patch
+
         from cryptography.hazmat.primitives.serialization import (
-            Encoding, PrivateFormat, NoEncryption
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
         )
 
         ident = create_identity("stem-mock-test")
@@ -689,7 +691,7 @@ class TestTorTransportMocked:
                 recovered = onion_to_ed25519_pub(onion)
                 assert recovered == ident.ed25519_pub_bytes
 
-            except Exception as e:
+            except Exception:
                 # If stem mock didn't work perfectly, at least verify
                 # the onion address derivation is correct independently
                 onion = ed25519_pub_to_onion(ident.ed25519_pub_bytes)

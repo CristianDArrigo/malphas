@@ -23,11 +23,9 @@ import hashlib
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from malphas.identity import create_identity, create_identity_with_book_key, _derive_seed
+from malphas.identity import _derive_seed, create_identity, create_identity_with_book_key
 
 
 class TestArgon2Derivation:
@@ -175,6 +173,7 @@ class TestPanicWipe:
 
     async def test_panic_clears_pending_receipts(self):
         import secrets
+
         from malphas.node import MalphasNode
         ident = create_identity("panic-test-d")
         node = MalphasNode(ident, "127.0.0.1", 18102, cover_traffic=False)
@@ -265,7 +264,9 @@ class TestPanicWipe:
         The file is encrypted — without the passphrase it is useless noise.
         Deleting it would destroy the user's contacts permanently.
         """
-        import os, tempfile
+        import os
+        import tempfile
+
         from malphas.addressbook import AddressBook, Contact
         from malphas.identity import create_identity_with_book_key
 

@@ -16,12 +16,12 @@ import signal
 import sys
 from pathlib import Path
 
+from .addressbook import AddressBook
 from .identity import create_identity_with_book_key
 from .node import MalphasNode
-from .addressbook import AddressBook
 from .pinstore import PinStore
-from .transport import DirectTransport, TorTransport, tor_is_available
 from .splash import print_splash
+from .transport import DirectTransport, TorTransport, tor_is_available
 
 DEFAULT_BOOK_PATH = str(Path.home() / ".malphas" / "book")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "showcase")
@@ -95,7 +95,11 @@ async def _run_cli(args) -> None:
 
     if args.tor:
         try:
-            from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+            from cryptography.hazmat.primitives.serialization import (
+                Encoding,
+                NoEncryption,
+                PrivateFormat,
+            )
             priv_bytes = identity.ed25519_priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
             onion = await transport.start_hidden_service(
                 identity.ed25519_pub_bytes, priv_bytes, args.port
@@ -126,6 +130,7 @@ async def _run_cli(args) -> None:
 
 async def _run_web(args) -> None:
     import uvicorn
+
     from .api import create_app
 
     passphrase = _get_passphrase()

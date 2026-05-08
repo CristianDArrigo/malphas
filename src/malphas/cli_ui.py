@@ -25,8 +25,6 @@ import asyncio
 import re
 import sys
 import time
-from io import StringIO
-from typing import Optional
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit import print_formatted_text as ptk_print
@@ -122,7 +120,7 @@ class MalphasCLI:
     def __init__(self, node: MalphasNode, book: AddressBook):
         self.node = node
         self.book = book
-        self.active_peer: Optional[str] = None
+        self.active_peer: str | None = None
         self._running = True
         self._console = _make_console()
 
@@ -445,9 +443,9 @@ class MalphasCLI:
         self._print()
         if onion_addr:
             self._print(Panel(
-                f"[dim]your peer will connect via your .onion address.\n"
-                f"the .onion is permanent — same passphrase, same address.\n"
-                f"host:port in the invite is a fallback for LAN/direct connections.[/dim]",
+                "[dim]your peer will connect via your .onion address.\n"
+                "the .onion is permanent — same passphrase, same address.\n"
+                "host:port in the invite is a fallback for LAN/direct connections.[/dim]",
                 border_style=C_BORDER,
                 title=f"[{C_DIM}]tor[/{C_DIM}]",
                 title_align="left",
@@ -615,7 +613,7 @@ class MalphasCLI:
             f"  [dim]peer_id[/dim]  {self.node.identity.peer_id}\n"
             f"  [dim]port[/dim]     {self.node.port}\n"
             + (f"  [dim]book[/dim]     {len(self.book)} contact(s)\n" if len(self.book) > 0 else "")
-            + f"\n  [dim]/help for commands[/dim]",
+            + "\n  [dim]/help for commands[/dim]",
             title=f"[{C_DIM}]malphas[/{C_DIM}]",
             border_style=C_BORDER,
             title_align="left",

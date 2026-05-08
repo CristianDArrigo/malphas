@@ -13,21 +13,23 @@ It does NOT prove identity to a third party — only integrity.
 
 import base64
 import json
-from typing import Optional
+from typing import TYPE_CHECKING, Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+
+if TYPE_CHECKING:
+    from .identity import Identity
 
 PREFIX = "malphas://"
 
 
 def generate_invite(
-    identity,
+    identity: "Identity",
     host: str,
     port: int,
-    onion: Optional[str] = None,
+    onion: str | None = None,
 ) -> str:
     """
     Generate a malphas:// invite URL.
@@ -52,7 +54,7 @@ def generate_invite(
     return PREFIX + blob
 
 
-def parse_invite(url: str) -> dict:
+def parse_invite(url: str) -> dict[str, Any]:
     """
     Parse and verify a malphas:// invite URL.
     Returns the payload dict on success.
@@ -75,7 +77,7 @@ def parse_invite(url: str) -> dict:
     json_bytes = raw[64:]
 
     try:
-        payload = json.loads(json_bytes.decode())
+        payload: dict[str, Any] = json.loads(json_bytes.decode())
     except Exception as e:
         raise ValueError(f"Invalid JSON: {e}") from e
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "malphas"
-version = "0.2.0"
+version = "0.2.4"
 description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [
@@ -31,4 +31,71 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
+    "ruff>=0.7",
+    "mypy>=1.10",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+exclude = ["frontend/", "venv/", ".venv/", "build/", "dist/"]
+
+# Modules in the strict bucket — extend this list as code is cleaned.
+[[tool.mypy.overrides]]
+module = [
+    "malphas.replay",
+    "malphas.crypto",
+    "malphas.memory",
+    "malphas.obfuscation",
+    "malphas.pinstore",
+    "malphas.invite",
+]
+strict = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [".venv", "venv", "frontend/showcase"]
+
+[tool.ruff.lint]
+# Conservative starter set. Expand once the backlog is resolved.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear (likely bugs)
+    "UP",  # pyupgrade
+    "S",   # bandit (security)
+]
+ignore = [
+    "E501",  # line too long (managed by formatter)
+    "S101",  # assert in tests is fine
+    "S311",  # we use `random` only for non-crypto jitter where appropriate
+    "B008",  # FastAPI Depends-style defaults
+    # Triaged backlog — keep silenced until each is reviewed individually.
+    # Each carries an existing design rationale (see docs/auto-loop/iter-007).
+    "S110",  # try-except-pass: fail-closed silent drops are a feature
+    "S324",  # SHA1 used as identifier, not for security; tracked B1 in iter-001
+    "S603",  # subprocess without shell=True: setup.sh / Tor key install
+    "S104",  # bind 0.0.0.0: needed for LAN/Tor; documented
+    "S108",  # /tmp: hidden-service key staging dir, deleted after copy
+    "S306",  # mktemp: same staging path
+    "S112",  # try-except-continue: stale-peer eviction
+    "B017",  # assert raises Exception: tests want broad catch
+    "B904",  # raise-without-from: silent drops, no chain leak
+    "B905",  # zip strict: not relevant
+    "B007",  # unused loop var
+    "B011",  # assert False
+    "B023",  # function-uses-loop-variable
+    "F841",  # unused-variable: a few intentional `as e` for breakpoints
+    "F401",  # unused imports
+    "E402",  # late import: cli_ui re-imports inside method bodies on purpose
+    "E701",  # one-line if
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+

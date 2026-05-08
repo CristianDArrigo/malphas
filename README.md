@@ -706,9 +706,10 @@ This is a deliberate design choice modeled after Signal's approach to authentica
 7. All reconnect tasks cancelled
 8. All active TCP connections closed
 9. Message callbacks cleared
-10. Address book cleared from memory (file on disk untouched)
-11. `gc.collect()` — forces garbage collection
-12. `sys.exit(0)` — hard exit
+10. Replay cache wiped
+11. Address book cleared from memory (file on disk untouched)
+12. `gc.collect()` — forces garbage collection
+13. `sys.exit(0)` — hard exit
 
 The address book and pin store files on disk survive `/panic` intentionally. They are encrypted — without the passphrase they are indistinguishable from random noise. Deleting them would permanently destroy the user's contacts.
 
@@ -733,6 +734,10 @@ Every connection begins with a mutually authenticated handshake (described in [H
 ### Message Sender Verification
 
 All incoming messages must be authenticated by a peer known to the recipient's routing table. Messages claiming to be from an unknown `peer_id` are silently dropped. This prevents message injection attacks.
+
+### Replay Protection
+
+Each successfully delivered message is recorded in an in-memory replay cache keyed by `(from_peer_id, msg_id)`. A second packet with the same key arriving while the entry is alive is dropped silently — no second user-visible delivery, no second store write, no second receipt. The cache is bounded (10000 entries, FIFO eviction) and entries expire on the same TTL as the message store. This closes a gap on the HMAC and Ed25519 fallback delivery paths where the Double Ratchet's per-message counter is not in effect (e.g. immediately after a reconnect, before the ratchet has been re-keyed). The cache is wiped by `/panic` like every other piece of state.
 
 ### No-Log Policy
 

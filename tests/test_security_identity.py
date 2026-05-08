@@ -11,9 +11,6 @@ Verifies:
 """
 
 import hashlib
-import secrets
-
-import pytest
 
 from malphas.identity import create_identity, create_identity_with_book_key
 

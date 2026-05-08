@@ -2,21 +2,18 @@
 Shared pytest fixtures for Malphas test suite.
 """
 
-import asyncio
 import os
-import secrets
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from malphas.addressbook import AddressBook, Contact
 from malphas.identity import create_identity, create_identity_with_book_key
 from malphas.node import MalphasNode
-from malphas.addressbook import AddressBook, Contact
-
 
 # ── Identities ────────────────────────────────────────────────────────────────
 

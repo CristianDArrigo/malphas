@@ -9,8 +9,6 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
-
 
 log = logging.getLogger("malphas.discovery")
 log.addHandler(logging.NullHandler())  # no-log policy: NullHandler by default
@@ -63,8 +61,8 @@ class RoutingTable:
 
     def __init__(self, my_id: str):
         self._my_id = my_id
-        self._buckets: Dict[int, List[PeerInfo]] = {}
-        self._by_id: Dict[str, PeerInfo] = {}
+        self._buckets: dict[int, list[PeerInfo]] = {}
+        self._by_id: dict[str, PeerInfo] = {}
 
     def add(self, peer: PeerInfo) -> None:
         if peer.peer_id == self._my_id:
@@ -98,16 +96,16 @@ class RoutingTable:
                 bucket.append(peer)
                 self._by_id[peer.peer_id] = peer
 
-    def get(self, peer_id: str) -> Optional[PeerInfo]:
+    def get(self, peer_id: str) -> PeerInfo | None:
         return self._by_id.get(peer_id)
 
-    def closest(self, target_id: str, k: int = K) -> List[PeerInfo]:
+    def closest(self, target_id: str, k: int = K) -> list[PeerInfo]:
         """Return up to k peers closest to target_id."""
         all_peers = list(self._by_id.values())
         all_peers.sort(key=lambda p: xor_distance(p.peer_id, target_id))
         return all_peers[:k]
 
-    def all_peers(self) -> List[PeerInfo]:
+    def all_peers(self) -> list[PeerInfo]:
         return list(self._by_id.values())
 
     def remove(self, peer_id: str) -> None:
@@ -137,7 +135,7 @@ class PeerDiscovery:
     def __init__(self, my_id: str):
         self.table = RoutingTable(my_id)
         self._my_id = my_id
-        self._mdns_task: Optional[asyncio.Task] = None
+        self._mdns_task: asyncio.Task | None = None
 
     def add_peer(
         self,
@@ -157,22 +155,27 @@ class PeerDiscovery:
         self.table.add(peer)
         return peer
 
-    def get_peer(self, peer_id: str) -> Optional[PeerInfo]:
+    def get_peer(self, peer_id: str) -> PeerInfo | None:
         return self.table.get(peer_id)
 
-    def all_peers(self) -> List[dict]:
+    def all_peers(self) -> list[dict]:
         return [p.to_dict() for p in self.table.all_peers()]
 
     def select_relay_circuit(
         self,
         dest_id: str,
         hops: int = 3,
-    ) -> List[Tuple[bytes, str]]:
+    ) -> list[tuple[bytes, str]]:
         """
         Select a circuit of (x25519_pub, peer_id) tuples.
         Excludes self and destination from relays.
         Degrades gracefully: fewer hops if not enough peers.
         Returns: [(x25519_pub, peer_id), ...] ending with destination.
+
+        Uses secrets.SystemRandom (cryptographically strong, OS entropy)
+        rather than the default Mersenne-Twister-based random module.
+        Predictable circuits would let an attacker bias which relay sees
+        which message.
         """
         dest = self.table.get(dest_id)
         if dest is None:
@@ -183,9 +186,9 @@ class PeerDiscovery:
             if p.peer_id != self._my_id and p.peer_id != dest_id
         ]
 
-        # Select up to hops-1 relays
-        import random
-        relays = random.sample(candidates, min(hops - 1, len(candidates)))
+        import secrets as _secrets
+        rng = _secrets.SystemRandom()
+        relays = rng.sample(candidates, min(hops - 1, len(candidates)))
 
         circuit = [(r.x25519_pub, r.peer_id) for r in relays]
         circuit.append((dest.x25519_pub, dest.peer_id))
@@ -194,9 +197,10 @@ class PeerDiscovery:
     async def start_mdns(self, service_name: str, port: int) -> None:
         """Attempt mDNS registration. Silently skips if zeroconf unavailable."""
         try:
-            from zeroconf.asyncio import AsyncZeroconf
-            from zeroconf import ServiceInfo
             import socket
+
+            from zeroconf import ServiceInfo
+            from zeroconf.asyncio import AsyncZeroconf
 
             info = ServiceInfo(
                 "_malphas._tcp.local.",

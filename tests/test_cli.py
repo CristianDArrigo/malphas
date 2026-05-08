@@ -15,24 +15,21 @@ Covers:
 import asyncio
 import os
 import socket
-import sys
 import tempfile
 from io import StringIO
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from rich.console import Console
 
-from malphas.cli_ui import MalphasCLI, MalphasCompleter, COMMANDS, PEER_ID_RE, HEX64_RE
+from malphas.addressbook import AddressBook, Contact
+from malphas.cli_ui import COMMANDS, HEX64_RE, PEER_ID_RE, MalphasCLI, MalphasCompleter
+from malphas.discovery import PeerDiscovery
 from malphas.identity import create_identity, create_identity_with_book_key
 from malphas.invite import generate_invite
-from malphas.node import MalphasNode
-from malphas.addressbook import AddressBook, Contact
-from malphas.discovery import PeerDiscovery
 from malphas.memory import MessageStore
+from malphas.node import MalphasNode
 from malphas.receipts import ReceiptTracker
-
 
 # ---------------------------------------------------------------------------
 # Port allocation helper

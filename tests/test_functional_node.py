@@ -12,9 +12,6 @@ Verifies:
 """
 
 import asyncio
-import secrets
-
-import pytest
 
 
 class TestNodeHandshake:

@@ -1,11 +1,11 @@
 """
 Identity layer.
-SHA1(passphrase) -> seed -> Ed25519 + X25519 keypairs.
-The public peer_id exposed on the network is SHA1(ed25519_pubkey).
+Argon2id(passphrase) -> 64-byte seed -> Ed25519 + X25519 keypairs.
+The public peer_id exposed on the network is SHA1(ed25519_pubkey)
+(SHA1 is used as a 160-bit identifier, not for security).
 No passphrase is ever stored or logged.
 """
 
-import gc
 import hashlib
 import secrets
 from dataclasses import dataclass
@@ -21,12 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     PublicFormat,
-    PrivateFormat,
-    NoEncryption,
 )
-from cryptography.hazmat.primitives.hashes import SHA256
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
 
 # Argon2id parameters.
 # time_cost=3, memory_cost=65536 (64MB), parallelism=4
@@ -55,7 +50,7 @@ def _derive_seed(passphrase: str) -> bytes:
     fast enough to allow brute force attacks.
     """
     try:
-        from argon2.low_level import hash_secret_raw, Type
+        from argon2.low_level import Type, hash_secret_raw
     except ImportError:
         raise RuntimeError(
             "argon2-cffi is required. "

@@ -19,12 +19,9 @@ Pending receipts are kept in memory only. No disk writes.
 """
 
 import asyncio
-import hashlib
-import secrets
 import time
-from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional
-
+from collections.abc import Callable
+from dataclasses import dataclass
 
 RECEIPT_TIMEOUT = 30.0   # seconds before a pending receipt is considered lost
 RECEIPT_INFO = b"malphas-read-receipt-v1"
@@ -82,10 +79,10 @@ class ReceiptTracker:
     """
 
     def __init__(self, timeout: float = RECEIPT_TIMEOUT, check_interval: float = 5.0):
-        self._pending: Dict[str, PendingReceipt] = {}
-        self._on_receipt: Optional[Callable] = None
-        self._on_timeout: Optional[Callable] = None
-        self._task: Optional[asyncio.Task] = None
+        self._pending: dict[str, PendingReceipt] = {}
+        self._on_receipt: Callable | None = None
+        self._on_timeout: Callable | None = None
+        self._task: asyncio.Task | None = None
         self._timeout = timeout
         self._check_interval = check_interval
 

@@ -18,11 +18,10 @@ Skip automatically if Tor is not available.
 import asyncio
 
 import pytest
-
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
-    PrivateFormat,
     NoEncryption,
+    PrivateFormat,
 )
 
 from malphas.identity import create_identity
@@ -33,7 +32,6 @@ from malphas.transport import (
     onion_to_ed25519_pub,
     tor_is_available,
 )
-
 
 # ── Skip decorator ───────────────────────────────────────────────────────────
 

@@ -2,7 +2,9 @@
 Tests for Double Ratchet implementation.
 """
 import os
+
 import pytest
+
 from malphas.crypto import kdf_chain
 
 
@@ -43,7 +45,7 @@ from malphas.ratchet import RatchetState
 
 class TestRatchetState:
     def _make_pair(self):
-        from malphas.crypto import generate_ephemeral_keypair, ecdh_shared_secret
+        from malphas.crypto import ecdh_shared_secret, generate_ephemeral_keypair
         priv_a, pub_a = generate_ephemeral_keypair()
         priv_b, pub_b = generate_ephemeral_keypair()
         shared = ecdh_shared_secret(priv_a, pub_b)

@@ -12,11 +12,9 @@ Verifies:
 
 import base64
 import json
-import secrets
 
 import pytest
 
-from malphas.identity import create_identity
 from malphas.invite import PREFIX, generate_invite, parse_invite
 
 

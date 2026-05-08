@@ -13,7 +13,8 @@ On reconnect, a fresh ratchet is initialized from the new handshake.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from .crypto import (
     decrypt,
@@ -23,8 +24,6 @@ from .crypto import (
     hkdf_derive,
     kdf_chain,
 )
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-
 
 MAX_SKIP = 100
 
@@ -49,16 +48,16 @@ class MessageHeader:
 
 class RatchetState:
     def __init__(self):
-        self._dh_priv: Optional[X25519PrivateKey] = None
-        self._dh_pub: Optional[bytes] = None
-        self._remote_dh_pub: Optional[bytes] = None
-        self._root_key: Optional[bytes] = None
-        self._send_chain_key: Optional[bytes] = None
-        self._recv_chain_key: Optional[bytes] = None
+        self._dh_priv: X25519PrivateKey | None = None
+        self._dh_pub: bytes | None = None
+        self._remote_dh_pub: bytes | None = None
+        self._root_key: bytes | None = None
+        self._send_chain_key: bytes | None = None
+        self._recv_chain_key: bytes | None = None
         self._send_msg_num: int = 0
         self._recv_msg_num: int = 0
         self._prev_send_count: int = 0
-        self._skipped: Dict[Tuple[bytes, int], bytes] = {}
+        self._skipped: dict[tuple[bytes, int], bytes] = {}
 
     @classmethod
     def from_shared_secret(
@@ -92,7 +91,7 @@ class RatchetState:
 
         return state
 
-    def encrypt(self, plaintext: bytes) -> Tuple[MessageHeader, bytes]:
+    def encrypt(self, plaintext: bytes) -> tuple[MessageHeader, bytes]:
         if self._send_chain_key is None:
             raise RuntimeError("Sending chain not initialized")
 
@@ -153,7 +152,7 @@ class RatchetState:
                 del self._skipped[oldest]
 
 
-def _kdf_root(root_key: bytes, dh_output: bytes) -> Tuple[bytes, bytes]:
+def _kdf_root(root_key: bytes, dh_output: bytes) -> tuple[bytes, bytes]:
     derived = hkdf_derive(
         dh_output,
         salt=root_key,

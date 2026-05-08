@@ -15,19 +15,16 @@ Uses httpx.ASGITransport + httpx.AsyncClient (modern FastAPI test approach).
 Requires pytest and pytest-asyncio (asyncio_mode = auto in pytest.ini).
 """
 
-import asyncio
 import tempfile
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 
+from malphas.api import create_app
 from malphas.identity import create_identity
 from malphas.node import MalphasNode
-from malphas.api import create_app
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -474,8 +471,8 @@ class TestWebSocket:
         a local variable (UnboundLocalError). We work around this by sending
         directly on the WebSocket from the server side via the ASGI layer.
         """
+
         from starlette.testclient import TestClient
-        import json
 
         with TestClient(app) as tc:
             with tc.websocket_connect("/ws") as ws:

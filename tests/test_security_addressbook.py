@@ -12,14 +12,12 @@ Verifies:
 - Message store has zero disk footprint
 """
 
-import gc
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from malphas.addressbook import AddressBook, Contact, BLOCK_SIZE
+from malphas.addressbook import AddressBook, Contact
 from malphas.identity import create_identity_with_book_key
 from malphas.memory import MessageStore
 

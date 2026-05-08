@@ -15,20 +15,18 @@ The pin store is:
 """
 
 import json
-import os
 from pathlib import Path
-from typing import Dict, Optional
 
-from .crypto import encrypt, decrypt
+from .crypto import decrypt, encrypt
 
 
 class PinStore:
-    def __init__(self, path: Optional[str] = None, key: Optional[bytes] = None):
-        self._pins: Dict[str, str] = {}  # peer_id -> ed25519_pub hex
+    def __init__(self, path: str | None = None, key: bytes | None = None):
+        self._pins: dict[str, str] = {}  # peer_id -> ed25519_pub hex
         self._path = Path(path) if path else None
         self._key = key
 
-    def check_and_pin(self, peer_id: str, ed25519_pub: bytes) -> tuple:
+    def check_and_pin(self, peer_id: str, ed25519_pub: bytes) -> tuple[bool, str | None]:
         """
         Check a peer's key against the store.
 
@@ -51,7 +49,7 @@ class PinStore:
         # Mismatch
         return False, existing
 
-    def trust(self, peer_id: str, ed25519_pub: Optional[bytes] = None) -> None:
+    def trust(self, peer_id: str, ed25519_pub: bytes | None = None) -> None:
         """
         Reset or remove pin for a peer. If ed25519_pub is given,
         pin to that key. Otherwise, remove the pin entirely
@@ -63,11 +61,11 @@ class PinStore:
             self._pins.pop(peer_id, None)
         self._save()
 
-    def get_pin(self, peer_id: str) -> Optional[str]:
+    def get_pin(self, peer_id: str) -> str | None:
         """Return the pinned Ed25519 pubkey hex for a peer, or None."""
         return self._pins.get(peer_id)
 
-    def all_pins(self) -> Dict[str, str]:
+    def all_pins(self) -> dict[str, str]:
         return dict(self._pins)
 
     # ── Persistence ──────────────────────────────────────────────────────

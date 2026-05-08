@@ -16,12 +16,10 @@ for the duration of the process.
 
 import json
 import os
-import secrets
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List, Optional
 
-from .crypto import encrypt, decrypt, hkdf_derive
+from .crypto import decrypt, encrypt, hkdf_derive
 
 # Pad plaintext to nearest multiple of this to obscure contact count
 BLOCK_SIZE = 4096  # bytes
@@ -102,7 +100,7 @@ class AddressBook:
     def __init__(self, path: str, book_key: bytes):
         self._path = Path(path)
         self._key = book_key
-        self._contacts: List[Contact] = []
+        self._contacts: list[Contact] = []
         self._loaded = False
 
     # ── Persistence ──────────────────────────────────────────────────────────
@@ -128,7 +126,7 @@ class AddressBook:
             return True
         except Exception as e:
             raise ValueError(
-                f"Address book decryption failed — wrong passphrase or corrupted file"
+                "Address book decryption failed — wrong passphrase or corrupted file"
             ) from e
 
     def _save(self) -> None:
@@ -155,17 +153,17 @@ class AddressBook:
 
     # ── API ──────────────────────────────────────────────────────────────────
 
-    def all(self) -> List[Contact]:
+    def all(self) -> list[Contact]:
         return list(self._contacts)
 
-    def get(self, label: str) -> Optional[Contact]:
+    def get(self, label: str) -> Contact | None:
         label = label.strip().lower()
         for c in self._contacts:
             if c.label.lower() == label:
                 return c
         return None
 
-    def get_by_peer_id(self, peer_id: str) -> Optional[Contact]:
+    def get_by_peer_id(self, peer_id: str) -> Contact | None:
         for c in self._contacts:
             if c.peer_id == peer_id:
                 return c

@@ -4,11 +4,11 @@ Zero persistence. Zero logging.
 Messages expire after TTL seconds and are wiped from memory.
 """
 
-import time
 import secrets
+import time
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -17,14 +17,14 @@ class Message:
     from_peer: str        # peer_id (hex)
     to_peer: str          # peer_id (hex)
     content: str          # plaintext (after decryption)
-    timestamp: float      # unix timestamp
-    expires_at: float     # unix timestamp
+    timestamp: float      # unix wall-clock timestamp (display)
+    expires_at: float     # monotonic deadline (immune to clock skew)
     delivered: bool = False
 
     def is_expired(self) -> bool:
-        return time.time() > self.expires_at
+        return time.monotonic() > self.expires_at
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "from_peer": self.from_peer,
@@ -41,11 +41,11 @@ class MessageStore:
     No writes to disk. Messages wiped after TTL.
     """
 
-    def __init__(self, ttl_seconds: int = 3600, max_messages: int = 500):
+    def __init__(self, ttl_seconds: int = 3600, max_messages: int = 500) -> None:
         self._ttl = ttl_seconds
         self._max = max_messages
         # conversation_key -> deque of Message
-        self._store: Dict[str, deque] = {}
+        self._store: dict[str, deque[Message]] = {}
 
     def _conversation_key(self, a: str, b: str) -> str:
         """Canonical key regardless of sender/receiver order."""
@@ -56,16 +56,15 @@ class MessageStore:
         from_peer: str,
         to_peer: str,
         content: str,
-        msg_id: Optional[str] = None,
+        msg_id: str | None = None,
     ) -> Message:
-        now = time.time()
         msg = Message(
             id=msg_id or secrets.token_hex(16),
             from_peer=from_peer,
             to_peer=to_peer,
             content=content,
-            timestamp=now,
-            expires_at=now + self._ttl,
+            timestamp=time.time(),
+            expires_at=time.monotonic() + self._ttl,
         )
         key = self._conversation_key(from_peer, to_peer)
         if key not in self._store:
@@ -73,14 +72,13 @@ class MessageStore:
         self._store[key].append(msg)
         return msg
 
-    def get_conversation(self, peer_a: str, peer_b: str) -> List[dict]:
+    def get_conversation(self, peer_a: str, peer_b: str) -> list[dict[str, Any]]:
         """Return non-expired messages for a conversation, oldest first."""
         key = self._conversation_key(peer_a, peer_b)
         if key not in self._store:
             return []
-        now = time.time()
-        result = []
-        live = deque()
+        result: list[dict[str, Any]] = []
+        live: deque[Message] = deque()
         for msg in self._store[key]:
             if not msg.is_expired():
                 result.append(msg.to_dict())

@@ -4,16 +4,13 @@ Bound to 127.0.0.1 only. Never exposed externally.
 WebSocket for real-time message push.
 """
 
-import asyncio
-import json
-from typing import Set
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+import re
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
-import re
 
 from .node import MalphasNode
 
@@ -33,7 +30,7 @@ def create_app(node: MalphasNode, static_dir: str) -> FastAPI:
         allow_headers=["*"],
     )
 
-    ws_clients: Set[WebSocket] = set()
+    ws_clients: set[WebSocket] = set()
 
     # Register message callback to push via WebSocket
     async def _push_message(from_id: str, content: str) -> None:

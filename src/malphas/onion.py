@@ -15,8 +15,6 @@ If next_hop_id == b'\x00' * 20: this is the final destination.
 The decrypted payload at the last layer is the plaintext message.
 """
 
-import os
-from typing import List, Optional, Tuple
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
@@ -40,7 +38,7 @@ def peer_id_to_bytes(peer_id_hex: str) -> bytes:
     return bytes.fromhex(peer_id_hex)
 
 
-def peer_id_from_bytes(b: bytes) -> Optional[str]:
+def peer_id_from_bytes(b: bytes) -> str | None:
     """Convert 20 raw bytes to hex peer_id. None if final hop marker."""
     if b == FINAL_HOP_MARKER:
         return None
@@ -49,7 +47,7 @@ def peer_id_from_bytes(b: bytes) -> Optional[str]:
 
 def wrap_onion(
     plaintext: bytes,
-    circuit: List[Tuple[bytes, str]],  # [(x25519_pub_bytes, peer_id_hex), ...]
+    circuit: list[tuple[bytes, str]],  # [(x25519_pub_bytes, peer_id_hex), ...]
 ) -> bytes:
     """
     Build an onion-encrypted packet.
@@ -91,7 +89,7 @@ def wrap_onion(
 def peel_layer(
     my_x25519_priv: X25519PrivateKey,
     data: bytes,
-) -> Tuple[Optional[str], bytes]:
+) -> tuple[str | None, bytes]:
     """
     Peel one onion layer.
 

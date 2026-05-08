@@ -6,11 +6,11 @@ session key usage, delivery pipeline).
 """
 
 import asyncio
+
 import pytest
 
 from malphas.identity import create_identity
 from malphas.node import MalphasNode
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

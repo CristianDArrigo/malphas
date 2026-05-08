@@ -18,7 +18,6 @@ import asyncio
 import base64
 import hashlib
 import struct
-from typing import Optional, Tuple
 
 # SOCKS5 constants
 SOCKS5_VERSION = 0x05
@@ -71,7 +70,7 @@ async def socks5_connect(
     socks_port: int,
     dest_host: str,
     dest_port: int,
-) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     """
     Open a SOCKS5 connection to dest_host:dest_port through a SOCKS5 proxy.
     Supports .onion addresses (ATYP_DOMAINNAME).
@@ -146,7 +145,7 @@ class BaseTransport:
 
     async def connect(
         self, host: str, port: int
-    ) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         raise NotImplementedError
 
     async def start_server(
@@ -155,7 +154,7 @@ class BaseTransport:
         raise NotImplementedError
 
     @property
-    def public_address(self) -> Optional[str]:
+    def public_address(self) -> str | None:
         """The publicly reachable address for this node, or None if not known."""
         return None
 
@@ -168,9 +167,9 @@ class BaseTransport:
 class DirectTransport(BaseTransport):
     """Plain TCP. Works on LAN or when the node has a public IP."""
 
-    def __init__(self, public_host: Optional[str] = None):
+    def __init__(self, public_host: str | None = None):
         self._public_host = public_host
-        self._server: Optional[asyncio.AbstractServer] = None
+        self._server: asyncio.AbstractServer | None = None
 
     async def connect(self, host: str, port: int):
         return await asyncio.wait_for(
@@ -182,7 +181,7 @@ class DirectTransport(BaseTransport):
         return self._server
 
     @property
-    def public_address(self) -> Optional[str]:
+    def public_address(self) -> str | None:
         return self._public_host
 
     async def stop(self):
@@ -212,23 +211,23 @@ class TorTransport(BaseTransport):
         socks_port: int = 9050,
         control_host: str = "127.0.0.1",
         control_port: int = 9051,
-        control_password: Optional[str] = None,
+        control_password: str | None = None,
     ):
         self._socks_host = socks_host
         self._socks_port = socks_port
         self._control_host = control_host
         self._control_port = control_port
         self._control_password = control_password
-        self._onion_address: Optional[str] = None
+        self._onion_address: str | None = None
         self._hs_dir = None
-        self._server: Optional[asyncio.AbstractServer] = None
+        self._server: asyncio.AbstractServer | None = None
 
     async def start_hidden_service(
         self,
         ed25519_pub_bytes: bytes,
         ed25519_priv_bytes: bytes,
         local_port: int,
-        hs_dir: Optional[str] = None,
+        hs_dir: str | None = None,
     ) -> str:
         """
         Register a Tor v3 hidden service using our Ed25519 keypair.
@@ -381,7 +380,7 @@ class TorTransport(BaseTransport):
         return self._server
 
     @property
-    def public_address(self) -> Optional[str]:
+    def public_address(self) -> str | None:
         return self._onion_address
 
     async def stop(self) -> None:

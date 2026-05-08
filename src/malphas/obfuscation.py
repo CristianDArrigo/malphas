@@ -18,8 +18,7 @@ import asyncio
 import os
 import secrets
 import struct
-import time
-from typing import Callable, List, Optional
+from collections.abc import Awaitable, Callable
 
 # Pad all payloads to multiples of this size
 PAYLOAD_BLOCK = 512  # bytes
@@ -90,16 +89,16 @@ class CoverTrafficEngine:
 
     def __init__(
         self,
-        get_peers_fn: Callable[[], List[str]],   # returns list of peer_ids
-        send_cover_fn: Callable,                  # async (peer_id) -> None
+        get_peers_fn: Callable[[], list[str]],
+        send_cover_fn: Callable[[str], Awaitable[None]],
         min_interval: float = COVER_MIN_INTERVAL,
         max_interval: float = COVER_MAX_INTERVAL,
-    ):
+    ) -> None:
         self._get_peers = get_peers_fn
         self._send_cover = send_cover_fn
         self._min = min_interval
         self._max = max_interval
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task[None] | None = None
         self._enabled = True
 
     def enable(self) -> None:

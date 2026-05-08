@@ -5,7 +5,6 @@ Verifies correct operational behavior of non-crypto components.
 """
 
 import time
-import secrets
 
 import pytest
 

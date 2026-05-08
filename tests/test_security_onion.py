@@ -11,13 +11,11 @@ Verifies:
 - Circuit ordering is preserved
 """
 
-import os
-import secrets
 
 import pytest
 
 from malphas.identity import create_identity
-from malphas.onion import peel_layer, wrap_onion, FINAL_HOP_MARKER, peer_id_to_bytes
+from malphas.onion import peel_layer, wrap_onion
 
 
 def _make_circuit(identities):

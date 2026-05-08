@@ -10,7 +10,6 @@ No custom crypto. All primitives from cryptography.hazmat.
 
 import os
 import struct
-from typing import Tuple
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
@@ -20,7 +19,6 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-
 
 # --- Key derivation ----------------------------------------------------------
 
@@ -74,7 +72,7 @@ def decrypt(key: bytes, data: bytes, aad: bytes = b"") -> bytes:
 
 # --- Ephemeral session key exchange ------------------------------------------
 
-def generate_ephemeral_keypair() -> Tuple[X25519PrivateKey, bytes]:
+def generate_ephemeral_keypair() -> tuple[X25519PrivateKey, bytes]:
     """Generate a fresh X25519 keypair. Returns (priv, pub_bytes)."""
     priv = X25519PrivateKey.generate()
     pub_bytes = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
@@ -124,7 +122,7 @@ def hmac_verify(key: bytes, data: bytes, tag: bytes) -> bool:
 
 # --- KDF chain (Double Ratchet) -----------------------------------------------
 
-def kdf_chain(chain_key: bytes) -> tuple:
+def kdf_chain(chain_key: bytes) -> tuple[bytes, bytes]:
     """
     Advance a KDF chain by one step.
     Returns (new_chain_key, message_key).
@@ -142,7 +140,7 @@ def pack_u16(n: int) -> bytes:
 
 
 def unpack_u16(b: bytes) -> int:
-    return struct.unpack(">H", b[:2])[0]
+    return int(struct.unpack(">H", b[:2])[0])
 
 
 def pack_u32(n: int) -> bytes:
@@ -150,4 +148,4 @@ def pack_u32(n: int) -> bytes:
 
 
 def unpack_u32(b: bytes) -> int:
-    return struct.unpack(">I", b[:4])[0]
+    return int(struct.unpack(">I", b[:4])[0])
