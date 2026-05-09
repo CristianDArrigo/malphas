@@ -70,28 +70,61 @@ No servers. No accounts. No logs. No traces.
 
 ## Table of Contents
 
-1. [What is malphas](#what-is-malphas)
-2. [Design Principles](#design-principles)
-3. [Threat Model](#threat-model)
-4. [Cryptographic Stack](#cryptographic-stack)
-5. [Architecture](#architecture)
-6. [Installation](#installation)
-7. [Quickstart](#quickstart)
-8. [CLI Reference](#cli-reference)
-9. [How the Network Works](#how-the-network-works)
-10. [Tor Hidden Services](#tor-hidden-services)
-11. [Identity System](#identity-system)
-12. [Invite System](#invite-system)
-13. [Address Book and Key Pinning](#address-book-and-key-pinning)
-14. [Security Features](#security-features)
-15. [Traffic Obfuscation](#traffic-obfuscation)
-16. [Read Receipts](#read-receipts)
-17. [File Transfer](#file-transfer)
-18. [Resilience](#resilience)
-19. [Limitations](#limitations)
-20. [Testing](#testing)
-21. [Development](#development)
-22. [Disclaimer](#disclaimer)
+1. [Status](#status)
+2. [What is malphas](#what-is-malphas)
+3. [Design Principles](#design-principles)
+4. [Threat Model](#threat-model)
+5. [Cryptographic Stack](#cryptographic-stack)
+6. [Architecture](#architecture)
+7. [Installation](#installation)
+8. [Quickstart](#quickstart)
+9. [CLI Reference](#cli-reference)
+10. [How the Network Works](#how-the-network-works)
+11. [Tor Hidden Services](#tor-hidden-services)
+12. [Identity System](#identity-system)
+13. [Invite System](#invite-system)
+14. [Address Book and Key Pinning](#address-book-and-key-pinning)
+15. [Security Features](#security-features)
+16. [Traffic Obfuscation](#traffic-obfuscation)
+17. [Read Receipts](#read-receipts)
+18. [File Transfer](#file-transfer)
+19. [Resilience](#resilience)
+20. [Limitations](#limitations)
+21. [Testing](#testing)
+22. [Development](#development)
+23. [Disclaimer](#disclaimer)
+
+---
+
+## Status
+
+**`1.0.0-rc5` (2026-05-09) · wire format frozen · not externally reviewed.**
+
+malphas is a release candidate. Wire format is frozen at
+`WIRE_VERSION = 1` and additive-only from here (see
+[`PROTOCOL.md`](PROTOCOL.md) §10). The threat model is
+documented in [`THREAT_MODEL.md`](THREAT_MODEL.md) and graded
+against five adversary profiles. The only open audit item is
+**TM-02** — external cryptographic review by a human; the
+review brief is ready to send at [`REVIEW_REQUEST.md`](REVIEW_REQUEST.md).
+
+The full canonical document set:
+
+| Document                                          | Purpose                                                                                |
+|---------------------------------------------------|----------------------------------------------------------------------------------------|
+| [`THREAT_MODEL.md`](THREAT_MODEL.md)              | adversary profiles, guarantees, weakness IDs (TM-01 … TM-11)                           |
+| [`PROTOCOL.md`](PROTOCOL.md)                      | byte-level wire spec (frozen at `1.0.0-rc1`)                                           |
+| [`REVIEW_REQUEST.md`](REVIEW_REQUEST.md)          | brief for an external reviewer — what to look at, the seven open questions             |
+| [`RELEASE.md`](RELEASE.md)                        | reproducible-build process, signed-tag procedure                                       |
+| [`CHANGELOG.md`](CHANGELOG.md)                    | release notes                                                                          |
+| `docs/auto-loop/`                                 | iter-by-iter development log                                                           |
+
+What's verified end-to-end as of this rc:
+
+- Reproducible builds (`scripts/build-reproducible.sh` + `Dockerfile.build`; verified byte-identical SHA-256 across runs).
+- Constant-time compares audited (TM-05 closed; regression-tested in `tests/test_constant_time.py`).
+- Group membership eventual consistency (`group_member_change` kind; TM-01 partial — operational fix shipped, MLS-style PCS still TBD).
+- Protocol test vectors (PROTOCOL.md §14; `tests/test_protocol_vectors.py`, 20 cases pinning BIP39 / HKDF / sealed-sender / onion).
 
 ---
 
@@ -274,6 +307,15 @@ cd malphas
 pip install -e .
 ```
 
+**With the Qt desktop UI** (`--mode gui-qt`):
+
+```bash
+pip install -e ".[gui-qt]"   # PySide6 + qasync
+malphas --mode gui-qt
+```
+
+The Tk GUI (`--mode gui`) needs no extra — it's stdlib only.
+
 **With Tor support** (for hidden services):
 
 ```bash
@@ -306,6 +348,26 @@ brew services restart tor
 ---
 
 ## Quickstart
+
+### Frontends — three choices
+
+malphas ships three user surfaces. All three drive the same
+`MalphasNode` core, so wire format and security posture are
+identical:
+
+| `--mode`   | Surface                            | Optional extra | When to pick                               |
+|------------|------------------------------------|----------------|--------------------------------------------|
+| `cli`      | terminal (`prompt_toolkit`)        | —              | servers, ssh, scripts, the original UI     |
+| `gui`      | desktop (Tkinter, stdlib)          | —              | works everywhere Python does, basic look   |
+| `gui-qt`   | desktop (PySide6 / Qt)             | `[gui-qt]`     | recommended for daily use; modern look     |
+| `web`      | REST + WebSocket via FastAPI       | —              | machine-to-machine, custom front-ends      |
+
+The Qt GUI ships with the `gui-qt` extra:
+
+```bash
+pip install -e ".[gui-qt]"
+malphas --mode gui-qt --tor
+```
 
 ### Basic (LAN or public IP)
 
@@ -920,6 +982,26 @@ Messages are encrypted at send time (after reconnection), not at queue time. Thi
 
 **Windows.** The core messaging functionality works on Windows. Tor hidden service support requires manual configuration — the setup script is Linux-only.
 
+### Tracked weaknesses
+
+For the formal weakness list with severity grades, see
+[`THREAT_MODEL.md`](THREAT_MODEL.md) §5. Snapshot of where things
+stand at `1.0.0-rc5`:
+
+| ID    | Status                | Summary                                                                                              |
+|-------|-----------------------|------------------------------------------------------------------------------------------------------|
+| TM-01 | Medium (partial)      | Group operational consensus shipped (`group_member_change`); MLS-style cryptographic PCS still TBD.  |
+| TM-02 | Open                  | External cryptographic review — needs a human; brief in [`REVIEW_REQUEST.md`](REVIEW_REQUEST.md).    |
+| TM-03 | Resolved              | Wire format frozen at `1.0.0-rc1`; additive-only from here.                                          |
+| TM-04 | By design             | TOFU window: first-contact key trust before pinning kicks in.                                        |
+| TM-05 | Resolved              | Constant-time compare audit (iter-054).                                                              |
+| TM-06 | Open (low priority)   | Cover traffic optional and basic; doesn't defeat traffic analysis.                                   |
+| TM-07 | Open (low priority)   | Ed25519 signatures are non-deniable; signed messages can be leaked.                                  |
+| TM-08 | Resolved              | Reproducible builds (iter-056); verified byte-identical wheels.                                      |
+| TM-09 | By design             | Receipt omission: a malicious endpoint can spoof "not delivered" by silently swallowing the receipt. |
+| TM-10 | Low                   | Padding granularity leaks an upper bound on contact count.                                           |
+| TM-11 | Resolved              | Pre-existing CLI test mock fixed (iter-057).                                                         |
+
 ---
 
 ## Testing
@@ -977,6 +1059,16 @@ pytest tests/test_tor_e2e.py -v
 | `test_api_files.py` | POST send (multipart), accept, reject, GET list, GET download (drop-after) | 14 |
 | `test_secure_buffer.py` | mlock + zeroize, slice/iter/contains semantics, ctx-mgr wipe-on-exit | 13 |
 | `test_fuzz_parsers.py` | Hypothesis fuzz on peel_layer, unpad_payload, parse_invite, FileOffer | 8 |
+| `test_sealed_sender.py` | Sealed envelope round-trip, format invariants, ephemeral key freshness | 9 |
+| `test_mnemonic.py` | BIP39 12-word salt round-trip, vector pinning, invalid input | 9 |
+| `test_salt_store.py` | Per-user salt persistence, file mode, rotation | 8 |
+| `test_ratchet.py` | Symmetric chain step, DH ratchet, MAX_SKIP, header serialize | 13 |
+| `test_groups.py` | N-way fanout, member add/remove notifications, outsider rejection | 15 |
+| `test_constant_time.py` | Source-grep guards on `compare_digest`, behavioural smokes (TM-05) | 9 |
+| `test_protocol_vectors.py` | KAT for BIP39, HKDF, identity, sealed sender, onion (PROTOCOL.md §14) | 20 |
+| `test_gui.py` | Tk GUI smoke + AsyncBridge lifecycle (skipped in headless CI) | 7 |
+| `test_gui_qt.py` | Qt GUI smoke under QT_QPA_PLATFORM=offscreen (auto-skip without PySide6) | 17 |
+| `test_file_resume.py` | Receiver-driven resume after partial buffer | 5 |
 
 **What passing tests guarantee:**
 
@@ -1004,12 +1096,23 @@ Every push and pull request runs through a stack of blocking gates:
 | Stage | Tool | Configured in | What it catches |
 |---|---|---|---|
 | Style + bug | `ruff` | `[tool.ruff]` | imports, formatting, common bug patterns, security hints |
-| Static types | `mypy --strict` | `[[tool.mypy.overrides]]` | type errors on the strict bucket (8 modules so far) |
+| Static types | `mypy --strict` (selective) | `[[tool.mypy.overrides]]` | type errors on the strict bucket (18 modules) |
 | Static security | `bandit` | `[tool.bandit]` | hardcoded creds, weak crypto, unsafe subprocess, etc. |
-| Tests + coverage | `pytest --cov --cov-fail-under=65` | `[tool.coverage.*]` | regressions, branch coverage |
+| Tests + coverage | `pytest --cov --cov-fail-under=65` | `[tool.coverage.*]` | regressions, branch coverage on the audited core |
 | Property-based fuzz | `hypothesis` (inside tests) | per-test `@given` | parser crashes on untrusted bytes |
+| Reproducibility | `scripts/verify-reproducibility.sh` | runtime check | wheel SHA-256 identical across two builds (TM-08) |
 
-Modules in the mypy strict bucket (14, ~52% of `src/`): `replay`, `crypto`, `memory`, `obfuscation`, `pinstore`, `invite`, `files`, `secure_buffer`, `discovery`, `receipts`, `ratchet`, `identity`, `onion`, `addressbook`. The bucket grows iteration by iteration — see `docs/auto-loop/` for the rolling log.
+Modules in the mypy strict bucket (18, the entire crypto + protocol surface):
+`replay`, `crypto`, `memory`, `obfuscation`, `pinstore`, `invite`, `files`,
+`secure_buffer`, `discovery`, `receipts`, `ratchet`, `identity`, `onion`,
+`addressbook`, `sealed_sender`, `salt_store`, `mnemonic`, `groups`. The
+bucket grows iteration by iteration — see `docs/auto-loop/` for the
+rolling log.
+
+The coverage gate excludes the GUI surfaces (`gui.py`, `gui_qt.py`,
+`gui_icons.py`, `splash.py`) — those have their own smoke suites that
+auto-skip in headless CI without a display. The audited core (crypto,
+protocol, network) stays inside the gate.
 
 The whole stack is wrapped behind a single local script that mirrors what the CI runs:
 
@@ -1115,6 +1218,15 @@ malphas is not audited. Do not use it in situations where the cost of a security
 ---
 
 ## References
+
+### malphas documents
+
+- [`THREAT_MODEL.md`](THREAT_MODEL.md) — adversary profiles, guarantees, weakness IDs.
+- [`PROTOCOL.md`](PROTOCOL.md) — byte-level wire-format spec, frozen at `1.0.0-rc1`.
+- [`REVIEW_REQUEST.md`](REVIEW_REQUEST.md) — reviewer brief.
+- [`RELEASE.md`](RELEASE.md) — release / reproducible-build process.
+- [`CHANGELOG.md`](CHANGELOG.md) — release notes.
+- `docs/auto-loop/` — iter-by-iter development log.
 
 ### Cryptographic primitives
 
