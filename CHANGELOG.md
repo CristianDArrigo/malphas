@@ -3,6 +3,29 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.3.4] — 2026-05-09
+
+### Quality
+
+- New `tests/test_fuzz_parsers.py`: Hypothesis-driven property tests
+  on the four parsers that ingest untrusted bytes — `peel_layer`
+  (onion), `unpad_payload`, `parse_invite`, and `FileOffer.from_dict`.
+  ~1600 randomized examples per CI run.
+- Established the contract: each parser may only raise its declared
+  exception types; any other escape is treated as a regression.
+- The existing implementations cleared the fuzz at first run on
+  ~1200 random inputs; no parser fixes required. The tests stay in
+  CI as a permanent net.
+
+### Internal
+
+- `hypothesis>=6` added to dev deps.
+- `.gitignore`: `.hypothesis/` (cache directory).
+
+### Wire format
+
+Unchanged.
+
 ## [0.3.3] — 2026-05-09
 
 ### Security

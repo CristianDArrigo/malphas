@@ -43,3 +43,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 015 | iter-015-next-target.md | Next-target selection (mlock + secure erase) | done |
 | 016 | iter-016-green-secure-buffer.md | Green: SecureBytes (mlock + zeroize) | done |
 | 017 | iter-017-next-target.md | Next-target selection (Hypothesis fuzz) | done |
+| 018 | iter-018-green-fuzz.md | Green: Hypothesis fuzz on parsers | done |
