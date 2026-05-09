@@ -3,6 +3,44 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [1.0.0-rc5] — 2026-05-09
+
+### Resolved — TM-11 CLI test mock + PROTOCOL.md §14 test vectors
+
+Closes the last two autonomously-doable threat-model items.
+Only TM-02 (external review) blocks `1.0.0` final after this.
+
+### Fixed
+
+- `tests/test_cli.py::mock_node` fixture now provides a real
+  `GroupRegistry()` for `_groups`. The fixture was last updated
+  before 0.9.0 added `_groups` to `MalphasNode`, leaving
+  `test_chat_by_label_auto_connects` (and a few other CLI cases
+  touching the chat surface) failing with `Mock has no attribute
+  '_groups'`. Full CLI suite (132 tests) now passes.
+
+### Added — `tests/test_protocol_vectors.py`
+
+Twenty cases pinning the wire format against silent algorithmic
+drift. Two flavours:
+
+- **Deterministic**: identity derivation byte-for-byte (same
+  passphrase → same peer_id / pubkeys), BIP39 vectors for
+  `0x00*16` and `0xff*16`, HKDF-SHA256 KAT, HMAC-SHA256
+  sign+verify, `derive_hmac_key` domain separation,
+  `derive_session_key` symmetry under pub-key ordering swap.
+- **Round-trip / invariant**: sealed-sender format + decrypt +
+  ephemeral-key freshness, 3-hop onion peel chain, AEAD with
+  AAD round-trip + AAD-mismatch rejection, ECDH agreement
+  symmetry.
+
+### Updated docs
+
+- `PROTOCOL.md` §14 rewritten from "to be added" to a full
+  description of what landed, with the pinned constants called
+  out (mnemonic vectors, HKDF KAT) so reviewers can grep them.
+- `THREAT_MODEL.md` TM-11 marked resolved.
+
 ## [1.0.0-rc4] — 2026-05-09
 
 ### Resolved — TM-08 reproducible builds

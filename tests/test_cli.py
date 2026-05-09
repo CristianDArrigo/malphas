@@ -124,6 +124,13 @@ def mock_node(identity_cli_a):
     node.store = MessageStore()
     node.receipts = ReceiptTracker()
     node._connections = {}
+    # `_groups` was added in 0.9.0; the CLI's status / autocomplete
+    # paths read it. Without this the test_chat_by_label_auto_connects
+    # case (and a few others touching the chat surface) fail with
+    # "Mock object has no attribute '_groups'" — that was the
+    # pre-existing TM-11 yellow.
+    from malphas.groups import GroupRegistry
+    node._groups = GroupRegistry()
 
     # Transport mock
     transport = MagicMock()

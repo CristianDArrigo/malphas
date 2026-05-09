@@ -401,10 +401,36 @@ compatibility but tighten the spec for future readers:
 
 ## 14 · Test vectors
 
-To be added in `tests/test_protocol_vectors.py` before `1.0.0`
-final. Each test vector is a triple
-`(input, expected_bytes, description)` exercising one production
-path end-to-end. **None exist yet.** Reviewer: this is a known gap.
+Implemented in `tests/test_protocol_vectors.py` from `1.0.0-rc5`.
+Each vector is one of two flavours:
+
+- **Deterministic** (input → exact expected bytes). Used for
+  identity derivation, BIP39 mnemonic, HKDF, HMAC. A refactor
+  that silently changes the algorithm breaks these.
+- **Round-trip / invariant** (encode → decode → original) for
+  paths that involve fresh ephemeral keys or random nonces:
+  sealed sender, onion peel, AEAD with AAD. We pin the format
+  invariants (lengths, prefixes, base64 validity) and verify
+  that {encode → decode} returns the original.
+
+Notable pinned constants:
+
+- BIP39 vector `b"\x00" * 16` →
+  `"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"`.
+- BIP39 vector `b"\xff" * 16` →
+  `"zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong"`.
+- HKDF-SHA256 KAT: `hkdf_derive(0x00*32, salt=0x00*32, info=b"vec", len=32)`
+  → `85c913f550ac008224038181a831e49bf3d283690d72d4ea0edc6c7018da7f01`.
+- `peer_id` is 40 lowercase hex chars (BLAKE2s-160).
+- X25519 / Ed25519 public keys are 32 bytes.
+- HMAC-SHA256 tag is 32 bytes.
+- Sealed-sender `from_eph` is 64 hex chars; `from_sealed` is
+  base64 of (12-byte nonce || ChaCha20-Poly1305 tag-included
+  ciphertext), so ≥ 28 raw bytes.
+
+If you find an external KAT (a real cross-implementation
+known-answer test) you'd like added, the file's docstring is
+the contract surface to extend.
 
 ---
 

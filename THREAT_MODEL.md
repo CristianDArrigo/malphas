@@ -148,7 +148,7 @@ release.
 | TM-08 | ~~Medium~~ resolved | Reproducible build verified in iter-056. `scripts/build-reproducible.sh` + `Dockerfile.build` produce byte-identical wheels across runs. `scripts/verify-reproducibility.sh` is the regression check. | iter-056 ✅ |
 | TM-09 | Low      | Receipts can be omitted by a malicious endpoint to spoof "not delivered".| documented   |
 | TM-10 | Low      | Address book file size leaks an upper bound on contact count via padding granularity. | low impact   |
-| TM-11 | Low      | One pre-existing CLI test failure (`Mock(_groups)`).                     | iter-053+    |
+| TM-11 | ~~Low~~ resolved | iter-057: mock_node fixture in `tests/test_cli.py` now provides a real `GroupRegistry()` for `_groups`. Full CLI suite (132 cases) passes. | iter-057 ✅ |
 
 ---
 
