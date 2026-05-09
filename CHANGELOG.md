@@ -3,6 +3,30 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.3.5] — 2026-05-09
+
+### Engineering
+
+- **Coverage gate** in CI: `pytest --cov --cov-fail-under=65`. Branch
+  coverage enabled. Initial threshold deliberately conservative; will
+  be tightened once test_api / test_cli / test_functional_node are
+  routinely included in the local dev workflow.
+- **Bandit** static security scan added to the lint CI job (blocking).
+  Configured via `[tool.bandit]` in `pyproject.toml` with skips for the
+  patterns that match malphas's design intent (B101 asserts in tests,
+  B104 bind 0.0.0.0, B110/B112 fail-closed silent drops, B311 stdlib
+  random for jitter, B324 SHA1 as identifier — fix planned for 0.4.0,
+  B404/B603/B607 subprocess for Tor HS setup, B105 false positive on
+  passphrase overwrite). Currently 0 findings on the source tree.
+- New dev deps: `pytest-cov>=5`, `bandit>=1.7`.
+- `pyproject.toml`: `[tool.coverage.*]` configured with branch coverage,
+  excluding tests, `__main__.py`, and `cli_ui.py` from the coverage
+  source set.
+
+### Wire format
+
+Unchanged.
+
 ## [0.3.4] — 2026-05-09
 
 ### Quality

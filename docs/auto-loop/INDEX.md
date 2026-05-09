@@ -45,3 +45,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 017 | iter-017-next-target.md | Next-target selection (Hypothesis fuzz) | done |
 | 018 | iter-018-green-fuzz.md | Green: Hypothesis fuzz on parsers | done |
 | 019 | iter-019-next-target.md | Next-target (coverage gate + bandit) | done |
+| 020 | iter-020-green-coverage-bandit.md | Green: coverage gate + bandit | done |
