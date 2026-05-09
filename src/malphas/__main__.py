@@ -261,6 +261,77 @@ async def _run_web(args) -> None:
     book.wipe_memory()
 
 
+def _run_gui(args) -> None:
+    """Synchronous entry: prompt passphrase + salt on the terminal,
+    spin a node + asyncio bridge, then enter the Tk mainloop."""
+    from .gui import AsyncBridge, launch_gui
+
+    print_splash()
+    passphrase = _get_passphrase()
+    salt = _resolve_salt(args)
+    identity, book_key = create_identity_with_book_key(passphrase, salt)
+    passphrase = ""  # noqa: S105 — overwriting the local for hygiene
+    del passphrase
+
+    book_path = Path(args.book)
+    book_path.parent.mkdir(parents=True, exist_ok=True)
+    book = AddressBook(str(book_path), book_key)
+    try:
+        loaded = book.load()
+        if loaded:
+            print(f"  address book loaded ({len(book)} contact(s))")
+    except ValueError as e:
+        print(f"\n  error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    pin_path = str(book_path.parent / "pins")
+    pins = PinStore(pin_path, book_key)
+    pins.load()
+
+    transport = DirectTransport()
+    if args.tor:
+        # Same async availability check as _run_cli but called sync.
+        import asyncio as _asyncio
+        if not _asyncio.run(tor_is_available(socks_port=args.socks_port)):
+            print(f"  error: Tor SOCKS5 not found on port {args.socks_port}",
+                  file=sys.stderr)
+            sys.exit(1)
+        transport = TorTransport(
+            socks_port=args.socks_port,
+            control_port=args.control_port,
+        )
+
+    node = MalphasNode(
+        identity=identity,
+        host=args.host,
+        port=args.port,
+        message_ttl=args.ttl,
+        transport=transport,
+        pin_store=pins,
+    )
+
+    bridge = AsyncBridge()
+    # node.start has to run on the asyncio thread so its background
+    # tasks live there.
+    bridge.submit_coro(node.start()).result(timeout=10.0)
+    node.set_reconnect_book(book)
+
+    print(f"  peer_id  {identity.peer_id}")
+    print(f"  port     {args.port}")
+    print("  launching GUI...")
+
+    try:
+        launch_gui(node, book, bridge, salt_path=Path(args.salt))
+    finally:
+        # mainloop returned — make sure the background loop is down.
+        try:
+            bridge.submit_coro(node.stop()).result(timeout=3.0)
+        except Exception:
+            pass
+        bridge.stop(timeout=2.0)
+        book.wipe_memory()
+
+
 def main():
     from . import __version__
 
@@ -270,7 +341,7 @@ def main():
         action="version",
         version=f"malphas {__version__}",
     )
-    parser.add_argument("--mode", choices=["cli", "web"], default="cli")
+    parser.add_argument("--mode", choices=["cli", "web", "gui"], default="cli")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7777)
     parser.add_argument("--api-port", type=int, default=8080)
@@ -307,6 +378,8 @@ def main():
 
     if args.mode == "web":
         asyncio.run(_run_web(args))
+    elif args.mode == "gui":
+        _run_gui(args)
     else:
         asyncio.run(_run_cli(args))
 

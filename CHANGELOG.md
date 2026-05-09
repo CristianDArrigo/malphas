@@ -3,6 +3,43 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.0] — 2026-05-09
+
+### Features
+
+- **Tkinter desktop GUI**, opt-in via `malphas --mode gui`. ttk-styled
+  dark theme with a sidebar of peers + groups, a chat pane with
+  per-conversation scrollback, an input row, a status bar, and a menu
+  bar (File, View, Group, Help).
+- Asyncio/Tk integration via `AsyncBridge`: the asyncio event loop
+  that drives `MalphasNode` runs in a daemon thread, the Tk thread
+  polls a `queue.Queue` every 50 ms to consume node-side callbacks
+  without blocking either side.
+- GUI actions:
+  - Generate / import malphas:// invites via clipboard.
+  - Send file (filedialog), accept/reject incoming offer (modal),
+    save completed file (filedialog).
+  - Create group / add member / leave group from the menu.
+  - Backup the 12-word mnemonic in a modal dialog.
+  - PANIC button in the File menu (wipes in-memory state and exits).
+
+### Implementation
+
+- New `src/malphas/gui.py` (~530 lines): `AsyncBridge`, `MalphasGUI`,
+  `launch_gui()` entry point.
+- `__main__.py`: `--mode gui` accepted. New `_run_gui(args)` synchronous
+  bootstrap that does the same passphrase / salt / identity setup as
+  CLI/web, spins the bridge, calls `launch_gui()`.
+- `tests/test_gui.py`: 7 smoke tests (AsyncBridge lifecycle, helpers,
+  GUI construction without entering mainloop).
+- `malphas.gui` is in the lenient mypy bucket — Tk type hints + dynamic
+  Tcl variables aren't worth the strict-bucket plumbing for a UI module.
+
+### Wire format
+
+Unchanged. The GUI is just a new presentation surface over the
+existing node API.
+
 ## [0.9.0] — 2026-05-09
 
 ### Features

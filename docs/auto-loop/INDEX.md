@@ -83,3 +83,5 @@ Repository: malphas (privacy-first P2P messenger).
 | 049b | iter-049-green-file-resume.md | Green: file transfer resume (v0.8.0) | done |
 | 050a | iter-050-plan-group-chat.md | Plan: group chat N-way pairwise (v0.9.0) | done |
 | 050b | iter-050-green-group-chat.md | Green: group chat N-way pairwise (v0.9.0) | done |
+| 051a | iter-051-plan-tk-gui.md | Plan: Tkinter GUI (v0.10.0) | done |
+| 051b | iter-051-green-tk-gui.md | Green: Tkinter GUI (v0.10.0) | done |
