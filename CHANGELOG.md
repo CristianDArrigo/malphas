@@ -3,6 +3,23 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.3.2] — 2026-05-09
+
+### Documentation
+
+- README: new top-level "File Transfer" section between "Read Receipts"
+  and "Resilience". Documents constraints, wire format extension,
+  default consent policy, full quickstart with `/sendfile` →
+  `/accept` → `/savefile`, list of features intentionally out of scope.
+- README: `Architecture` diagram updated to show `ReplayCache` and
+  `FileTransferManager`, and the jitter on `AutoReconnect`.
+- README: `CLI Reference` updated with the five new commands.
+- README: TOC reflects the new section.
+
+### Wire format
+
+Unchanged.
+
 ## [0.3.1] — 2026-05-09
 
 ### Features

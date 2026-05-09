@@ -86,11 +86,12 @@ No servers. No accounts. No logs. No traces.
 14. [Security Features](#security-features)
 15. [Traffic Obfuscation](#traffic-obfuscation)
 16. [Read Receipts](#read-receipts)
-17. [Resilience](#resilience)
-18. [Limitations](#limitations)
-19. [Testing](#testing)
-20. [Development](#development)
-21. [Disclaimer](#disclaimer)
+17. [File Transfer](#file-transfer)
+18. [Resilience](#resilience)
+19. [Limitations](#limitations)
+20. [Testing](#testing)
+21. [Development](#development)
+22. [Disclaimer](#disclaimer)
 
 ---
 
@@ -185,13 +186,16 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 ┌────────────────────────────▼────────────────────────────────────┐
 │                           NODE                                  │
 │  MalphasNode (node.py)                                          │
-│  ├── MessageStore     in-memory, TTL-based, zero disk           │
-│  ├── MessageQueue     in-memory outbox for offline peers        │
-│  ├── ReceiptTracker   Ed25519 challenge-response                │
-│  ├── PeerDiscovery    Kademlia-inspired routing table           │
-│  ├── PinStore         TOFU key pinning, encrypted on disk       │
-│  ├── CoverTraffic     randomized dummy packets                  │
-│  └── AutoReconnect    exponential backoff for book peers        │
+│  ├── MessageStore        in-memory, TTL-based, zero disk        │
+│  ├── MessageQueue        in-memory outbox for offline peers     │
+│  ├── ReceiptTracker      Ed25519 challenge-response             │
+│  ├── ReplayCache         (from_id, msg_id) sliding window       │
+│  ├── PeerDiscovery       Kademlia-inspired routing table        │
+│  ├── PinStore            TOFU key pinning, encrypted on disk    │
+│  ├── CoverTraffic        randomized dummy packets               │
+│  ├── FileTransferManager chunked file send/receive in RAM       │
+│  └── AutoReconnect       exponential backoff (with jitter) for  │
+│                          book peers                             │
 └────────────────────────────┬────────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────────┐
@@ -427,6 +431,11 @@ The CLI uses prompt_toolkit for readline input (arrow keys, history, tab complet
 /github                    open the project page in the browser
 /wipe                      wipe all messages and queued messages from memory
 /panic                     EMERGENCY: wipe everything and exit immediately
+/sendfile <peer> <path>    send a file (32 KB chunks, 100 MB cap)
+/accept <file_id>          accept a pending incoming file
+/reject <file_id>          reject a pending incoming file
+/savefile <file_id> <path> write a completed file to disk
+/files                     list pending and completed file transfers
 /help                      show this list
 <text>                     send a message to the active conversation
 ```
@@ -791,6 +800,71 @@ If timeout (30s): circuit issue or peer offline
 **What the receipt proves:** that the holder of the recipient's Ed25519 private key processed the message.
 
 **What it does not prove:** that the human read it, or that the node was not compromised.
+
+---
+
+## File Transfer
+
+malphas can send files to a connected peer over the same onion-encrypted pipeline used for chat messages. There is no separate channel, no temporary upload server, no reliance on third-party storage. The same Double Ratchet (or HMAC/Ed25519 fallback) authenticates each chunk; the same replay cache drops duplicates; the same `/panic` wipes everything in flight.
+
+**Constraints (deliberate, in line with the zero-disk policy):**
+
+- Files are buffered entirely in RAM on both sender and receiver until the user explicitly saves them with `/savefile`.
+- Maximum file size is 100 MB. Larger files are rejected up front by the sender and dropped on arrival by the receiver.
+- Chunks are 32 KB each. A 100 MB file is at most ~3200 chunks.
+- The receiver verifies a SHA-256 digest of the assembled stream against the digest announced in the offer. A mismatch drops the file silently.
+- Chunks are order-independent and idempotent. A re-sent chunk does not corrupt the buffer.
+
+**Wire format extension** (backward compatible — older clients silently drop unknown payload kinds):
+
+```
+file_offer { file_id, name, size, sha256, chunk_size, chunk_count }
+file_chunk { file_id, chunk_idx, data_b64 }
+file_ack   { file_id, status }   # accepted | rejected | completed | checksum_mismatch
+```
+
+**Default policy on the receiver:** offers are NOT auto-accepted. The CLI surfaces every incoming offer with a yellow notification and waits for an explicit `/accept` or `/reject`. There is a `auto_accept_files` flag on the node for headless / scripted clients that need to bypass the consent step.
+
+### Quickstart
+
+```
+# Alice
+/chat bob
+/sendfile bob ./photo.jpg
+  ... sending photo.jpg to bob ...
+  [ok] file_id  3f7a8e2b9c4d6f1e0a8b2c4d6e8f0a2c
+
+# Bob (sees the offer notification)
+*** offer from alice: photo.jpg (842341 bytes)
+*** /accept 3f7a8e2b9c4d6f1e  or  /reject 3f7a8e2b9c4d6f1e ***
+/accept 3f7a8e2b9c4d6f1e
+  [ok] accepted photo.jpg from alice
+
+# After all chunks arrive (a few seconds later)
+*** received photo.jpg (842341 bytes) from alice
+*** /savefile 3f7a8e2b9c4d6f1e <path>  to write to disk ***
+/savefile 3f7a8e2b9c4d6f1e ~/photo.jpg
+  [ok] saved 842341 bytes to /home/bob/photo.jpg
+```
+
+The in-memory buffer is dropped immediately after `/savefile` writes the bytes to disk. From the moment the file lands on disk, malphas is no longer responsible for it.
+
+### Listing transfers
+
+```
+/files
+  status      file_id              from      name          size
+  pending     3f7a8e2b9c4d6f1e...  alice12   photo.jpg     842341
+  ready       a1b2c3d4e5f60718...  charlie   notes.md      4096
+```
+
+### What is not implemented
+
+- Resume of interrupted transfers (a peer drop mid-stream forces a fresh `/sendfile`).
+- Compression (chunks travel as plain ChaCha20-Poly1305 ciphertext over the onion).
+- Streaming preview (the file is not delivered to the application until every chunk has arrived and the SHA-256 verifies).
+- Files larger than 100 MB.
+- Automatic save to disk without `/savefile` (intentional).
 
 ---
 
