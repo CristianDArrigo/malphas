@@ -12,9 +12,6 @@ import tempfile
 
 import pytest
 
-from malphas.identity import create_identity
-from malphas.node import MalphasNode
-
 # This will fail at collection time until iter-010-green lands.
 from malphas.files import (  # noqa: E402
     CHUNK_SIZE,
@@ -24,7 +21,8 @@ from malphas.files import (  # noqa: E402
     IncomingFile,
     OutgoingFile,
 )
-
+from malphas.identity import create_identity
+from malphas.node import MalphasNode
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -234,11 +232,12 @@ class TestFileTransferIntegration:
                 received.append(data)
 
             b.on_file_complete(on_complete)
+            # Auto-accept BEFORE sending so the offer is accepted in time
+            # for the chunks that follow.
+            b.auto_accept_files = True
+
             file_id = await a.send_file(id_b.peer_id, path)
             assert file_id is not None
-
-            # Auto-accept on B for the test
-            b.auto_accept_files = True
 
             await asyncio.sleep(2.0)
             assert any(d == expected for d in received), \

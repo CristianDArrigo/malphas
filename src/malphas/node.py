@@ -27,6 +27,7 @@ from .crypto import (
     hmac_verify,
 )
 from .discovery import PeerDiscovery, PeerInfo
+from .files import FileOffer, FileTransferManager, OutgoingFile
 from .identity import Identity
 from .memory import MessageStore
 from .obfuscation import (
@@ -54,9 +55,12 @@ MSG_PEER_ANNOUNCE = 0x07
 HEADER_LEN = 5   # type(1) + length(4)
 
 # Payload kinds (inside decrypted onion)
-KIND_MESSAGE = "msg"
-KIND_RECEIPT = "receipt"
-KIND_COVER   = "cover"
+KIND_MESSAGE     = "msg"
+KIND_RECEIPT     = "receipt"
+KIND_COVER       = "cover"
+KIND_FILE_OFFER  = "file_offer"
+KIND_FILE_CHUNK  = "file_chunk"
+KIND_FILE_ACK    = "file_ack"
 
 
 def _pack_msg(msg_type: int, payload: bytes) -> bytes:
@@ -169,11 +173,15 @@ class MalphasNode:
         self.receipts = ReceiptTracker()
         self.pins = pin_store or PinStore()
         self._replay = ReplayCache(ttl=message_ttl)
+        self._files = FileTransferManager()
+        self.auto_accept_files = False
         self._connections: dict[str, PeerConnection] = {}
         self._server: asyncio.AbstractServer | None = None
         self._callbacks: set[Callable] = set()
         self._receipt_callbacks: set[Callable] = set()
         self._pin_callbacks: set[Callable] = set()
+        self._file_offer_callbacks: set[Callable] = set()
+        self._file_complete_callbacks: set[Callable] = set()
         self._running = False
         self._reconnect_book = None  # set by CLI to enable auto-reconnect
         self._reconnect_tasks: dict[str, asyncio.Task] = {}
@@ -239,6 +247,34 @@ class MalphasNode:
     def on_pin_violation(self, callback: Callable) -> None:
         """callback(peer_id, expected_key_hex, received_key_hex)"""
         self._pin_callbacks.add(callback)
+
+    def on_file_offer(self, callback: Callable) -> None:
+        """callback(from_peer_id, offer_dict). User decides accept/reject."""
+        self._file_offer_callbacks.add(callback)
+
+    def on_file_complete(self, callback: Callable) -> None:
+        """callback(file_id, payload_bytes) when a file is fully assembled."""
+        self._file_complete_callbacks.add(callback)
+
+    def _notify_file_offer(self, from_id: str, offer_dict: dict) -> None:
+        for cb in self._file_offer_callbacks:
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    asyncio.create_task(cb(from_id, offer_dict))
+                else:
+                    cb(from_id, offer_dict)
+            except Exception:
+                pass
+
+    def _notify_file_complete(self, file_id: str, data: bytes) -> None:
+        for cb in self._file_complete_callbacks:
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    asyncio.create_task(cb(file_id, data))
+                else:
+                    cb(file_id, data)
+            except Exception:
+                pass
 
     def _notify_message(self, from_id: str, content: str) -> None:
         for cb in self._callbacks:
@@ -549,11 +585,8 @@ class MalphasNode:
                     _restore_ratchet(ratchet, snap)
                     continue
 
-                # Success — deliver
-                if kind == KIND_MESSAGE:
-                    await self._deliver_message(data, from_id)
-                elif kind == KIND_RECEIPT:
-                    await self._deliver_receipt(data, from_id, peer)
+                # Success — deliver via the central kind dispatch
+                await self._dispatch_kind(data, from_id, peer)
                 return
 
             # No ratchet could decrypt — drop
@@ -618,14 +651,33 @@ class MalphasNode:
             except Exception:
                 return  # invalid signature — drop
 
+        await self._dispatch_kind(data, from_id, peer)
+
+    async def _dispatch_kind(
+        self, data: dict, from_id: str, peer: PeerInfo | None
+    ) -> None:
+        """Single dispatch site for all message kinds, with replay guard."""
+        kind = data.get("kind")
+        msg_id = data.get("msg_id", "")
+
+        # Replay protection across every kind (msg, receipt, file_*).
+        # Cover packets carry no msg_id and are dropped before reaching here.
+        if msg_id and self._replay.seen(from_id, msg_id):
+            return
+
         if kind == KIND_MESSAGE:
             await self._deliver_message(data, from_id)
-
         elif kind == KIND_RECEIPT:
-            await self._deliver_receipt(data, from_id, peer)
-
+            if peer is not None:
+                await self._deliver_receipt(data, from_id, peer)
+        elif kind == KIND_FILE_OFFER:
+            await self._handle_file_offer(data, from_id)
+        elif kind == KIND_FILE_CHUNK:
+            await self._handle_file_chunk(data, from_id)
+        elif kind == KIND_FILE_ACK:
+            await self._handle_file_ack(data, from_id)
         elif kind == KIND_COVER:
-            pass  # JSON-level cover, drop silently
+            pass  # drop silently
 
     async def _deliver_message(self, data: dict, from_id: str) -> None:
         content = data.get("content", "")
@@ -640,12 +692,8 @@ class MalphasNode:
         except ValueError:
             return
 
-        # Replay protection: drop duplicates of (from_id, msg_id).
-        # Applies on top of Double Ratchet's msg_num counter to also cover
-        # the HMAC/Ed25519 fallback paths and the brief grace window after
-        # a fresh handshake when ratchet state has been re-initialized.
-        if self._replay.seen(from_id, msg_id):
-            return
+        # NOTE: replay protection is centralized in `_dispatch_kind` so it
+        # covers every payload kind (msg, receipt, file_*).
 
         self.store.store(from_id, self.identity.peer_id, content, msg_id)
         self._notify_message(from_id, content)
@@ -668,6 +716,158 @@ class MalphasNode:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
         pub = Ed25519PublicKey.from_public_bytes(peer.ed25519_pub)
         self.receipts.resolve(msg_id, sig, pub)
+
+    # ── File transfer ─────────────────────────────────────────────────────────
+
+    async def _handle_file_offer(self, data: dict, from_id: str) -> None:
+        """Receive an offer. Auto-accept if `auto_accept_files`; otherwise
+        notify the application via `on_file_offer` callback. The application
+        can then call `accept_file_offer(file_id)` to register reception.
+        """
+        try:
+            offer = FileOffer.from_dict(data)
+        except (KeyError, ValueError):
+            return
+        # Cap enforcement on the receiver side too — drop oversize offers
+        # without registering anything.
+        try:
+            self._files.register_incoming(offer)
+        except ValueError:
+            return
+
+        offer_dict = offer.to_dict()
+        if self.auto_accept_files:
+            # Already registered — notify application that an offer is being
+            # received automatically.
+            self._notify_file_offer(from_id, offer_dict)
+        else:
+            # Default policy: do NOT register; require explicit accept.
+            self._files.drop_incoming(offer.file_id)
+            self._notify_file_offer(from_id, offer_dict)
+
+    def accept_file_offer(self, offer_dict: dict) -> bool:
+        """Application-level accept: register the incoming buffer."""
+        try:
+            offer = FileOffer.from_dict(offer_dict)
+            self._files.register_incoming(offer)
+            return True
+        except (KeyError, ValueError):
+            return False
+
+    async def _handle_file_chunk(self, data: dict, from_id: str) -> None:
+        import base64
+        file_id = data.get("file_id")
+        chunk_idx = data.get("chunk_idx")
+        data_b64 = data.get("data_b64")
+        if not file_id or chunk_idx is None or not isinstance(data_b64, str):
+            return
+        ic = self._files.get_incoming(file_id)
+        if ic is None:
+            return  # unknown / not accepted — drop silently
+        try:
+            payload_bytes = base64.b64decode(data_b64)
+        except Exception:
+            return
+        complete = ic.add_chunk(int(chunk_idx), payload_bytes)
+        if complete:
+            try:
+                assembled = ic.assemble()
+            except ValueError:
+                # Integrity failure — drop and notify nothing
+                self._files.cancel(file_id)
+                return
+            self._notify_file_complete(file_id, assembled)
+            # Keep the entry until application wipes via /savefile or panic.
+
+    async def _handle_file_ack(self, data: dict, from_id: str) -> None:
+        file_id = data.get("file_id")
+        status = data.get("status")
+        if not file_id or status not in ("accepted", "rejected", "completed", "checksum_mismatch"):
+            return
+        if status in ("rejected", "checksum_mismatch"):
+            self._files.cancel(file_id)
+
+    async def send_file(self, dest_peer_id: str, path: str) -> str | None:
+        """Send a file to dest_peer_id. Returns file_id if started, None otherwise."""
+        try:
+            of = OutgoingFile(path)
+        except (FileNotFoundError, ValueError, OSError):
+            return None
+        if not self.discovery.get_peer(dest_peer_id):
+            return None
+        file_id = self._files.register_outgoing(of)
+        offer = of.offer()
+
+        # Phase 1: send offer
+        ok = await self._try_send_payload(dest_peer_id, KIND_FILE_OFFER, offer.to_dict())
+        if not ok:
+            self._files.cancel(file_id)
+            return None
+
+        # Brief pause so the receiver can register before chunks arrive
+        await asyncio.sleep(0.1)
+
+        # Phase 2: stream chunks
+        import base64
+        for idx, blob in of.chunkify():
+            extras = {
+                "file_id": file_id,
+                "chunk_idx": idx,
+                "data_b64": base64.b64encode(blob).decode("ascii"),
+            }
+            sent = await self._try_send_payload(dest_peer_id, KIND_FILE_CHUNK, extras)
+            if not sent:
+                # peer dropped mid-transfer — bail out, application can retry
+                return file_id
+            # Small spacing keeps event loop responsive on big files
+            await asyncio.sleep(0.005)
+        return file_id
+
+    async def _try_send_payload(
+        self, dest_peer_id: str, kind: str, extras: dict
+    ) -> bool:
+        """
+        Generalized version of _try_send: build a JSON payload of any kind,
+        authenticate it (ratchet → HMAC → Ed25519), pad, onion-wrap, and ship
+        it through a freshly selected circuit.
+        """
+        try:
+            circuit = self.discovery.select_relay_circuit(dest_peer_id, hops=3)
+        except ValueError:
+            return False
+
+        msg_id = secrets.token_hex(16)
+        nonce = secrets.token_bytes(16)
+        payload_dict = {
+            "kind": kind,
+            "from": self.identity.peer_id,
+            "msg_id": msg_id,
+            "nonce": nonce.hex(),
+            "ts": time.time(),
+            **extras,
+        }
+        payload_bytes = json.dumps(payload_dict).encode()
+
+        dest_conn = self._connections.get(dest_peer_id)
+        if dest_conn and dest_conn.ratchet and dest_conn.ratchet._send_chain_key:
+            header, ciphertext = dest_conn.ratchet.encrypt(payload_bytes)
+            authenticated = b"R" + header.serialize() + ciphertext
+        elif dest_conn and dest_conn.hmac_key:
+            tag = hmac_sign(dest_conn.hmac_key, payload_bytes)
+            authenticated = tag + payload_bytes
+        else:
+            tag = self.identity.sign(payload_bytes)
+            authenticated = tag + payload_bytes
+
+        padded = pad_payload(authenticated)
+        packet = wrap_onion(padded, circuit)
+
+        first_hop_id = circuit[0][1]
+        conn = self._connections.get(first_hop_id)
+        if conn and conn.authenticated:
+            await conn.send_encrypted(MSG_ONION, packet[24:])
+            return True
+        return False
 
     async def _handle_peer_announce(self, payload: bytes) -> None:
         try:
@@ -831,6 +1031,9 @@ class MalphasNode:
 
         # Wipe replay cache
         self._replay.wipe()
+
+        # Wipe in-flight file transfers
+        self._files.wipe()
 
         # Wipe message queue
         self._message_queue.clear()

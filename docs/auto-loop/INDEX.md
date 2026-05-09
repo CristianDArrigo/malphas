@@ -34,4 +34,5 @@ Repository: malphas (privacy-first P2P messenger).
 | 008a | iter-008-plan-mypy.md | Plan: mypy strict gradual rollout | done |
 | 008b | iter-008-green-mypy.md | Green: mypy strict bucket | done |
 | 009 | iter-009-next-target.md | Next-target selection (file transfer staged) | done |
-| 010 | iter-010-plan-file-transfer.md | Plan: file transfer chunked | drafted |
+| 010a | iter-010-plan-file-transfer.md | Plan: file transfer chunked | done |
+| 010b | iter-010-green-file-transfer.md | Green: file transfer chunked | done |

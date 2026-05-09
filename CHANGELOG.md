@@ -3,6 +3,35 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.3.0] — 2026-05-09
+
+### Features
+
+- **File transfer**: P2P chunked file transfer using the existing onion
+  pipeline. New `MalphasNode.send_file(dest, path)` returns a `file_id`,
+  fires three new payload kinds — `file_offer`, `file_chunk`, `file_ack` —
+  and reassembles the stream in RAM on the receiver. SHA-256 integrity
+  verified end-to-end. 32 KB chunks, 100 MB cap. Order-independent and
+  idempotent (chunks dedup by index).
+- New `FileTransferManager` registry on every node, with `auto_accept_files`
+  switch, `accept_file_offer` for explicit consent, and `on_file_offer` /
+  `on_file_complete` callbacks.
+
+### Internal
+
+- New module `malphas.files`: `OutgoingFile`, `IncomingFile`,
+  `FileTransferManager`. 14 tests (12 unit + 2 integration) added.
+- `MalphasNode._dispatch_kind` centralized: replay protection now applies
+  uniformly across `msg`, `receipt`, `file_offer`, `file_chunk`, `file_ack`.
+- `_try_send_payload` generalizes `_try_send` for arbitrary payload kinds
+  (auth/ratchet → HMAC → Ed25519 → padding → onion → ship).
+- `panic()` wipes in-flight file transfers.
+- `malphas.files` added to the mypy strict bucket.
+
+### Wire format
+
+Backward compatible. Older clients silently drop unknown kinds.
+
 ## [0.2.4] — 2026-05-09
 
 ### Engineering
