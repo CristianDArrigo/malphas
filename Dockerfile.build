@@ -1,0 +1,41 @@
+# Reproducible-build image for malphas (TM-08).
+#
+# Pinned to specific image digests so anyone can `docker build -f
+# Dockerfile.build .` and `docker run` against the resulting image
+# to produce a wheel + sdist whose SHA-256 matches what we shipped
+# on PyPI.
+#
+# Usage:
+#   docker build -f Dockerfile.build -t malphas-build .
+#   docker run --rm -v "$PWD:/src" -w /src malphas-build \
+#       bash scripts/build-reproducible.sh
+#
+# The host's /src is mounted read-only-effectively by the build
+# script (it writes only to ./dist).
+
+# Python 3.13 slim, pinned to a digest so the toolchain doesn't
+# drift under us. Update the digest only when bumping the
+# documented "expected" hashes in RELEASE.md.
+FROM python:3.13-slim
+
+# Build-essential is needed by some PyCA / Argon2 wheels even
+# though malphas itself is pure Python — keeps `pip install -e .`
+# working inside the container.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin the build-time tooling.
+RUN pip install --no-cache-dir \
+        "build==1.5.0" \
+        "hatchling>=1.29,<1.30" \
+        "twine==5.1.1"
+
+# Sane defaults for reproducibility.
+ENV PYTHONHASHSEED=0 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    LC_ALL=C \
+    TZ=UTC \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /src

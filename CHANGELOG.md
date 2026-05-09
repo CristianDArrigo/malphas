@@ -3,6 +3,40 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [1.0.0-rc4] — 2026-05-09
+
+### Resolved — TM-08 reproducible builds
+
+Two invocations of `scripts/build-reproducible.sh` against the
+same commit on the same Python minor + hatchling minor now
+produce wheels with byte-identical SHA-256. Verified live.
+
+### Added
+
+- `scripts/build-reproducible.sh`: wraps `python -m build` with
+  `SOURCE_DATE_EPOCH=<git commit ts>`, `PYTHONHASHSEED=0`,
+  `PYTHONDONTWRITEBYTECODE=1`, `LC_ALL=C`, `TZ=UTC`, `umask 022`.
+  Prints SHA-256 of every artifact.
+- `scripts/verify-reproducibility.sh`: builds twice into separate
+  tempdirs and diffs hashes. Exits non-zero on mismatch — the
+  regression check.
+- `Dockerfile.build`: `python:3.13-slim` + pinned `build==1.5.0`
+  + pinned `hatchling>=1.29,<1.30`. Lets a reviewer reproduce a
+  release without trusting the host toolchain.
+
+### Pinned
+
+- `pyproject.toml [build-system].requires`:
+  `hatchling>=1.29,<1.30` (was unpinned). Comment in-place tells
+  maintainers to re-run verification when bumping.
+
+### Updated docs
+
+- `RELEASE.md` §4 rewritten as a closed item with host + Docker
+  reproduction commands and the residual-variability notes.
+- `THREAT_MODEL.md`: TM-08 marked resolved; non-guarantees row
+  about reproducible builds reworded to "Yes (iter-056)".
+
 ## [1.0.0-rc3] — 2026-05-09
 
 ### Partial — TM-01 group membership consensus

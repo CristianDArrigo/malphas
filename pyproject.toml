@@ -1,10 +1,13 @@
 [build-system]
-requires = ["hatchling"]
+# Pinned to a specific minor for reproducibility (TM-08).
+# When you bump this, run `scripts/verify-reproducibility.sh`
+# and update the "expected hashes" line in RELEASE.md.
+requires = ["hatchling>=1.29,<1.30"]
 build-backend = "hatchling.build"
 
 [project]
 name = "malphas"
-version = "1.0.0rc3"
+version = "1.0.0rc4"
 description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [

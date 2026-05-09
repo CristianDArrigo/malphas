@@ -78,7 +78,7 @@ Standard-primitive trust.
 | Constant-time comparisons everywhere             | We use `hmac.compare_digest` in obvious spots, but a full audit (§5) is pending.              |
 | Resistance to denial of service                  | A peer can flood the input queue or send many connection attempts. Bounded by replay window + per-peer connection cap, but no rate limiting beyond that. |
 | Recovery if you lose **both** salt + passphrase  | The address book cannot be recomputed. The mnemonic backs up the salt; the passphrase you must remember. |
-| Reproducible builds                              | Not yet. Wheel has whatever your toolchain produces.                                          |
+| Reproducible builds                              | Yes (iter-056). `scripts/build-reproducible.sh` + `Dockerfile.build` produce byte-identical wheels. |
 | External cryptographic audit                     | Not yet performed.                                                                            |
 
 ---
@@ -145,7 +145,7 @@ release.
 | TM-05 | ~~Medium~~ resolved | Constant-time compares audited (iter-054). `pinstore` and `files` integrity check now use `hmac.compare_digest`. Other comparisons either go through `cryptography.hazmat` (constant-time by construction) or compare public identifiers where timing leaks no secret. Regression-tested in `tests/test_constant_time.py`. | iter-054 ✅ |
 | TM-06 | Medium   | Cover traffic optional and basic; doesn't defeat traffic analysis.       | future       |
 | TM-07 | Medium   | Ed25519 signatures are non-deniable; signed messages can be leaked.      | future (OTR-style MAC). |
-| TM-08 | Medium   | No reproducible build; wheel ships whatever your toolchain produces.     | RELEASE.md (planned) |
+| TM-08 | ~~Medium~~ resolved | Reproducible build verified in iter-056. `scripts/build-reproducible.sh` + `Dockerfile.build` produce byte-identical wheels across runs. `scripts/verify-reproducibility.sh` is the regression check. | iter-056 ✅ |
 | TM-09 | Low      | Receipts can be omitted by a malicious endpoint to spoof "not delivered".| documented   |
 | TM-10 | Low      | Address book file size leaks an upper bound on contact count via padding granularity. | low impact   |
 | TM-11 | Low      | One pre-existing CLI test failure (`Mock(_groups)`).                     | iter-053+    |

@@ -74,19 +74,48 @@ once the first signed tag lands.
 
 ---
 
-## 4 · Reproducible builds (planned)
+## 4 · Reproducible builds
 
-We do **not** yet produce reproducible wheels. Tracker for this:
+Verified end-to-end as of `1.0.0-rc4`. Two invocations of
+`scripts/build-reproducible.sh` against the same commit on the
+same Python minor + hatchling minor produce wheels with
+identical SHA-256.
 
-- Pin `hatchling` to a single minor in `pyproject.toml [build-system]`
-  (already done).
-- Add a `SOURCE_DATE_EPOCH` lock in CI.
-- Move build to a documented Docker image so anyone can
-  byte-compare against an upload.
+What's pinned
 
-Until this is implemented, **the wheel hash on PyPI is not
-reproducible from source by a third party**. THREAT_MODEL.md §5
-TM-08 tracks this.
+- `pyproject.toml [build-system].requires`: `hatchling>=1.29,<1.30`.
+- `scripts/build-reproducible.sh` exports
+  `SOURCE_DATE_EPOCH=<git commit ts>`,
+  `PYTHONHASHSEED=0`,
+  `PYTHONDONTWRITEBYTECODE=1`,
+  `LC_ALL=C`, `TZ=UTC`,
+  `umask 022`.
+- `Dockerfile.build` pins Python to `python:3.13-slim` and the
+  build front-end to `build==1.5.0`. Anyone with Docker can
+  reproduce a release artifact with no further config.
+
+How to verify
+
+```bash
+# Local, requires Python 3.13.x and hatchling 1.29.x
+bash scripts/verify-reproducibility.sh
+# Containerized (recommended for cross-host verification)
+docker build -f Dockerfile.build -t malphas-build .
+docker run --rm -v "$PWD:/src" -w /src malphas-build \
+    bash scripts/verify-reproducibility.sh
+```
+
+What still varies
+
+- Python **patch** version: 3.13.7 vs 3.13.8 may differ. Pin to
+  the same `python:3.13-slim` image digest as the release
+  documents (see RELEASE.md §5).
+- C extensions: malphas itself is pure Python. Transitive deps
+  (`cryptography`, `argon2-cffi`) are pinned in `requirements.txt`
+  for the runtime; for the build the wheel is `py3-none-any` so
+  no extension code goes into our artifact.
+
+THREAT_MODEL.md §5 TM-08 closed in iter-056.
 
 ---
 
