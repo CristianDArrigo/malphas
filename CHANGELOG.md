@@ -3,6 +3,44 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.0] — 2026-05-09
+
+### Added — PySide6/Qt GUI skeleton
+
+First slice of the move from tkinter to Qt. Wire-format unchanged
+(this is a UI swap; not bumped to 1.0 because the Qt port is
+incremental and `--mode gui` is still the default).
+
+- New module `src/malphas/gui_qt.py`:
+  - `MalphasQtWindow` (QMainWindow): header + sidebar + chat
+    surface + input row, all themed via a single QSS string.
+  - `BubbleRow` (QFrame): outgoing right / incoming left /
+    system centered. Word-wrapped, max 560 px.
+  - `_qss()` builds the dark stylesheet from the shared
+    `gui_theme` palette tokens — palette is identical between
+    the (transitional) tk GUI and the new Qt GUI.
+  - Sigil PNG loaded as `QPixmap` (header 32 px, window icon).
+- New CLI mode: `--mode gui-qt`. Falls back to a clear error if
+  PySide6 isn't installed (`pip install -e ".[gui-qt]"`).
+- `_run_gui_qt()` mirrors `_run_gui()`: same passphrase prompt,
+  same `MalphasNode` + `AsyncBridge` setup, then enters Qt's
+  event loop instead of Tk's mainloop.
+
+### Internal
+
+- `gui_qt` added to the lenient mypy bucket.
+- `[project.optional-dependencies] gui-qt`: PySide6 ≥ 6.6,
+  qasync ≥ 0.27.
+
+### Not yet wired (subsequent iters)
+
+- Action button handlers (share / add / group / send / file).
+- Sidebar populated from `AddressBook` + groups.
+- Chat history rehydration on conversation switch.
+- Live event drain from `AsyncBridge` event queue.
+- File transfer / mnemonic / about dialogs (will use
+  `QMessageBox` / `QInputDialog`, no custom widgets).
+
 ## [0.10.9] — 2026-05-09
 
 ### Reverted

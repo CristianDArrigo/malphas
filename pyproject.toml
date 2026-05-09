@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "malphas"
-version = "0.10.9"
+version = "0.11.0"
 description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [
@@ -137,6 +137,7 @@ module = [
     "malphas.gui",
     "malphas.gui_icons",
     "malphas.gui_theme",
+    "malphas.gui_qt",
 ]
 disable_error_code = [
     "union-attr",
