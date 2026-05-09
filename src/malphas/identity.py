@@ -147,7 +147,7 @@ def peer_id_from_pubkey(ed25519_pub_bytes: bytes) -> str:
     return hashlib.blake2s(ed25519_pub_bytes, digest_size=20).hexdigest()
 
 
-def create_identity_with_book_key(passphrase: str) -> tuple:
+def create_identity_with_book_key(passphrase: str) -> tuple[Identity, bytes]:
     """
     Derive Identity + address book encryption key from the same passphrase.
     Returns (Identity, book_key: bytes).

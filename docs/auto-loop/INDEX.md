@@ -57,3 +57,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 029 | iter-029-next-target.md | Next-target (mypy strict bucket extension) | done |
 | 030 | iter-030-green-mypy-bucket.md | Green: mypy strict — discovery/receipts/ratchet | done |
 | 031 | iter-031-next-target.md | Next-target (mypy strict — identity/onion/addressbook) | done |
+| 032 | iter-032-green-mypy-bucket-14.md | Green: mypy strict bucket → 14 modules | done |

@@ -18,6 +18,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from .crypto import decrypt, encrypt, hkdf_derive
 
@@ -34,11 +35,11 @@ class Contact:
     x25519_pub: str     # 64-char hex
     ed25519_pub: str    # 64-char hex
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @staticmethod
-    def from_dict(d: dict) -> "Contact":
+    def from_dict(d: dict[str, Any]) -> "Contact":
         return Contact(
             label=d["label"],
             peer_id=d["peer_id"],

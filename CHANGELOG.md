@@ -3,6 +3,22 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.2] — 2026-05-09
+
+### Engineering
+
+- Mypy strict bucket extended from 11 modules to **14**: now also
+  includes `identity`, `onion`, `addressbook`.
+- 3 type errors fixed (annotation-only):
+  - `addressbook.Contact.to_dict / from_dict`: `dict` → `dict[str, Any]`.
+  - `identity.create_identity_with_book_key`: `tuple` → `tuple[Identity, bytes]`.
+- 111 focused tests still green. ruff + bandit clean.
+- CI workflow updated.
+
+### Wire format
+
+Unchanged.
+
 ## [0.5.1] — 2026-05-09
 
 ### Engineering
