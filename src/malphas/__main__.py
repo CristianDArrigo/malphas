@@ -94,6 +94,58 @@ def _resolve_salt(args) -> bytes:
     return salt
 
 
+def _open_book_with_migration(
+    book_path: Path,
+    passphrase: str,
+    salt: bytes,
+) -> tuple[AddressBook, bytes, "object"]:
+    """
+    Resolve identity + open the address book, with auto-migration from
+    the pre-0.7.0 fixed-salt format.
+
+    Pre-0.7.0 the Argon2 salt was the constant `b"malphas-kdf-salt"`.
+    A user upgrading from <=0.6.x has a `~/.malphas/book` cipher
+    file encrypted under a `book_key` derived from THAT salt; passing
+    the new per-user random salt produces a different `book_key` and
+    decryption fails. We detect the failure, retry with the legacy
+    salt, and if that succeeds we re-emit the book under the new key
+    so the next run is clean.
+
+    Returns (book, book_key, identity).
+    """
+    identity, book_key = create_identity_with_book_key(passphrase, salt)
+    book = AddressBook(str(book_path), book_key)
+
+    if not book_path.exists() or book_path.stat().st_size == 0:
+        # Fresh install — no migration needed.
+        book.load()
+        return book, book_key, identity
+
+    try:
+        book.load()
+        return book, book_key, identity
+    except ValueError:
+        # Try legacy salt (pre-0.7.0).
+        legacy_id, legacy_key = create_identity_with_book_key(passphrase, salt=None)
+        legacy_book = AddressBook(str(book_path), legacy_key)
+        try:
+            legacy_book.load()
+        except ValueError:
+            # Genuinely the wrong passphrase or corrupted file.
+            raise
+
+        # Migration succeeded under the legacy key. Re-emit the contacts
+        # under the new (per-user-salt-derived) key.
+        print("  address book: migrating from pre-0.7.0 fixed-salt format…")
+        for c in legacy_book.all():
+            book.add(c)
+        legacy_book.wipe_memory()
+        print(f"  address book migrated ({len(book)} contact(s)). "
+              "consider running /book to verify, then /backup to save "
+              "the 12-word recovery mnemonic.")
+        return book, book_key, identity
+
+
 def _get_passphrase() -> str:
     print("  your identity is derived deterministically from this passphrase.")
     print("  it is never stored. the same passphrase always produces the same identity.")
@@ -116,23 +168,23 @@ async def _run_cli(args) -> None:
     print_splash()
     passphrase = _get_passphrase()
     salt = _resolve_salt(args)
-    identity, book_key = create_identity_with_book_key(passphrase, salt)
-    passphrase = ""
-    del passphrase
 
     # Ensure book directory exists
     book_path = Path(args.book)
     book_path.parent.mkdir(parents=True, exist_ok=True)
 
-    book = AddressBook(str(book_path), book_key)
     try:
-        loaded = book.load()
-        if loaded:
-            print(f"  address book loaded ({len(book)} contact(s))")
+        book, book_key, identity = _open_book_with_migration(
+            book_path, passphrase, salt
+        )
     except ValueError as e:
         print(f"\n  error: {e}", file=sys.stderr)
         print("  wrong passphrase or corrupted address book.", file=sys.stderr)
         sys.exit(1)
+    passphrase = ""
+    del passphrase
+    if len(book) > 0:
+        print(f"  address book loaded ({len(book)} contact(s))")
 
     transport = DirectTransport()
     if args.tor:
@@ -203,18 +255,18 @@ async def _run_web(args) -> None:
 
     passphrase = _get_passphrase()
     salt = _resolve_salt(args)
-    identity, book_key = create_identity_with_book_key(passphrase, salt)
-    passphrase = ""
-    del passphrase
 
     book_path = Path(args.book)
     book_path.parent.mkdir(parents=True, exist_ok=True)
-    book = AddressBook(str(book_path), book_key)
     try:
-        book.load()
+        book, book_key, identity = _open_book_with_migration(
+            book_path, passphrase, salt
+        )
     except ValueError as e:
         print(f"\n  error: {e}", file=sys.stderr)
         sys.exit(1)
+    passphrase = ""
+    del passphrase
 
     print(f"  peer_id  {identity.peer_id}")
     print(f"  p2p      {args.host}:{args.port}")
@@ -269,20 +321,20 @@ def _run_gui(args) -> None:
     print_splash()
     passphrase = _get_passphrase()
     salt = _resolve_salt(args)
-    identity, book_key = create_identity_with_book_key(passphrase, salt)
-    passphrase = ""  # noqa: S105 — overwriting the local for hygiene
-    del passphrase
 
     book_path = Path(args.book)
     book_path.parent.mkdir(parents=True, exist_ok=True)
-    book = AddressBook(str(book_path), book_key)
     try:
-        loaded = book.load()
-        if loaded:
-            print(f"  address book loaded ({len(book)} contact(s))")
+        book, book_key, identity = _open_book_with_migration(
+            book_path, passphrase, salt
+        )
     except ValueError as e:
         print(f"\n  error: {e}", file=sys.stderr)
         sys.exit(1)
+    passphrase = ""  # noqa: S105 — overwriting the local for hygiene
+    del passphrase
+    if len(book) > 0:
+        print(f"  address book loaded ({len(book)} contact(s))")
 
     pin_path = str(book_path.parent / "pins")
     pins = PinStore(pin_path, book_key)

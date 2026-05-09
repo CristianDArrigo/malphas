@@ -3,6 +3,33 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.1] — 2026-05-09
+
+### Fixed
+
+- **Address book auto-migration from pre-0.7.0**: when v0.7.0 changed
+  the Argon2 salt from a global constant to a per-user random value,
+  any existing `~/.malphas/book` file became un-decryptable on the
+  next run because the derived `book_key` differed. The CLI/Web/GUI
+  bootstraps now detect that failure, retry with the legacy salt, and
+  if that succeeds re-emit the contacts under the new key. The user
+  sees `address book: migrating from pre-0.7.0 fixed-salt format…`
+  and the contacts are preserved.
+- **Splash version is now dynamic**: `splash.py` resolves the version
+  via `importlib.metadata` at print time instead of a hardcoded
+  string. The credits panel showed "0.2.0" through ten releases.
+
+### Internal
+
+- New helper `__main__._open_book_with_migration(path, passphrase, salt)`
+  centralizes the migration retry. All three modes (CLI, web, GUI)
+  now use it.
+- `splash._CREDITS_TMPL` is a format string with `{version}`.
+
+### Wire format
+
+Unchanged.
+
 ## [0.10.0] — 2026-05-09
 
 ### Features

@@ -64,14 +64,14 @@ MALPHAS_ASCII = r"""
                                              ....-----------....
 """
 
-CREDITS = """
+_CREDITS_TMPL = """
   +-----------------------------------------------------------------+
   |                         M A L P H A S                           |
   |                                                                 |
   |         privacy-first P2P messenger with onion routing          |
   |                                                                 |
   |  author    Cristian D'Arrigo                                    |
-  |  version   0.2.0                                                |
+  |  version   {version:<53}|
   |  source    github.com/CristianDArrigo/malphas                   |
   |                                                                 |
   |  /help for commands  -  /export to share your identity          |
@@ -80,5 +80,12 @@ CREDITS = """
 
 
 def print_splash() -> None:
+    # Resolve the runtime version dynamically so the splash never lags
+    # behind a bumped pyproject. Falls back to "?" in environments where
+    # importlib metadata cannot find the package.
+    try:
+        from . import __version__
+    except Exception:
+        __version__ = "?"
     print(MALPHAS_ASCII)
-    print(CREDITS)
+    print(_CREDITS_TMPL.format(version=__version__))
