@@ -20,11 +20,22 @@ Pending receipts are kept in memory only. No disk writes.
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 RECEIPT_TIMEOUT = 30.0   # seconds before a pending receipt is considered lost
 RECEIPT_INFO = b"malphas-read-receipt-v1"
+
+# Callback signatures used by ReceiptTracker. Each callback may be
+# sync or async; we tolerate both via `_maybe_call`.
+ReceiptCallback = Callable[[str, str, bool], Any]
+TimeoutCallback = Callable[[str, str], Any]
 
 
 @dataclass
@@ -49,18 +60,18 @@ def make_receipt_challenge(msg_id: str, nonce: bytes) -> bytes:
 def sign_receipt(
     msg_id: str,
     nonce: bytes,
-    ed25519_priv,
+    ed25519_priv: Ed25519PrivateKey,
 ) -> bytes:
     """Called by the recipient. Returns 64-byte Ed25519 signature."""
     challenge = make_receipt_challenge(msg_id, nonce)
-    return ed25519_priv.sign(challenge)
+    return bytes(ed25519_priv.sign(challenge))
 
 
 def verify_receipt(
     msg_id: str,
     nonce: bytes,
     signature: bytes,
-    ed25519_pub,
+    ed25519_pub: Ed25519PublicKey,
 ) -> bool:
     """Called by the sender. Returns True if signature is valid."""
     challenge = make_receipt_challenge(msg_id, nonce)
@@ -78,19 +89,19 @@ class ReceiptTracker:
     No disk persistence.
     """
 
-    def __init__(self, timeout: float = RECEIPT_TIMEOUT, check_interval: float = 5.0):
+    def __init__(self, timeout: float = RECEIPT_TIMEOUT, check_interval: float = 5.0) -> None:
         self._pending: dict[str, PendingReceipt] = {}
-        self._on_receipt: Callable | None = None
-        self._on_timeout: Callable | None = None
-        self._task: asyncio.Task | None = None
+        self._on_receipt: ReceiptCallback | None = None
+        self._on_timeout: TimeoutCallback | None = None
+        self._task: asyncio.Task[None] | None = None
         self._timeout = timeout
         self._check_interval = check_interval
 
-    def on_receipt(self, callback: Callable) -> None:
+    def on_receipt(self, callback: ReceiptCallback) -> None:
         """callback(msg_id, dest_peer_id, received: bool)"""
         self._on_receipt = callback
 
-    def on_timeout(self, callback: Callable) -> None:
+    def on_timeout(self, callback: TimeoutCallback) -> None:
         self._on_timeout = callback
 
     def track(
@@ -110,7 +121,7 @@ class ReceiptTracker:
         self._pending[msg_id] = pr
         return pr
 
-    def resolve(self, msg_id: str, signature: bytes, sender_pub) -> bool:
+    def resolve(self, msg_id: str, signature: bytes, sender_pub: Ed25519PublicKey) -> bool:
         """
         Called when a receipt arrives.
         Verifies the signature, marks as received.
@@ -130,7 +141,13 @@ class ReceiptTracker:
                 )
         return valid
 
-    async def _maybe_call(self, cb, *args):
+    async def _maybe_call(
+        self,
+        cb: Callable[..., Any] | None,
+        *args: Any,
+    ) -> None:
+        if cb is None:
+            return
         try:
             if asyncio.iscoroutinefunction(cb):
                 await cb(*args)

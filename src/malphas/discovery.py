@@ -9,6 +9,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 log = logging.getLogger("malphas.discovery")
 log.addHandler(logging.NullHandler())  # no-log policy: NullHandler by default
@@ -29,7 +30,7 @@ class PeerInfo:
     def is_stale(self, timeout: float = 300.0) -> bool:
         return (time.time() - self.last_seen) > timeout
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "peer_id": self.peer_id,
             "host": self.host,
@@ -135,7 +136,7 @@ class PeerDiscovery:
     def __init__(self, my_id: str):
         self.table = RoutingTable(my_id)
         self._my_id = my_id
-        self._mdns_task: asyncio.Task | None = None
+        self._mdns_task: asyncio.Task[None] | None = None
 
     def add_peer(
         self,
@@ -158,7 +159,7 @@ class PeerDiscovery:
     def get_peer(self, peer_id: str) -> PeerInfo | None:
         return self.table.get(peer_id)
 
-    def all_peers(self) -> list[dict]:
+    def all_peers(self) -> list[dict[str, Any]]:
         return [p.to_dict() for p in self.table.all_peers()]
 
     def select_relay_circuit(

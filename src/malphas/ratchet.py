@@ -47,7 +47,7 @@ class MessageHeader:
 
 
 class RatchetState:
-    def __init__(self):
+    def __init__(self) -> None:
         self._dh_priv: X25519PrivateKey | None = None
         self._dh_pub: bytes | None = None
         self._remote_dh_pub: bytes | None = None
@@ -94,6 +94,9 @@ class RatchetState:
     def encrypt(self, plaintext: bytes) -> tuple[MessageHeader, bytes]:
         if self._send_chain_key is None:
             raise RuntimeError("Sending chain not initialized")
+        # When the sending chain exists, the local DH public must too —
+        # they are paired in `from_shared_secret` / `_dh_ratchet`.
+        assert self._dh_pub is not None
 
         self._send_chain_key, message_key = kdf_chain(self._send_chain_key)
         header = MessageHeader(
@@ -117,6 +120,11 @@ class RatchetState:
 
         self._skip_messages(header.msg_num)
 
+        # By this point the receiving chain is set: either the snippet
+        # above already ratcheted it via `_dh_ratchet`, or the caller is
+        # decrypting a message that arrived after a prior decrypt that
+        # initialized it.
+        assert self._recv_chain_key is not None
         self._recv_chain_key, message_key = kdf_chain(self._recv_chain_key)
         self._recv_msg_num += 1
 
@@ -127,6 +135,12 @@ class RatchetState:
         self._send_msg_num = 0
         self._recv_msg_num = 0
         self._remote_dh_pub = new_remote_pub
+
+        # _dh_ratchet runs only on a state that has been bootstrapped
+        # via `from_shared_secret`, so both the local DH key and the
+        # root key are populated by now.
+        assert self._dh_priv is not None
+        assert self._root_key is not None
 
         dh_output = ecdh_shared_secret(self._dh_priv, new_remote_pub)
         self._root_key, self._recv_chain_key = _kdf_root(
@@ -143,9 +157,12 @@ class RatchetState:
     def _skip_messages(self, until: int) -> None:
         if self._recv_chain_key is None:
             return
+        # The receive chain is always paired with a known remote DH pub.
+        assert self._remote_dh_pub is not None
+        remote_pub = self._remote_dh_pub
         while self._recv_msg_num < until:
             self._recv_chain_key, mk = kdf_chain(self._recv_chain_key)
-            self._skipped[(self._remote_dh_pub, self._recv_msg_num)] = mk
+            self._skipped[(remote_pub, self._recv_msg_num)] = mk
             self._recv_msg_num += 1
             if len(self._skipped) > MAX_SKIP:
                 oldest = next(iter(self._skipped))

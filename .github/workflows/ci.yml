@@ -35,7 +35,10 @@ jobs:
             src/malphas/pinstore.py \
             src/malphas/invite.py \
             src/malphas/files.py \
-            src/malphas/secure_buffer.py
+            src/malphas/secure_buffer.py \
+            src/malphas/discovery.py \
+            src/malphas/receipts.py \
+            src/malphas/ratchet.py
 
       - name: Bandit static security scan
         run: bandit -r src/malphas/ -c pyproject.toml -l

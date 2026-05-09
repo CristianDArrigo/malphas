@@ -3,6 +3,34 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.1] — 2026-05-09
+
+### Engineering
+
+- Mypy strict bucket extended from 8 modules to **11**: now includes
+  `discovery`, `receipts`, `ratchet` in addition to `replay`, `crypto`,
+  `memory`, `obfuscation`, `pinstore`, `invite`, `files`,
+  `secure_buffer`.
+- 21 type errors fixed across the three new modules:
+  - `ratchet.py`: explicit `assert ... is not None` guards in
+    `encrypt`/`decrypt`/`_dh_ratchet`/`_skip_messages` for the
+    invariants that the algorithm already maintained at runtime;
+    `__init__` annotated `-> None`; `_skipped` indexing now uses a
+    locally-bound `remote_pub` reference to satisfy the type checker.
+  - `receipts.py`: `Ed25519PrivateKey`/`Ed25519PublicKey` annotations on
+    `sign_receipt`/`verify_receipt`/`resolve`; new `ReceiptCallback`
+    and `TimeoutCallback` aliases; `_maybe_call` typed and now no-ops
+    on a `None` callback.
+  - `discovery.py`: `to_dict` returns `dict[str, Any]`; `_mdns_task`
+    typed as `asyncio.Task[None] | None`.
+- All annotation tightening only; no behavior change. 244 focused tests
+  still green. ruff + bandit clean.
+- CI workflow updated to mypy-strict the new modules too.
+
+### Wire format
+
+Unchanged.
+
 ## [0.5.0] — 2026-05-09 — WIRE-BREAKING
 
 ### Wire format
