@@ -20,10 +20,12 @@ from .addressbook import AddressBook
 from .identity import create_identity_with_book_key
 from .node import MalphasNode
 from .pinstore import PinStore
+from .salt_store import load_or_create_salt
 from .splash import print_splash
 from .transport import DirectTransport, TorTransport, tor_is_available
 
 DEFAULT_BOOK_PATH = str(Path.home() / ".malphas" / "book")
+DEFAULT_SALT_PATH = str(Path.home() / ".malphas" / "salt")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "showcase")
 
 
@@ -48,7 +50,8 @@ async def _run_cli(args) -> None:
 
     print_splash()
     passphrase = _get_passphrase()
-    identity, book_key = create_identity_with_book_key(passphrase)
+    salt = load_or_create_salt(Path(args.salt))
+    identity, book_key = create_identity_with_book_key(passphrase, salt)
     passphrase = ""
     del passphrase
 
@@ -134,7 +137,8 @@ async def _run_web(args) -> None:
     from .api import create_app
 
     passphrase = _get_passphrase()
-    identity, book_key = create_identity_with_book_key(passphrase)
+    salt = load_or_create_salt(Path(args.salt))
+    identity, book_key = create_identity_with_book_key(passphrase, salt)
     passphrase = ""
     del passphrase
 
@@ -215,6 +219,13 @@ def main():
     parser.add_argument(
         "--book", default=DEFAULT_BOOK_PATH,
         help=f"Address book file path (default: {DEFAULT_BOOK_PATH})"
+    )
+    parser.add_argument(
+        "--salt", default=DEFAULT_SALT_PATH,
+        help=(
+            f"Per-user Argon2 salt file (default: {DEFAULT_SALT_PATH}). "
+            "Generated on first run, mode 0600. Lose it = lose the identity."
+        ),
     )
     args = parser.parse_args()
 

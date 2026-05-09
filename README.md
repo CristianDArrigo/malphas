@@ -137,6 +137,7 @@ malphas is designed to protect against the following adversaries:
 - Replay attacks on the application layer — every successfully delivered message records `(from_peer_id, msg_id)` in a bounded sliding window; a re-injected onion packet is dropped silently, with no second user-visible delivery, no second store entry, and no second receipt
 - Argon2 seed in swap — the derived seed is wrapped in a `SecureBytes` buffer that is `mlock`'d (best-effort) and zeroized as soon as the keypairs are extracted
 - Post-compromise sender disclosure — since v0.6.0, the `from` field in the inner JSON payload is sealed against the recipient's X25519 pubkey. An attacker who later recovers a hop's session key sees only opaque bytes where the sender's peer_id used to be
+- Rainbow tables across users — since v0.7.0 the Argon2 salt is a per-user 16-byte random value persisted to `~/.malphas/salt` (mode 0600), not a global constant. A precomputed table built against one install does not help against any other install
 
 **Partially protected against:**
 
@@ -145,6 +146,7 @@ malphas is designed to protect against the following adversaries:
 
 **Not protected against:**
 
+- Loss of `~/.malphas/salt` — since v0.7.0 the per-user salt is required to reconstruct the identity from the passphrase. Without the file (and without a BIP39 backup, planned for v0.7.x) the same passphrase produces a fresh identity that no existing peer recognizes
 - Physical device compromise while malphas is running — messages in RAM are accessible via memory dump (the `mlock`'d `SecureBytes` covers the Argon2 seed only, and only against swap; an attacker with `/proc/$pid/mem` reads everything)
 - Compromised operating system (keyloggers, malware) — any software with kernel access can intercept the passphrase at entry time
 - Social engineering of the peer — malphas secures the channel, not the human at the other end

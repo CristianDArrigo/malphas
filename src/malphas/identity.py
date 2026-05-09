@@ -36,14 +36,22 @@ _ARGON2_TIME_COST    = 3
 _ARGON2_MEMORY_COST  = 65536  # KB = 64 MB
 _ARGON2_PARALLELISM  = 4
 _ARGON2_HASH_LEN     = 64
-# Salt is public and fixed — provides domain separation,
-# not secrecy. Must be exactly 16 bytes for Argon2.
-_ARGON2_SALT         = b"malphas-kdf-salt"  # 16 bytes
+# Legacy fallback salt — used when no per-user salt is provided.
+# Pre-0.7.0 this was the only salt; tests still rely on it for
+# deterministic identity derivation. Production CLI code passes a
+# per-user 16-byte salt loaded from `~/.malphas/salt` instead, see
+# malphas.salt_store.
+_ARGON2_SALT_LEGACY  = b"malphas-kdf-salt"  # 16 bytes
 
 
-def _derive_seed(passphrase: str) -> SecureBytes:
+def _derive_seed(passphrase: str, salt: bytes | None = None) -> SecureBytes:
     """
-    Argon2id(passphrase) -> 64-byte seed wrapped in a SecureBytes.
+    Argon2id(passphrase, salt) -> 64-byte seed wrapped in a SecureBytes.
+
+    `salt` should be a 16-byte per-user value loaded from
+    `~/.malphas/salt`. If None, falls back to the legacy global
+    constant — kept for test determinism, NOT recommended in
+    production.
 
     Argon2id is memory-hard and time-hard by design.
     Each derivation requires 64MB of RAM and ~200ms —
@@ -64,9 +72,14 @@ def _derive_seed(passphrase: str) -> SecureBytes:
             "argon2-cffi is required. "
             "Install it with: pip install argon2-cffi"
         )
+    effective_salt = salt if salt is not None else _ARGON2_SALT_LEGACY
+    if len(effective_salt) != 16:
+        raise ValueError(
+            f"Argon2 salt must be exactly 16 bytes, got {len(effective_salt)}"
+        )
     raw = hash_secret_raw(
         secret=passphrase.encode("utf-8"),
-        salt=_ARGON2_SALT,
+        salt=effective_salt,
         time_cost=_ARGON2_TIME_COST,
         memory_cost=_ARGON2_MEMORY_COST,
         parallelism=_ARGON2_PARALLELISM,
@@ -103,16 +116,20 @@ class Identity:
             return False
 
 
-def create_identity(passphrase: str) -> Identity:
+def create_identity(passphrase: str, salt: bytes | None = None) -> Identity:
     """
-    Derive a deterministic Identity from a passphrase.
+    Derive a deterministic Identity from a passphrase + salt.
     The passphrase is never stored. Call this once at startup.
+
+    `salt` should be a per-user 16-byte value (see malphas.salt_store).
+    If None, falls back to the legacy global salt — kept for test
+    determinism only.
 
     The intermediate Argon2 seed is held in a SecureBytes that is
     explicitly wiped (and unlocked from RAM) before this function
     returns.
     """
-    with _derive_seed(passphrase) as seed:
+    with _derive_seed(passphrase, salt) as seed:
         seed_bytes = bytes(seed)
         ed_seed = seed_bytes[:32]
         x_seed = seed_bytes[32:]
@@ -147,10 +164,16 @@ def peer_id_from_pubkey(ed25519_pub_bytes: bytes) -> str:
     return hashlib.blake2s(ed25519_pub_bytes, digest_size=20).hexdigest()
 
 
-def create_identity_with_book_key(passphrase: str) -> tuple[Identity, bytes]:
+def create_identity_with_book_key(
+    passphrase: str, salt: bytes | None = None
+) -> tuple[Identity, bytes]:
     """
-    Derive Identity + address book encryption key from the same passphrase.
+    Derive Identity + address book encryption key from the same passphrase + salt.
     Returns (Identity, book_key: bytes).
+
+    `salt` should be a per-user 16-byte value (see malphas.salt_store).
+    If None, falls back to the legacy global salt for backward-
+    compatible test paths only.
 
     Both derivations come from a single Argon2 seed wrapped in a
     SecureBytes that is wiped (and unlocked from RAM) before this
@@ -163,7 +186,7 @@ def create_identity_with_book_key(passphrase: str) -> tuple[Identity, bytes]:
     """
     from .crypto import hkdf_derive
 
-    with _derive_seed(passphrase) as seed:
+    with _derive_seed(passphrase, salt) as seed:
         seed_bytes = bytes(seed)
 
         # Identity keypairs (uses first 64 bytes of seed directly)

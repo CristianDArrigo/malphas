@@ -75,3 +75,5 @@ Repository: malphas (privacy-first P2P messenger).
 | 045 | iter-045-roadmap.md | Roadmap: 6 phase user-driven (post hand-off) | done |
 | 046a | iter-046-plan-sealed-sender.md | Plan: sealed sender (v0.6.0 WIRE-BREAKING) | done |
 | 046b | iter-046-green-sealed-sender.md | Green: sealed sender (v0.6.0 WIRE-BREAKING) | done |
+| 047a | iter-047-plan-per-user-salt.md | Plan: per-user Argon2 salt (v0.7.0 WIRE-BREAKING) | done |
+| 047b | iter-047-green-per-user-salt.md | Green: per-user Argon2 salt (v0.7.0 WIRE-BREAKING) | done |

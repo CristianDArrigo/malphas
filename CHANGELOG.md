@@ -3,6 +3,52 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.7.0] — 2026-05-09 — WIRE-BREAKING
+
+### Security
+
+- **Per-user Argon2 salt** closes finding **B2** from the iter-001
+  review. Until 0.6.x, the Argon2 salt was the hardcoded constant
+  `b"malphas-kdf-salt"`, identical for every user — a single
+  precomputed rainbow table would target the whole world. Now a
+  16-byte random salt is generated once per install and persisted to
+  `~/.malphas/salt` (mode 0600, atomic write).
+- The salt path is configurable: `malphas --salt <path>`.
+
+### Implementation
+
+- New `malphas.salt_store` module with `load_or_create_salt(path)`:
+  reads existing 16-byte file or atomically generates one. Refuses
+  to silently overwrite a wrong-length file.
+- `identity._derive_seed`, `create_identity`, and
+  `create_identity_with_book_key` now take an optional `salt` kw arg.
+  `salt=None` falls back to the legacy global constant for
+  backward-compatible test paths only — production CLI passes the
+  per-user salt explicitly.
+- `__main__.py` loads/creates `~/.malphas/salt` before deriving the
+  identity (both CLI and web modes).
+- New `tests/test_salt_store.py`: 8 unit tests (create, read,
+  parent-dir creation, freshness across paths, mode 0600,
+  wrong-length error, dir-as-path error, no tmp leftover).
+- Mypy strict bucket extended to 16 modules.
+
+### Threat model
+
+Add to "Protected against": "Rainbow tables across users — the KDF
+salt is per-user random, not a global constant."
+
+Add to "Not protected against": "Loss of `~/.malphas/salt` — without
+the file (and without a BIP39 backup, planned for 0.7.x), the same
+passphrase produces a fresh identity that no existing peer recognizes."
+
+### Wire format / identity stability
+
+WIRE-BREAKING. Even with the same passphrase, a 0.7.0 install on a
+different machine derives a different identity because the salt is
+random per machine. To migrate an identity across machines:
+  • Copy `~/.malphas/salt` along with the passphrase, or
+  • (Coming in 0.7.1) restore from a BIP39 mnemonic.
+
 ## [0.6.0] — 2026-05-09 — WIRE-BREAKING
 
 ### Security
