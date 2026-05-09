@@ -40,3 +40,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 012 | iter-012-green-cli-files.md | Green: CLI commands for file transfer | done |
 | 013 | iter-013-next-target.md | Next-target selection (README docs) | done |
 | 014 | iter-014-green-readme.md | Green: README docs for file transfer | done |
+| 015 | iter-015-next-target.md | Next-target selection (mlock + secure erase) | done |
