@@ -50,3 +50,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 022 | iter-022-green-api-files.md | Green: Web API for file transfer | done |
 | 023 | iter-023-next-target.md | Next-target (README consolidation 0.3.x) | done |
 | 024 | iter-024-green-readme-consolidation.md | Green: README consolidation 0.3.x | done |
+| 025 | iter-025-next-target.md | Next-target (0.4.0 line: auth-type prefix) | done |
