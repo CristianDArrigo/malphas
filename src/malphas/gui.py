@@ -25,9 +25,10 @@ import webbrowser
 from concurrent.futures import Future
 from importlib.resources import files
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, ttk
 from typing import Any
 
+from . import gui_dialogs as dlg
 from .addressbook import AddressBook, Contact
 from .gui_icons import (
     IconButton,
@@ -43,49 +44,41 @@ from .gui_icons import (
     draw_user_plus,
     draw_users,
 )
+from .gui_theme import (
+    ACCENT,
+    ACCENT_DIM,
+    ACCENT_GLOW,
+    BG_ACTIVE,
+    BG_BASE,
+    BG_DIVIDER,
+    BG_HOVER,
+    BG_RAISED,
+    BG_SURFACE,
+    BUBBLE_SYS,
+    BUBBLE_THEM,
+    BUBBLE_YOU,
+    FG_FAINT,
+    FG_MUTED,
+    FG_PRIMARY,
+    INFO_CYAN,
+    OK_GREEN,
+    PAD_LG,
+    PAD_MD,
+    PAD_SM,
+    PAD_XL,
+    PAD_XS,
+    WARN_AMBER,
+)
 from .invite import generate_invite, parse_invite
 from .mnemonic import salt_to_mnemonic
 from .node import MalphasNode
 from .salt_store import SALT_LEN
-
-# ── Design system ────────────────────────────────────────────────────────────
-
-# Three-tier dark palette + dedicated bubble colors. Lifted from
-# near-black to a lighter dark-gray so the (black) sigil PNG reads
-# clearly and the surface separation is visible without being murky.
-BG_BASE     = "#1f2129"
-BG_SURFACE  = "#262932"
-BG_RAISED   = "#30333d"
-BG_HOVER    = "#3d4150"
-BG_ACTIVE   = "#4a2630"
-BG_DIVIDER  = "#3a3d47"
-
-BUBBLE_THEM = "#363944"     # incoming
-BUBBLE_YOU  = "#7a2828"     # outgoing (deep red, lifted)
-BUBBLE_SYS  = "#2a2c35"     # system
-
-FG_PRIMARY  = "#f0f0f2"
-FG_MUTED    = "#b0b2bb"
-FG_FAINT    = "#7a7d88"
-
-ACCENT      = "#d23a3a"
-ACCENT_DIM  = "#7a2222"
-ACCENT_GLOW = "#ff5555"
-OK_GREEN    = "#5cb85c"
-WARN_AMBER  = "#e0a830"
-INFO_CYAN   = "#5b9fd8"
 
 # Avatar palette — distinct, well-saturated, hashed by peer_id.
 AVATAR_PALETTE = [
     "#c44e4e", "#c47e4e", "#c4a44e", "#7eb84e", "#4eb88a",
     "#4e9bc4", "#4e72c4", "#7e4ec4", "#b84e9b", "#b8584e",
 ]
-
-PAD_XS = 4
-PAD_SM = 8
-PAD_MD = 12
-PAD_LG = 16
-PAD_XL = 24
 
 WIN_W = 1240
 WIN_H = 800
@@ -962,12 +955,11 @@ class MalphasGUI:
                              icon=draw_send if ok else draw_alert,
                              color=OK_GREEN if ok else WARN_AMBER)
         elif kind == "pin_violation":
-            messagebox.showerror(
+            dlg.error(self.root, 
                 "Key mismatch",
                 f"Pinned key mismatch for {_short(ev[1])}.\n"
                 f"Expected {ev[2][:16]}…\nReceived {ev[3][:16]}…\n\n"
-                "Connection rejected. Use /trust via CLI.",
-                parent=self.root)
+                "Connection rejected. Use /trust via CLI.")
         elif kind == "file_offer":
             self._on_file_offer(ev[1], ev[2])
         elif kind == "file_complete":
@@ -1184,11 +1176,10 @@ class MalphasGUI:
             return
         self._pending_offers[fid] = (from_id, offer)
         label = self._conv_label(from_id)
-        ok = messagebox.askyesno(
+        ok = dlg.confirm(self.root, 
             "Incoming file",
             f"{label} wants to send '{offer.get('name')}'\n"
-            f"({offer.get('size')} bytes).\n\nAccept?",
-            parent=self.root)
+            f"({offer.get('size')} bytes).\n\nAccept?")
         if ok:
             self.node.accept_file_offer(offer)
             self._add_system(from_id,
@@ -1214,7 +1205,7 @@ class MalphasGUI:
                 self._add_system(from_id, f"saved to {path}")
                 self._completed_files.pop(file_id, None)
             except OSError as e:
-                messagebox.showerror("Save failed", str(e), parent=self.root)
+                dlg.error(self.root, "Save failed", str(e))
 
     def _on_group_invite(self, from_id: str, group_id: str, group_name: str,
                           members: list) -> None:
@@ -1245,30 +1236,27 @@ class MalphasGUI:
         url = generate_invite(self.node.identity, host, port, onion=onion)
         self.root.clipboard_clear()
         self.root.clipboard_append(url)
-        messagebox.showinfo(
+        dlg.info(self.root, 
             "Invite copied",
             "A signed malphas:// invite is on your clipboard.\n"
-            "Send it to the peer over a channel you trust.",
-            parent=self.root)
+            "Send it to the peer over a channel you trust.")
 
     def _action_import(self) -> None:
         try:
             text = self.root.clipboard_get()
         except tk.TclError:
-            messagebox.showerror("Clipboard empty", "Nothing to import.",
-                                  parent=self.root)
+            dlg.error(self.root, "Clipboard empty", "Nothing to import.")
             return
         try:
             data = parse_invite(text)
         except ValueError as e:
-            messagebox.showerror("Invalid invite", str(e), parent=self.root)
+            dlg.error(self.root, "Invalid invite", str(e))
             return
 
-        ok = messagebox.askyesno(
+        ok = dlg.confirm(self.root, 
             "Import invite",
             f"Connect to peer_id\n\n{_short(data['peer_id'], 24)}\n\n"
-            f"at {data.get('host')}:{data.get('port')}?",
-            parent=self.root)
+            f"at {data.get('host')}:{data.get('port')}?")
         if not ok:
             return
 
@@ -1284,16 +1272,13 @@ class MalphasGUI:
         try:
             success = future.result(timeout=35.0)
         except Exception as e:
-            messagebox.showerror("Connection failed", str(e), parent=self.root)
+            dlg.error(self.root, "Connection failed", str(e))
             return
         if not success:
-            messagebox.showerror("Connection failed", "Could not reach the peer.",
-                                  parent=self.root)
+            dlg.error(self.root, "Connection failed", "Could not reach the peer.")
             return
 
-        label = simpledialog.askstring("Save to address book",
-                                        "Label (leave empty to skip):",
-                                        parent=self.root)
+        label = dlg.prompt(self.root, "Save to address book", "Label (leave empty to skip):")
         if label:
             save_host = data.get("onion", data["host"])
             save_port = 80 if "onion" in data else data["port"]
@@ -1306,14 +1291,13 @@ class MalphasGUI:
 
     def _action_send_file(self) -> None:
         if not self.active:
-            messagebox.showwarning("No active conversation",
-                                    "Pick a peer first.", parent=self.root)
+            dlg.warning(self.root, "No active conversation",
+                                    "Pick a peer first.")
             return
         group = self.node._groups.get_by_id(self.active)
         if group is not None:
-            messagebox.showinfo("Not supported",
-                                 "File send to a group is not implemented.",
-                                 parent=self.root)
+            dlg.info(self.root, "Not supported",
+                                 "File send to a group is not implemented.")
             return
         path = filedialog.askopenfilename(parent=self.root, title="File to send")
         if not path:
@@ -1327,12 +1311,11 @@ class MalphasGUI:
         try:
             file_id = future.result(timeout=120.0)
         except Exception as e:
-            messagebox.showerror("Send failed", str(e), parent=self.root)
+            dlg.error(self.root, "Send failed", str(e))
             return
         if file_id is None:
-            messagebox.showerror("Send failed",
-                                  "Could not start the transfer.",
-                                  parent=self.root)
+            dlg.error(self.root, "Send failed",
+                                  "Could not start the transfer.")
             return
         self._add_system(peer_id,
                           f"sending {Path(path).name} "
@@ -1340,19 +1323,17 @@ class MalphasGUI:
 
     def _action_backup(self) -> None:
         if self.salt_path is None:
-            messagebox.showerror("Backup unavailable",
-                                  "Salt path not configured.", parent=self.root)
+            dlg.error(self.root, "Backup unavailable",
+                                  "Salt path not configured.")
             return
         try:
             data = self.salt_path.read_bytes()
         except OSError as e:
-            messagebox.showerror("Backup failed", f"Cannot read salt: {e}",
-                                  parent=self.root)
+            dlg.error(self.root, "Backup failed", f"Cannot read salt: {e}")
             return
         if len(data) != SALT_LEN:
-            messagebox.showerror("Backup failed",
-                                  f"Salt has wrong length: {len(data)}",
-                                  parent=self.root)
+            dlg.error(self.root, "Backup failed",
+                                  f"Salt has wrong length: {len(data)}")
             return
         words = salt_to_mnemonic(data).split()
         self._show_mnemonic_dialog(words)
@@ -1423,14 +1404,14 @@ class MalphasGUI:
     def _copy_words(self, dlg: tk.Toplevel, words: list[str]) -> None:
         self.root.clipboard_clear()
         self.root.clipboard_append(" ".join(words))
-        messagebox.showwarning(
+        dlg.warning(self.root, 
             "Mnemonic on clipboard",
             "The 12 words are now on your clipboard. Paste them somewhere "
             "safe, then clear the clipboard.",
             parent=dlg)
 
     def _action_panic(self) -> None:
-        ok = messagebox.askyesno(
+        ok = dlg.confirm(self.root, 
             "PANIC",
             "This wipes ALL in-memory state and exits immediately.\n"
             "The address book and salt files on disk are NOT touched.\n\n"
@@ -1446,8 +1427,7 @@ class MalphasGUI:
             self.root.destroy()
 
     def _action_group_new(self) -> None:
-        name = simpledialog.askstring("New group", "Group name:",
-                                        parent=self.root)
+        name = dlg.prompt(self.root, "New group", "Group name:")
         if not name:
             return
 
@@ -1458,31 +1438,26 @@ class MalphasGUI:
         try:
             gid = future.result(timeout=5.0)
         except Exception as e:
-            messagebox.showerror("Group create failed", str(e),
-                                  parent=self.root)
+            dlg.error(self.root, "Group create failed", str(e))
             return
         if gid is None:
-            messagebox.showerror("Group create failed",
-                                  "Name already in use, or empty name.",
-                                  parent=self.root)
+            dlg.error(self.root, "Group create failed",
+                                  "Name already in use, or empty name.")
             return
         self._add_system(gid, f"group '{name}' created  ({gid[:16]}…)")
         self._refresh_sidebar()
 
     def _action_group_add(self) -> None:
         if not self.active:
-            messagebox.showwarning("No active group", "Pick a group first.",
-                                    parent=self.root)
+            dlg.warning(self.root, "No active group", "Pick a group first.")
             return
         group = self.node._groups.get_by_id(self.active)
         if group is None:
-            messagebox.showwarning("Not a group",
-                                    "Active conversation is not a group.",
-                                    parent=self.root)
+            dlg.warning(self.root, "Not a group",
+                                    "Active conversation is not a group.")
             return
-        target = simpledialog.askstring("Add member",
-                                         "Peer label or peer_id:",
-                                         parent=self.root)
+        target = dlg.prompt(self.root, "Add member",
+                                       "Peer label or peer_id:")
         if not target:
             return
         contact = self.book.get(target)
@@ -1495,12 +1470,11 @@ class MalphasGUI:
         try:
             ok = future.result(timeout=5.0)
         except Exception as e:
-            messagebox.showerror("Add failed", str(e), parent=self.root)
+            dlg.error(self.root, "Add failed", str(e))
             return
         if not ok:
-            messagebox.showerror("Add failed",
-                                  "Peer offline, cap reached, or unknown.",
-                                  parent=self.root)
+            dlg.error(self.root, "Add failed",
+                                  "Peer offline, cap reached, or unknown.")
             return
         self._refresh_sidebar()
 
@@ -1510,11 +1484,10 @@ class MalphasGUI:
         group = self.node._groups.get_by_id(self.active)
         if group is None:
             return
-        ok = messagebox.askyesno(
+        ok = dlg.confirm(self.root, 
             "Leave group",
             f"Leave '{group.name}' locally?\n\n"
-            "Other members will not be notified.",
-            parent=self.root)
+            "Other members will not be notified.")
         if not ok:
             return
         self.node.leave_group(group.group_id)

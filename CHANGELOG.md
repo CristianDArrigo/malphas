@@ -3,6 +3,40 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.7] — 2026-05-09
+
+### GUI — custom dialogs + toasts (no more native popups)
+
+The user pushed back that the GUI still felt "industrial", and
+specifically called out the post-action popups. Those were the
+last places leaking the OS theme into the dark malphas surface
+(`tkinter.messagebox` / `tkinter.simpledialog` render with native
+window decorations and gray system colors regardless of palette).
+
+- New module `gui_theme.py` — single source of truth for the
+  palette and spacing tokens. Both `gui.py` and the dialog code
+  now import from it (no more drift between two copies).
+- New module `gui_dialogs.py` — drop-in replacements:
+  - `info / warning / error(parent, title, message)`
+  - `confirm(parent, title, message) → bool`
+  - `prompt(parent, title, label, initial="") → str | None`
+  - `toast(parent, message, kind=…, ms=…)` — bottom-right
+    auto-dismiss banner for ack-style notifications.
+  Each modal is a frameless `Toplevel` with a 3px colored top
+  accent (info/warning/error/question), the dark palette, and
+  flat hover-aware buttons. `Return` accepts, `Escape` cancels.
+- Every `messagebox.*` and `simpledialog.askstring` call in
+  `gui.py` migrated to the new dialogs (~25 call sites).
+- `filedialog.*` kept native — file pickers should match the OS
+  for muscle memory.
+
+### Internal
+
+- `gui_dialogs` and `gui_theme` added to the lenient mypy bucket;
+  `call-overload` added to the disable list (Tk type stubs
+  over-narrow `Toplevel(master=Misc)`).
+- 7/7 GUI smoke tests still green; ruff / mypy / bandit clean.
+
 ## [0.10.6] — 2026-05-09
 
 ### GUI — lighter palette + larger controls

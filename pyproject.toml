@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "malphas"
-version = "0.10.6"
+version = "0.10.7"
 description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [
@@ -132,6 +132,8 @@ module = [
     "malphas.splash",
     "malphas.gui",
     "malphas.gui_icons",
+    "malphas.gui_dialogs",
+    "malphas.gui_theme",
 ]
 disable_error_code = [
     "union-attr",
@@ -146,6 +148,7 @@ disable_error_code = [
     "call-arg",      # tkinter typestub gaps (e.g. Misc.configure(bg=...))
     "name-defined",  # ditto for Tk runtime-only attrs
     "misc",
+    "call-overload", # Tk typestubs over-narrow Toplevel(master=Misc)
 ]
 
 [tool.ruff]
