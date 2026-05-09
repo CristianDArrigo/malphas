@@ -146,7 +146,7 @@ malphas is designed to protect against the following adversaries:
 
 **Not protected against:**
 
-- Loss of `~/.malphas/salt` — since v0.7.0 the per-user salt is required to reconstruct the identity from the passphrase. Without the file (and without a BIP39 backup, planned for v0.7.x) the same passphrase produces a fresh identity that no existing peer recognizes
+- Loss of `~/.malphas/salt` AND of the BIP39 backup — since v0.7.1 the user is shown a 12-word BIP39 mnemonic on first run and on demand via `/backup`. The mnemonic encodes the salt and is the only way to reconstruct it on another machine. Lose the file *and* the words and the same passphrase produces a fresh identity that no existing peer recognizes
 - Physical device compromise while malphas is running — messages in RAM are accessible via memory dump (the `mlock`'d `SecureBytes` covers the Argon2 seed only, and only against swap; an attacker with `/proc/$pid/mem` reads everything)
 - Compromised operating system (keyloggers, malware) — any software with kernel access can intercept the passphrase at entry time
 - Social engineering of the peer — malphas secures the channel, not the human at the other end

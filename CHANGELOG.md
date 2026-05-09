@@ -3,6 +3,40 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.7.1] — 2026-05-09
+
+### Features
+
+- **BIP39 12-word mnemonic backup** for the per-user salt. 16 bytes
+  of entropy ↔ 12 English BIP39 words. Closes the "Loss of
+  ~/.malphas/salt" hole opened in 0.7.0.
+- First-run flow now prints the mnemonic prominently, with an
+  unmistakable header instructing the user to write it down.
+- New `malphas --from-mnemonic "<12 words>"`: restores the salt on
+  another machine. If `~/.malphas/salt` is missing it is written;
+  if it exists with a different value, startup aborts with an
+  error (refusing to overwrite an existing identity by accident).
+- New `/backup` CLI command: re-prints the 12 words on demand.
+
+### Implementation
+
+- New `malphas.mnemonic` module: `salt_to_mnemonic(salt)` and
+  `mnemonic_to_salt(words)`. Backed by Trezor's `python-mnemonic`
+  (`mnemonic>=0.20`) for wordlist + checksum.
+- 9 new unit tests in `tests/test_mnemonic.py` (known BIP39 zero-
+  entropy vector, roundtrip, word count, bad checksum, word not in
+  wordlist, whitespace tolerance, length bounds).
+- `MalphasCLI.__init__` takes an optional `salt_path` so `/backup`
+  can re-encode the file content on demand.
+- Mypy strict bucket extended to 17 modules.
+- Runtime dep: `mnemonic>=0.20`.
+
+### Wire format
+
+Unchanged — feature is purely user-facing (recovery flow). 0.7.1
+peers interoperate with 0.7.0 peers as long as they share the same
+salt + passphrase.
+
 ## [0.7.0] — 2026-05-09 — WIRE-BREAKING
 
 ### Security

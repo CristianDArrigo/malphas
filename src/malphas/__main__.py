@@ -18,15 +18,80 @@ from pathlib import Path
 
 from .addressbook import AddressBook
 from .identity import create_identity_with_book_key
+from .mnemonic import mnemonic_to_salt, salt_to_mnemonic
 from .node import MalphasNode
 from .pinstore import PinStore
-from .salt_store import load_or_create_salt
+from .salt_store import SALT_LEN, load_or_create_salt
 from .splash import print_splash
 from .transport import DirectTransport, TorTransport, tor_is_available
 
 DEFAULT_BOOK_PATH = str(Path.home() / ".malphas" / "book")
 DEFAULT_SALT_PATH = str(Path.home() / ".malphas" / "salt")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "showcase")
+
+
+def _resolve_salt(args) -> bytes:
+    """
+    Decide where the per-user salt comes from, in priority order:
+      1. `--from-mnemonic <words>` — restore from a 12-word BIP39
+         backup. The salt is written to args.salt if absent;
+         otherwise verified to match.
+      2. `args.salt` file — read if present, generate if absent
+         (the existing v0.7.0 flow).
+
+    On a fresh generation (path didn't exist), prints the mnemonic
+    once, big and visible, so the user can write it down. The
+    same is shown by the `/backup` CLI command on demand.
+    """
+    salt_path = Path(args.salt)
+
+    if args.from_mnemonic:
+        try:
+            salt = mnemonic_to_salt(args.from_mnemonic)
+        except ValueError as e:
+            print(f"  error: {e}", file=sys.stderr)
+            sys.exit(2)
+
+        if salt_path.exists():
+            existing = salt_path.read_bytes()
+            if existing != salt:
+                print(
+                    f"  error: {salt_path} already exists with a different "
+                    "salt.\n  Refusing to overwrite — this would replace "
+                    "your existing identity.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            print(f"  mnemonic matches existing salt at {salt_path}.")
+        else:
+            salt_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = salt_path.with_suffix(".salt-tmp")
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(salt)
+            os.replace(str(tmp), str(salt_path))
+            print(f"  salt restored from mnemonic into {salt_path}.")
+        return salt
+
+    # Standard flow — load_or_create. Detect "we just generated it"
+    # by checking existence before the call.
+    fresh = not salt_path.exists()
+    salt = load_or_create_salt(salt_path)
+    if fresh:
+        words = salt_to_mnemonic(salt)
+        print()
+        print("  ┌─ first run on this machine ──────────────────────────────┐")
+        print("  │ a per-user salt has been generated and saved.            │")
+        print("  │ write down these 12 words — they are the ONLY way to     │")
+        print(f"  │ recover this identity if {salt_path} is lost. │")
+        print("  └──────────────────────────────────────────────────────────┘")
+        print()
+        for i, word in enumerate(words.split(), start=1):
+            print(f"    {i:2d}. {word}")
+        print()
+        print("  to restore on another machine:  malphas --from-mnemonic \"...\"")
+        print()
+    return salt
 
 
 def _get_passphrase() -> str:
@@ -50,7 +115,7 @@ async def _run_cli(args) -> None:
 
     print_splash()
     passphrase = _get_passphrase()
-    salt = load_or_create_salt(Path(args.salt))
+    salt = _resolve_salt(args)
     identity, book_key = create_identity_with_book_key(passphrase, salt)
     passphrase = ""
     del passphrase
@@ -113,7 +178,7 @@ async def _run_cli(args) -> None:
             print("  continuing without hidden service (outbound Tor only)", file=sys.stderr)
 
     loop = asyncio.get_running_loop()
-    cli = MalphasCLI(node, book)
+    cli = MalphasCLI(node, book, salt_path=Path(args.salt))
 
     def _shutdown():
         cli._running = False
@@ -137,7 +202,7 @@ async def _run_web(args) -> None:
     from .api import create_app
 
     passphrase = _get_passphrase()
-    salt = load_or_create_salt(Path(args.salt))
+    salt = _resolve_salt(args)
     identity, book_key = create_identity_with_book_key(passphrase, salt)
     passphrase = ""
     del passphrase
@@ -225,6 +290,17 @@ def main():
         help=(
             f"Per-user Argon2 salt file (default: {DEFAULT_SALT_PATH}). "
             "Generated on first run, mode 0600. Lose it = lose the identity."
+        ),
+    )
+    parser.add_argument(
+        "--from-mnemonic",
+        default=None,
+        metavar='"WORD WORD ... WORD"',
+        help=(
+            "Restore the per-user salt from a 12-word BIP39 mnemonic "
+            "(printed on first run). The salt file is written if absent; "
+            "if it exists, it is verified to match — startup aborts on "
+            "mismatch."
         ),
     )
     args = parser.parse_args()

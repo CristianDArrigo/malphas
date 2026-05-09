@@ -77,3 +77,5 @@ Repository: malphas (privacy-first P2P messenger).
 | 046b | iter-046-green-sealed-sender.md | Green: sealed sender (v0.6.0 WIRE-BREAKING) | done |
 | 047a | iter-047-plan-per-user-salt.md | Plan: per-user Argon2 salt (v0.7.0 WIRE-BREAKING) | done |
 | 047b | iter-047-green-per-user-salt.md | Green: per-user Argon2 salt (v0.7.0 WIRE-BREAKING) | done |
+| 048a | iter-048-plan-mnemonic.md | Plan: BIP39 12-word mnemonic (v0.7.1) | done |
+| 048b | iter-048-green-mnemonic.md | Green: BIP39 12-word mnemonic (v0.7.1) | done |

@@ -25,6 +25,7 @@ import asyncio
 import re
 import sys
 import time
+from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit import print_formatted_text as ptk_print
@@ -73,6 +74,7 @@ COMMANDS = [
     "/id", "/peers", "/book", "/add", "/chat", "/history",
     "/export", "/import", "/trust", "/wipe", "/panic", "/help", "/github", "/quit", "/exit",
     "/sendfile", "/accept", "/reject", "/savefile", "/files",
+    "/backup",
 ]
 
 GITHUB_URL = "https://github.com/CristianDArrigo/malphas"
@@ -118,12 +120,18 @@ class MalphasCompleter(Completer):
 # ── CLI class ────────────────────────────────────────────────────────────────
 
 class MalphasCLI:
-    def __init__(self, node: MalphasNode, book: AddressBook):
+    def __init__(
+        self,
+        node: MalphasNode,
+        book: AddressBook,
+        salt_path: "Path | None" = None,
+    ):
         self.node = node
         self.book = book
         self.active_peer: str | None = None
         self._running = True
         self._console = _make_console()
+        self._salt_path = salt_path
         # File transfer UI state — keyed by file_id.
         # _pending_offers: offers received and awaiting /accept or /reject.
         # _completed_files: payloads ready for /savefile to flush to disk.
@@ -703,6 +711,38 @@ class MalphasCLI:
             )
         self._print(Panel(t, border_style=C_BORDER, title="[dim]files[/dim]", title_align="left"))
 
+    async def _cmd_backup(self, args: list) -> None:
+        """Print the 12-word BIP39 mnemonic of the per-user salt.
+
+        The mnemonic is the only way to recover the identity if
+        ~/.malphas/salt is lost. Treat the printed words like a
+        passphrase: write them down, do not screenshot, do not paste
+        into a chat.
+        """
+        if self._salt_path is None:
+            self._err("salt path not configured (running without --salt?)")
+            return
+        try:
+            from .mnemonic import salt_to_mnemonic
+            from .salt_store import SALT_LEN
+        except ImportError as e:
+            self._err(f"backup unavailable: {e}")
+            return
+        try:
+            data = self._salt_path.read_bytes()
+        except OSError as e:
+            self._err(f"cannot read salt at {self._salt_path}: {e}")
+            return
+        if len(data) != SALT_LEN:
+            self._err(f"salt at {self._salt_path} has wrong length ({len(data)})")
+            return
+        words = salt_to_mnemonic(data).split()
+        self._print()
+        self._warn("write these 12 words down — they recover your identity")
+        for i, word in enumerate(words, start=1):
+            self._print(f"  [{C_DIM}]{i:>2}.[/{C_DIM}] [{C_LABEL}]{word}[/{C_LABEL}]")
+        self._print()
+
     async def _on_file_offer(self, from_id: str, offer: dict) -> None:
         """Hook fired by the node when a new file offer arrives."""
         fid = offer.get("file_id", "")
@@ -859,6 +899,8 @@ class MalphasCLI:
                         await self._cmd_savefile(args)
                     elif cmd == "files":
                         await self._cmd_files(args)
+                    elif cmd == "backup":
+                        await self._cmd_backup(args)
                     elif cmd == "help":
                         self._print_help()
                     else:
