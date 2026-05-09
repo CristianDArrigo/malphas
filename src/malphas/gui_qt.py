@@ -998,6 +998,24 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         bar = self.chat_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def _is_at_bottom(self) -> bool:
+        """True if the chat scroll is within ~one bubble of the
+        bottom. Used to decide whether new messages should auto-
+        scroll: we follow the conversation if the user is already
+        reading live, but stay put if they've scrolled up to read
+        history."""
+        bar = self.chat_scroll.verticalScrollBar()
+        # 80 px ≈ one bubble + spacing. Loose enough to feel snappy.
+        return bar.value() >= bar.maximum() - 80
+
+    def _maybe_scroll_after_render(self, was_at_bottom: bool) -> None:
+        """Only auto-scroll if the user was at the bottom *before*
+        the new event was rendered. Self-sent messages always
+        scroll (the user clearly wants to see what they just sent)
+        — that case is handled by passing was_at_bottom=True."""
+        if was_at_bottom:
+            QtCore.QTimer.singleShot(0, self._scroll_to_bottom)
+
     def _render_event(self, ev: tuple) -> None:
         kind = ev[0]
         if kind == "msg":
@@ -1018,8 +1036,13 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         ev = ("msg", sender_id, text, is_self, sender_label or sender_id)
         self.conversations.setdefault(key, []).append(ev)
         if key == self.active:
+            # Always follow your own outgoing messages; for incoming
+            # ones, follow only if you were already at the bottom —
+            # otherwise we'd yank the user away from history they're
+            # mid-reading.
+            follow = is_self or self._is_at_bottom()
             self._render_event(ev)
-            QtCore.QTimer.singleShot(0, self._scroll_to_bottom)
+            self._maybe_scroll_after_render(follow)
         else:
             self.unread.add(key)
             self._refresh_sidebar()
@@ -1028,8 +1051,9 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         ev = ("sys", text)
         self.conversations.setdefault(key, []).append(ev)
         if key == self.active:
+            follow = self._is_at_bottom()
             self._render_event(ev)
-            QtCore.QTimer.singleShot(0, self._scroll_to_bottom)
+            self._maybe_scroll_after_render(follow)
 
     # ── Send ────────────────────────────────────────────────────────────────
 

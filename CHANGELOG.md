@@ -3,6 +3,36 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.8] — 2026-05-09
+
+### Qt GUI — smart auto-scroll
+
+The chat view auto-scrolled to the bottom on every new
+message. That's the right behaviour while you're reading
+live, but it yanks you out of history if you scrolled up to
+re-read something and a new message arrives.
+
+`_add_message` and `_add_system` now check `_is_at_bottom()`
+(within 80 px of the maximum, ≈ one bubble) before scrolling.
+If you're at the bottom you keep following the conversation;
+if you're scrolled up, the new bubble appears below but the
+viewport stays put.
+
+Outgoing messages always scroll — when you press Enter you
+clearly want to see what you just sent.
+
+### Audit — no other copy-paste bugs from the tk GUI
+
+After the `salt_to_mnemonic / .split()` slip in 0.11.7, did a
+sweep across all `MalphasNode` API calls used by `gui_qt.py`
+to make sure no async/sync or return-type mismatches were
+hiding elsewhere. All clean: `send_message → str | None`,
+`send_group_message → bool`, `create_group → str | None`,
+`add_group_member → bool`, `leave_group` is sync (used as
+sync), `accept_file_offer` is sync (used as sync), `panic`
+is sync, `connect_to_peer → bool`. Every call site already
+matched.
+
 ## [0.11.7] — 2026-05-09
 
 ### Fixed — mnemonic dialog: real root cause
