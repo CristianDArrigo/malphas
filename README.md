@@ -999,10 +999,19 @@ Every push and pull request runs through a stack of blocking gates:
 | Tests + coverage | `pytest --cov --cov-fail-under=65` | `[tool.coverage.*]` | regressions, branch coverage |
 | Property-based fuzz | `hypothesis` (inside tests) | per-test `@given` | parser crashes on untrusted bytes |
 
-Modules in the mypy strict bucket: `replay`, `crypto`, `memory`, `obfuscation`, `pinstore`, `invite`, `files`, `secure_buffer`. The bucket grows iteration by iteration — see `docs/auto-loop/` for the rolling log.
+Modules in the mypy strict bucket (14, ~52% of `src/`): `replay`, `crypto`, `memory`, `obfuscation`, `pinstore`, `invite`, `files`, `secure_buffer`, `discovery`, `receipts`, `ratchet`, `identity`, `onion`, `addressbook`. The bucket grows iteration by iteration — see `docs/auto-loop/` for the rolling log.
+
+The whole stack is wrapped behind a single local script that mirrors what the CI runs:
 
 ```bash
-# Run the same gates locally
+scripts/check.sh                # full stack: ruff → mypy → bandit → pytest --cov
+scripts/check.sh --quick        # skip pytest (good for pre-commit)
+scripts/check.sh --no-coverage  # pytest without coverage gate (faster)
+```
+
+The script honors a `$PYTHON` env var and falls back to `./.venv/bin/python` if that exists, otherwise to `python3`. Or run each gate by hand:
+
+```bash
 ruff check src/ tests/
 mypy src/malphas/replay.py src/malphas/crypto.py ...   # the strict bucket
 bandit -r src/malphas/ -c pyproject.toml -l

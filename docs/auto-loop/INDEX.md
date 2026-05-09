@@ -59,3 +59,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 031 | iter-031-next-target.md | Next-target (mypy strict — identity/onion/addressbook) | done |
 | 032 | iter-032-green-mypy-bucket-14.md | Green: mypy strict bucket → 14 modules | done |
 | 033 | iter-033-next-target.md | Next-target (scripts/check.sh local mirror of CI) | done |
+| 034 | iter-034-green-check-script.md | Green: scripts/check.sh local CI mirror | done |

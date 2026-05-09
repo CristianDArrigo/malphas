@@ -3,6 +3,25 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.3] — 2026-05-09
+
+### Dev tooling
+
+- New `scripts/check.sh`: single-command local mirror of the CI gate
+  stack. Runs ruff → mypy --strict (14 modules) → bandit → pytest
+  --cov in fail-fast order. Honors `$PYTHON` env var; auto-detects
+  `./.venv/bin/python` if present.
+- Flags:
+  - `--quick` — skip pytest, intended for pre-commit hooks.
+  - `--no-coverage` — run pytest without the coverage gate (faster
+    when iterating on a single test).
+- README "CI quality gates" subsection now references the script and
+  lists all 14 strict modules.
+
+### Wire format
+
+Unchanged.
+
 ## [0.5.2] — 2026-05-09
 
 ### Engineering
