@@ -147,18 +147,40 @@ decisioni architetturali o threat-model che vanno discusse con l'utente:
 
 ---
 
-## Suggerimenti per la prossima sessione
+## Update post-handoff (sessione 2 — utente di ritorno)
 
-In ordine di valore atteso:
+L'utente è tornato e ha approvato 6 work item:
 
-1. **Sealed sender** — il fix sec residuo più impattante. Wire-breaking.
-2. **Argon2 per-user salt** — chiude l'ultima bandiera del threat model.
-   Decide il trade-off zero-disk vs salt-per-user.
-3. **GUI vera** — la PWA ha gli endpoint ma manca il frontend.
-   Tauri o Textual sarebbero scelte naturali.
-4. **mypy strict per `node.py`** — l'ultimo modulo grosso senza
+| Phase | Topic | Versione | Iter |
+|-------|-------|----------|------|
+| 1 | Sealed sender (cifra `from`) | 0.6.0 wire-break | 046 |
+| 2 | Argon2 per-user salt | 0.7.0 wire-break | 047 |
+| 3 | BIP39 12-word mnemonic backup | 0.7.1 | 048 |
+| 4 | File transfer resume | 0.8.0 | 049 |
+| 5 | Group chat N-way pairwise | 0.9.0 | 050 |
+| 6 | Tkinter GUI ("fatto bene") | 0.10.0 | 051 |
+
+Tutte e 6 chiuse in modalità auto. Wire-breaking changes della
+sessione: sealed sender, per-user salt. Le altre quattro non
+rompono il wire (kind nuovi droppati silenziosamente da peer
+vecchi). Dependency runtime aggiunta: `mnemonic>=0.20`.
+
+Test totali aggiunti in questa fase: 51 (sealed_sender 9 +
+salt_store 8 + mnemonic 9 + file_resume 5 + groups 11 + gui 7 +
+extra modifications negli E2E esistenti). Strict mypy bucket: 18
+moduli. CI gate stack invariato.
+
+## Suggerimenti per la prossima sessione (residual)
+
+1. **mypy strict per `node.py`** — l'ultimo modulo grosso senza
    annotation tightening. ~100 errori da fixare.
-5. **Group chat** — feature significant, cambia il modello.
+2. **Group state persistence** cross-restart (oggi è in-memory).
+3. **Group: notify existing members on add** (oggi solo l'invitato
+   sa).
+4. **Drag-and-drop file send** nella GUI.
+5. **Web frontend** vero (oggi `--mode web` ha solo gli endpoint,
+   nessun UI).
+6. **Mobile** (Android/iOS).
 
 ---
 
@@ -167,16 +189,22 @@ In ordine di valore atteso:
 ```
 $ scripts/check.sh --quick
 ✓ ruff clean
-✓ mypy clean (14 strict + 6 lenient = 21 files)
+✓ mypy clean (18 strict + 7 lenient = 25 files)
 ✓ bandit 0 findings
 
-$ git status
-nothing to commit, working tree clean
-
-$ git log --oneline | head -3
-aa2c214 0.5.4: single source of truth for mypy strict bucket
-249514a auto-loop: iter-035 next-target ...
-f01f9a2 0.5.3: scripts/check.sh — local mirror of the CI gate stack
+$ git log --oneline | head -10
+b0da6b4 0.10.0: Tkinter desktop GUI
+5653d95 0.9.0: group chat — N-way pairwise fanout
+940c674 0.8.0: file transfer resume — receiver tells sender what to skip
+1e1c91b 0.7.1: BIP39 12-word mnemonic backup for the per-user salt
+5fe0524 0.7.0: per-user Argon2 salt (WIRE-BREAKING)
+df5331b 0.6.0: sealed sender — encrypt the `from` field (WIRE-BREAKING)
+4062eee 0.5.8: contributor templates
+2fca44c 0.5.7: __version__ from metadata, --version flag, py.typed marker
+7f11586 0.5.6: dependabot config + pre-commit mirror
+eed973d 0.5.5: cumulative SUMMARY.md for autonomous-loop session
 ```
+
+Loop autonomo totale: **39+ release** dalla v0.2.0 di partenza.
 
 Pronto per hand-off all'utente.
