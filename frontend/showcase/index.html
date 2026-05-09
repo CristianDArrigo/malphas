@@ -194,9 +194,20 @@
       color: var(--text-dim);
       letter-spacing: 0.15em;
       text-transform: uppercase;
-      margin-bottom: 48px;
+      margin-bottom: 16px;
       opacity: 0;
       animation: fadeIn 1.5s ease 0.5s forwards;
+    }
+    .hero-version {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--accent);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      margin-bottom: 48px;
+      opacity: 0;
+      animation: fadeIn 1.5s ease 0.65s forwards;
     }
 
     .hero-tagline {
@@ -558,6 +569,7 @@
     <img src="assets/malphas_sigil.png" alt="Malphas sigil" class="hero-sigil">
     <h1>malphas</h1>
     <div class="hero-subtitle">privacy-first p2p messenger</div>
+    <div class="hero-version">1.0.0-rc5 &nbsp;·&nbsp; wire format frozen</div>
     <div class="hero-tagline">
       No servers. No accounts. No logs.<br>
       End-to-end encrypted. Onion routed. Tor integrated.
@@ -620,6 +632,26 @@
         <span class="feature-icon">@</span>
         <h3>Signed invites</h3>
         <p>Run /export to generate a malphas:// URL signed with Ed25519, containing your public keys and .onion address. Your peer runs /import and connects instantly. No manual key exchange.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">[]</span>
+        <h3>Desktop GUI</h3>
+        <p>Two desktop frontends on top of the same node: a stdlib Tkinter UI (--mode gui) and a modern PySide6/Qt one (--mode gui-qt). Telegram-style bubbles, sidebar peers, file drops. CLI and a FastAPI/WebSocket web mode also ship.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">&lt;/&gt;</span>
+        <h3>File transfer</h3>
+        <p>Chunked, in-memory, SHA-256 verified, with receiver-driven resume on partial buffers. Same onion + sealed-sender pipeline as text — nothing leaks beyond the message channel.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">&amp;&amp;</span>
+        <h3>Group chat</h3>
+        <p>N-way pairwise fanout up to 50 members. Each pairwise copy carries the full 1-to-1 security: sealed sender, replay cache, ratchet, onion. Membership changes propagate via group_member_change so removed peers fall out of every sender's fanout.</p>
+      </div>
+      <div class="feature reveal">
+        <span class="feature-icon">[v]</span>
+        <h3>Reproducible builds</h3>
+        <p>Two invocations of scripts/build-reproducible.sh produce wheels with byte-identical SHA-256. Pinned hatchling, SOURCE_DATE_EPOCH from the commit, Dockerfile.build for cross-host verification.</p>
       </div>
     </div>
   </div>
@@ -813,8 +845,8 @@
       </div>
       <div class="terminal-body">
 <span class="output">$</span> <span class="cmd">sudo bash scripts/setup.sh</span>
-<span class="output">$</span> <span class="cmd">pip install -e .</span>
-<span class="output">$</span> <span class="cmd">malphas --tor --port 7777</span>
+<span class="output">$</span> <span class="cmd">pip install -e &quot;.[gui-qt]&quot;</span>      <span class="dim"># or just `pip install -e .` for CLI-only</span>
+<span class="output">$</span> <span class="cmd">malphas --mode gui-qt --tor</span>   <span class="dim"># or --mode cli / web</span>
 <span class="output">  passphrase: </span><span class="dim">••••••••••••••••••</span>
 
 <span class="prompt">&gt;</span> <span class="cmd">/export</span>
@@ -827,7 +859,17 @@
 <footer>
   <div class="container">
     <p>malphas is provided for educational and research purposes.<br>
-    Not audited. Use at your own risk.</p>
+    Single-author. Use at your own risk.</p>
+    <br>
+    <p>
+      <a href="https://github.com/CristianDArrigo/malphas/blob/main/THREAT_MODEL.md">threat model</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/CristianDArrigo/malphas/blob/main/PROTOCOL.md">protocol</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/CristianDArrigo/malphas/blob/main/CHANGELOG.md">changelog</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/CristianDArrigo/malphas/blob/main/RELEASE.md">release process</a>
+    </p>
     <br>
     <p>built by <a href="https://github.com/CristianDArrigo">Cristian D'Arrigo</a></p>
   </div>
