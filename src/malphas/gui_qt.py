@@ -632,7 +632,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         chl.setSpacing(T.PAD_MD)
 
         self.conv_avatar_holder = QtWidgets.QWidget()
-        self.conv_avatar_holder.setFixedSize(44, 44)
+        self.conv_avatar_holder.setFixedSize(40, 40)
         self.conv_avatar_holder.setAttribute(
             QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
         self.conv_avatar_holder.setStyleSheet("background: transparent;")
@@ -726,6 +726,14 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         send.setObjectName("AccentButton")
         send.setFixedSize(96, 44)
         send.clicked.connect(self._on_send)
+        # Subtle accent-tinted drop shadow so the primary CTA sits
+        # one layer above the input bar. One effect instance only —
+        # no per-row perf concern.
+        shadow = QtWidgets.QGraphicsDropShadowEffect(send)
+        shadow.setBlurRadius(20)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QtGui.QColor(T.ACCENT_DIM))
+        send.setGraphicsEffect(shadow)
         h.addWidget(send)
 
         return row
@@ -889,7 +897,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
 
         # Standalone-preview path: no node, no book.
         if self.node is None:
-            avatar = Avatar(self.active, self.active, size=44)
+            avatar = Avatar(self.active, self.active, size=40)
             self.conv_avatar_layout.addWidget(avatar)
             self.conv_title.setText(self.active)
             self.conv_sub.setText("preview")
@@ -899,7 +907,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         if group is not None:
             label = group.name
             sub = f"{group.member_count()} members"
-            avatar = Avatar(group.name, group.group_id, size=44)
+            avatar = Avatar(group.name, group.group_id, size=40)
             # Group action buttons
             add_btn = QtWidgets.QPushButton("+ Member")
             add_btn.setObjectName("GhostIcon")
@@ -914,7 +922,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
                        if self.book else None)
             label = contact.label if contact else _short(self.active, 14)
             sub = self.active
-            avatar = Avatar(label, self.active, size=44)
+            avatar = Avatar(label, self.active, size=40)
 
         self.conv_avatar_layout.addWidget(avatar)
         self.conv_title.setText(label)

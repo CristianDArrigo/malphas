@@ -3,6 +3,19 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.4] — 2026-05-09
+
+### Qt GUI — visual polish round 3
+
+- Send button gets a single `QGraphicsDropShadowEffect`
+  (blur 20, offset 0/4, accent-dim color). Lifts the primary
+  CTA one layer above the input bar without per-row overhead.
+- Conversation-header avatar reduced 44 → 40 to match
+  proportions with the title-and-sub stack; the avatar holder
+  shrinks accordingly. All other avatar sites (sidebar rows,
+  group headers, single-peer headers) re-tuned to 40 for
+  consistency.
+
 ## [0.11.3] — 2026-05-09
 
 ### Qt GUI — visual polish round 2
