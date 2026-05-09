@@ -3,6 +3,50 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.2] — 2026-05-09
+
+### GUI redesign
+
+The 0.10.0 GUI was functional but visually rough. This is a full
+restyle, same widget tree, much better defaults.
+
+- **Three-tier dark palette** (`#0e0e10` → `#16161a` → `#1d1d22`)
+  with explicit FG hierarchy (primary / muted / faint) and a single
+  accent (malphas red `#d23a3a`) for primary actions and active rows.
+- **Header bar** at the top with brand, peer_id snippet, peer/group
+  counters, and a connection-status dot.
+- **Conversation header** above the chat pane: title (label or group
+  name) + monospaced sub-line (group_id or full peer_id).
+- **Empty-state overlay** on the chat pane when no conversation is
+  selected ("Pick a conversation from the sidebar…").
+- **Two-line message layout**: timestamp + sender bold on one line,
+  message body indented underneath, blank line between rows. Much
+  easier to read than the single-line `[ts] you  text` of 0.10.0.
+- **Unread badges** in the sidebar (red dot, bold tag) for
+  conversations that received a message while not active.
+- **Custom mnemonic dialog** (Toplevel) replaces the cramped
+  `messagebox.showinfo` — a 2×6 grid of monospaced words with
+  numbers, plus a "copy to clipboard" + "done" button row.
+- **Font detection chain**: tries Inter / IBM Plex Sans / Roboto /
+  Cantarell / DejaVu Sans for chrome and JetBrains Mono / IBM Plex
+  Mono / Fira Code / Source Code Pro / Liberation Mono / Menlo /
+  DejaVu Sans Mono for chat body. Falls back to TkDefaultFont.
+- **Spacing scale** (4 / 8 / 12 / 16 / 24) applied consistently
+  across paddings, margins, and dialog layouts.
+- **Sidebar** now has a section heading ("CONVERSATIONS"), a
+  scrollbar, and two ghost-style action buttons at the bottom
+  (`+ Import invite`, `↗ Generate invite`).
+- **Keyboard shortcuts**: Ctrl+E (export), Ctrl+I (import),
+  Ctrl+Q (quit), F5 (refresh).
+- **Status bar at the bottom**: port + active conversation, distinct
+  from the header counters.
+- **Thin 1px dividers** instead of widget borders, all in
+  `#26262d` for visual coherence.
+
+### Wire format
+
+Unchanged.
+
 ## [0.10.1] — 2026-05-09
 
 ### Fixed
