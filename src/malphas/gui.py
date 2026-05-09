@@ -1253,7 +1253,15 @@ class MalphasGUI:
             dlg.error(self.root, "Invalid invite", str(e))
             return
 
-        ok = dlg.confirm(self.root, 
+        if data["peer_id"] == self.node.identity.peer_id:
+            dlg.error(
+                self.root, "That's your own invite",
+                "You can't add yourself as a contact. Share this invite "
+                "with someone else to start a conversation.",
+            )
+            return
+
+        ok = dlg.confirm(self.root,
             "Import invite",
             f"Connect to peer_id\n\n{_short(data['peer_id'], 24)}\n\n"
             f"at {data.get('host')}:{data.get('port')}?")

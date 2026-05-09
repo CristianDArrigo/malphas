@@ -96,10 +96,14 @@ class _Button(tk.Frame):
                                 padx=PAD_LG, pady=PAD_SM, cursor="hand2")
         self._label.pack(fill=tk.BOTH, expand=True)
         self.configure(width=width)
-        for w in (self, self._label):
-            w.bind("<Button-1>", self._click)
-            w.bind("<Enter>", lambda _e: self._set_bg(self._hover_bg))
-            w.bind("<Leave>", lambda _e: self._set_bg(self._bg))
+        # Bind hover/click only on the inner Label. The Label fully
+        # covers the Frame, so Enter/Leave on it is the only cross-
+        # boundary the cursor can make. Binding on both produced a
+        # flicker because Tk fires Leave-on-parent + Enter-on-child
+        # whenever the cursor moves from Frame border into the Label.
+        self._label.bind("<Button-1>", self._click)
+        self._label.bind("<Enter>", lambda _e: self._set_bg(self._hover_bg))
+        self._label.bind("<Leave>", lambda _e: self._set_bg(self._bg))
 
     @staticmethod
     def _colors(variant: str) -> tuple[str, str, str]:

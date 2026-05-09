@@ -3,6 +3,22 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.8] — 2026-05-09
+
+### Fixed
+
+- **Self-import guard.** Importing your own invite into the
+  address book is now blocked at `_action_import` with a clear
+  error: pasting your own invite text would have created a
+  contact pointing at yourself, which never makes sense.
+- **Dialog button hover flicker.** `_Button` in `gui_dialogs`
+  bound `<Enter>` / `<Leave>` on both the outer `Frame` *and*
+  the inner `Label`. When the cursor crossed from the Frame
+  border into the Label, Tk fired `Leave` on the parent and
+  `Enter` on the child in quick succession, producing a one-
+  frame flash. Bindings now live only on the Label (which fully
+  covers the Frame).
+
 ## [0.10.7] — 2026-05-09
 
 ### GUI — custom dialogs + toasts (no more native popups)
