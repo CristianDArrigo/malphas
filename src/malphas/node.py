@@ -54,6 +54,19 @@ MSG_PEER_ANNOUNCE = 0x07
 
 HEADER_LEN = 5   # type(1) + length(4)
 
+# Authentication-type prefix on the inner authenticated payload
+# (post-onion-peel, post-padding-strip). Exactly one byte; the receiver
+# dispatches on this byte to pick the right authentication path.
+# Wire format introduced in v0.4.0 — older clients (<= 0.3.x) won't be
+# able to decode messages from new clients and vice-versa.
+AUTH_RATCHET = b"R"   # b"R" || header(40) || ratchet ciphertext
+AUTH_HMAC    = b"H"   # b"H" || tag(32)    || JSON payload bytes
+AUTH_ED25519 = b"E"   # b"E" || sig(64)    || JSON payload bytes
+
+HMAC_TAG_LEN     = 32
+ED25519_SIG_LEN  = 64
+RATCHET_HEADER_LEN = 40
+
 # Payload kinds (inside decrypted onion)
 KIND_MESSAGE     = "msg"
 KIND_RECEIPT     = "receipt"
@@ -74,6 +87,32 @@ def _unpack_header(data: bytes):
         return None, None
     msg_type, length = struct.unpack(">BI", data[:HEADER_LEN])
     return msg_type, length
+
+
+def _wrap_authenticated(
+    payload_bytes: bytes,
+    dest_conn: "PeerConnection | None",
+    identity: Identity,
+) -> bytes:
+    """
+    Authenticate `payload_bytes` with the strongest method available
+    on the connection and prepend the auth-type prefix.
+
+    Selection order: ratchet → HMAC → Ed25519 (last-resort, fallback
+    when no symmetric session has been negotiated, e.g. immediately
+    after a fresh handshake handed off into a paired-but-pre-DH state).
+
+    Returns: AUTH_TAG (1B) || material || payload (or for ratchet,
+    AUTH_RATCHET || header(40) || ciphertext — the JSON is encrypted).
+    """
+    if dest_conn and dest_conn.ratchet and dest_conn.ratchet._send_chain_key:
+        header, ciphertext = dest_conn.ratchet.encrypt(payload_bytes)
+        return AUTH_RATCHET + header.serialize() + ciphertext
+    if dest_conn and dest_conn.hmac_key:
+        tag = hmac_sign(dest_conn.hmac_key, payload_bytes)
+        return AUTH_HMAC + tag + payload_bytes
+    sig = identity.sign(payload_bytes)
+    return AUTH_ED25519 + sig + payload_bytes
 
 
 def _snapshot_ratchet(r: "RatchetState") -> dict:
@@ -365,15 +404,9 @@ class MalphasNode:
         payload_bytes = json.dumps(payload_dict).encode()
 
         dest_conn = self._connections.get(dest_peer_id)
-        if dest_conn and dest_conn.ratchet and dest_conn.ratchet._send_chain_key:
-            header, ciphertext = dest_conn.ratchet.encrypt(payload_bytes)
-            authenticated = b"R" + header.serialize() + ciphertext
-        elif dest_conn and dest_conn.hmac_key:
-            tag = hmac_sign(dest_conn.hmac_key, payload_bytes)
-            authenticated = tag + payload_bytes
-        else:
-            tag = self.identity.sign(payload_bytes)
-            authenticated = tag + payload_bytes
+        authenticated = _wrap_authenticated(
+            payload_bytes, dest_conn, self.identity
+        )
 
         padded = pad_payload(authenticated)
         packet = wrap_onion(padded, circuit)
@@ -439,15 +472,9 @@ class MalphasNode:
         # The inner Ed25519 sig (in the JSON "sig" field) provides
         # non-repudiation for the receipt itself.
         sender_conn = self._connections.get(from_id)
-        if sender_conn and sender_conn.ratchet and sender_conn.ratchet._send_chain_key:
-            header, ciphertext = sender_conn.ratchet.encrypt(payload_bytes)
-            authenticated = b"R" + header.serialize() + ciphertext
-        elif sender_conn and sender_conn.hmac_key:
-            tag = hmac_sign(sender_conn.hmac_key, payload_bytes)
-            authenticated = tag + payload_bytes
-        else:
-            tag = self.identity.sign(payload_bytes)
-            authenticated = tag + payload_bytes
+        authenticated = _wrap_authenticated(
+            payload_bytes, sender_conn, self.identity
+        )
         padded = pad_payload(authenticated)
 
         # Route back to sender if we have them in routing table
@@ -542,34 +569,41 @@ class MalphasNode:
         if is_cover(signed):
             return  # silently drop — this is correct behavior
 
-        # Check for ratchet-encrypted payload: b"R" + header(40) + ciphertext
-        if len(signed) > 41 and signed[0:1] == b"R":
-            header_bytes = signed[1:41]
-            ciphertext = signed[41:]
+        # Dispatch on the auth-type prefix byte. Wire format is set in v0.4.0:
+        #   b"R" || ratchet_header(40) || ratchet_ciphertext
+        #   b"H" || hmac_tag(32)       || JSON payload
+        #   b"E" || ed25519_sig(64)    || JSON payload
+        # Anything else, or a payload too short to carry the minimum, is
+        # dropped silently. This eliminates the trial-JSON-parse offset
+        # heuristic the previous wire format relied on.
+        if not signed:
+            return
+        prefix = signed[0:1]
+
+        if prefix == AUTH_RATCHET:
+            if len(signed) <= 1 + RATCHET_HEADER_LEN:
+                return
+            header_bytes = signed[1:1 + RATCHET_HEADER_LEN]
+            ciphertext = signed[1 + RATCHET_HEADER_LEN:]
             header = MessageHeader.deserialize(header_bytes)
 
-            # Try each connection's ratchet to find the right one.
-            # Ratchet decrypt is stateful, so we must protect against
-            # corrupting state on a wrong-connection attempt.  We save
-            # the mutable fields before the attempt and restore on failure.
-            for peer_id, conn in list(self._connections.items()):
+            # Trial-decrypt across each connection's ratchet. State is
+            # snapshotted before each attempt so a wrong-connection try
+            # cannot corrupt the receiver-state of the right one.
+            for _peer_id, conn in list(self._connections.items()):
                 if not conn.ratchet:
                     continue
                 ratchet = conn.ratchet
-                # Snapshot mutable ratchet state before trial decrypt
                 snap = _snapshot_ratchet(ratchet)
                 try:
                     payload_bytes = ratchet.decrypt(header, ciphertext)
                 except Exception:
-                    # Restore ratchet state — this attempt was wrong
                     _restore_ratchet(ratchet, snap)
                     continue
 
-                # Decryption succeeded — parse and verify sender
                 try:
                     data = json.loads(payload_bytes.decode())
                 except Exception:
-                    # Decrypted to garbage — restore and skip
                     _restore_ratchet(ratchet, snap)
                     continue
 
@@ -579,45 +613,28 @@ class MalphasNode:
                     _restore_ratchet(ratchet, snap)
                     continue
 
-                # Verify sender is known
                 peer = self.discovery.get_peer(from_id)
                 if not peer:
                     _restore_ratchet(ratchet, snap)
                     continue
 
-                # Success — deliver via the central kind dispatch
                 await self._dispatch_kind(data, from_id, peer)
                 return
-
             # No ratchet could decrypt — drop
             return
 
-        # Authenticated payload: tag + JSON
-        # Tag is either 32 bytes (HMAC-SHA256, deniable) or 64 bytes (Ed25519, legacy)
-        # We try HMAC first (preferred), then Ed25519 fallback.
-        if len(signed) < 33:  # minimum: 32-byte HMAC + 1 byte JSON
-            return
-
-        # Try to parse JSON at offset 32 (HMAC) and 64 (Ed25519)
-        tag = None
-        payload_bytes = None
-        tag_len = 0
-
-        for tl in (32, 64):
-            if len(signed) < tl + 1:
-                continue
-            try:
-                candidate = signed[tl:]
-                json.loads(candidate.decode())
-                tag = signed[:tl]
-                payload_bytes = candidate
-                tag_len = tl
-                break
-            except Exception:
-                continue
-
-        if tag is None or payload_bytes is None:
-            return
+        if prefix == AUTH_HMAC:
+            if len(signed) < 1 + HMAC_TAG_LEN + 1:
+                return
+            tag = signed[1:1 + HMAC_TAG_LEN]
+            payload_bytes = signed[1 + HMAC_TAG_LEN:]
+        elif prefix == AUTH_ED25519:
+            if len(signed) < 1 + ED25519_SIG_LEN + 1:
+                return
+            tag = signed[1:1 + ED25519_SIG_LEN]
+            payload_bytes = signed[1 + ED25519_SIG_LEN:]
+        else:
+            return  # unknown prefix — drop
 
         try:
             data = json.loads(payload_bytes.decode())
@@ -626,30 +643,29 @@ class MalphasNode:
 
         kind = data.get("kind")
         from_id = data.get("from", "")
-
         if not kind or not from_id:
             return
 
-        # Verify authentication — mandatory. Unknown senders are dropped.
         peer = self.discovery.get_peer(from_id)
         if not peer:
             return  # unknown sender — drop silently
 
-        if tag_len == 32:
-            # HMAC verification — use the connection's hmac_key
+        # Verify the auth tag matches the declared method.
+        if prefix == AUTH_HMAC:
             sender_conn = self._connections.get(from_id)
             if not sender_conn or not sender_conn.hmac_key:
-                return  # no HMAC key available — drop
+                return
             if not hmac_verify(sender_conn.hmac_key, payload_bytes, tag):
-                return  # HMAC mismatch — drop
+                return
         else:
-            # Ed25519 fallback
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                Ed25519PublicKey,
+            )
             try:
                 pub = Ed25519PublicKey.from_public_bytes(peer.ed25519_pub)
                 pub.verify(tag, payload_bytes)
             except Exception:
-                return  # invalid signature — drop
+                return
 
         await self._dispatch_kind(data, from_id, peer)
 
@@ -849,15 +865,9 @@ class MalphasNode:
         payload_bytes = json.dumps(payload_dict).encode()
 
         dest_conn = self._connections.get(dest_peer_id)
-        if dest_conn and dest_conn.ratchet and dest_conn.ratchet._send_chain_key:
-            header, ciphertext = dest_conn.ratchet.encrypt(payload_bytes)
-            authenticated = b"R" + header.serialize() + ciphertext
-        elif dest_conn and dest_conn.hmac_key:
-            tag = hmac_sign(dest_conn.hmac_key, payload_bytes)
-            authenticated = tag + payload_bytes
-        else:
-            tag = self.identity.sign(payload_bytes)
-            authenticated = tag + payload_bytes
+        authenticated = _wrap_authenticated(
+            payload_bytes, dest_conn, self.identity
+        )
 
         padded = pad_payload(authenticated)
         packet = wrap_onion(padded, circuit)

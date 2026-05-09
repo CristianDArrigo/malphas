@@ -3,6 +3,47 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.4.0] — 2026-05-09 — WIRE-BREAKING
+
+### Wire format
+
+Inner authenticated payload (post-onion-peel, post-padding-strip) is now
+prefixed with an explicit one-byte auth-type tag:
+
+```
+prev (0.3.x):   tag(32 HMAC | 64 Ed25519) || JSON
+                or  b"R" || ratchet_header(40) || ciphertext
+
+now  (0.4.0):   b"H" || tag(32) || JSON
+                b"E" || sig(64) || JSON
+                b"R" || ratchet_header(40) || ciphertext
+```
+
+A 0.4.0 client cannot decode a 0.3.x message and vice versa — there is
+no compatibility shim by design. Upgrade both peers before the cut-over.
+
+### Security
+
+- Eliminates the trial-JSON-parse heuristic the previous receiver used
+  to discriminate HMAC (32-byte tag) from Ed25519 (64-byte sig). A
+  carefully-crafted payload could in principle fool that heuristic
+  into picking the wrong path. The explicit prefix removes the
+  ambiguity.
+- The ratchet path (`b"R"`) was already prefixed and is unchanged at
+  the wire level beyond living next to the new prefixes.
+
+### Internal
+
+- New module-level helper `_wrap_authenticated(payload, conn, identity)`
+  centralizes the selection (ratchet → HMAC → Ed25519) and prepends
+  the right prefix. Three call sites in `node.py` now share one path.
+- New constants `AUTH_RATCHET = b"R"`, `AUTH_HMAC = b"H"`,
+  `AUTH_ED25519 = b"E"`, `HMAC_TAG_LEN = 32`, `ED25519_SIG_LEN = 64`,
+  `RATCHET_HEADER_LEN = 40` replace the previous magic numbers.
+- `_deliver` no longer probes JSON at offsets 32 / 64; it dispatches
+  directly on the prefix byte.
+- 269+ tests still green (full focused suite passed locally).
+
 ## [0.3.7] — 2026-05-09
 
 ### Documentation
