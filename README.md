@@ -123,6 +123,13 @@ Every design decision in malphas follows from a small set of principles, stated 
 
 ## Threat Model
 
+> **`1.0.0-rc1` · wire format frozen 2026-05-09 · not externally
+> reviewed.** The summary below is a short version of the full
+> [`THREAT_MODEL.md`](THREAT_MODEL.md). Reviewers and operators
+> should read the full document; it grades each guarantee against
+> five distinct adversary profiles and lists every known weakness
+> with a tracking ID.
+
 malphas is designed to protect against the following adversaries:
 
 **Protected against:**

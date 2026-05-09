@@ -3,6 +3,58 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [1.0.0-rc1] — 2026-05-09
+
+### Wire format frozen — release candidate
+
+After ~four wire-breaking minors in two months (sealed sender,
+per-user salt, BIP39, group fanout) the protocol is now declared
+**frozen** at `WIRE_VERSION = 1`. Future breaking changes go to
+`2.0.0` and through a deprecation window; everything else is
+additive (PROTOCOL.md §10).
+
+### Added
+
+- `THREAT_MODEL.md` — five adversary profiles (A1-A5),
+  guarantees / non-guarantees table, attack-scenarios grid,
+  TCB inventory, eleven tracked weakness IDs (TM-01 … TM-11).
+- `PROTOCOL.md` — the authoritative wire-format spec. Covers
+  every byte: identity derivation, outer frame, handshake
+  JSON, onion layering, `auth_type` byte values, every `kind`
+  value, sealed-sender envelope, on-disk formats. Versioning
+  rules and freeze policy in §10. Reviewer-ready.
+- `REVIEW_REQUEST.md` — self-contained brief for an external
+  cryptographer / security engineer. Lists what to look at,
+  where, and the seven open questions the author has.
+- `RELEASE.md` — pre-release checklist, signed-tag procedure,
+  reproducible-build gap tracker.
+- `WIRE_VERSION = 1` exposed at `malphas.WIRE_VERSION` and
+  `malphas.node.WIRE_VERSION`.
+- Handshake JSON now carries `"v": <int>`. Receiver lenient
+  on missing (legacy peer, accepted), strict on mismatch
+  (future bump = refuse to connect).
+- README threat-model section now points at the full
+  `THREAT_MODEL.md`.
+
+### Status
+
+This is a release candidate, **not externally reviewed**. Use
+in production at your own risk. Stable `1.0.0` ships when
+REVIEW_REQUEST.md closes its review cycle and the high-severity
+findings (if any) are resolved.
+
+### Known limps tracked for `1.0.0` final
+
+(See THREAT_MODEL.md §5 for the full list with severity.)
+
+- TM-01: group chat lacks MLS / no key rotation on member
+  removal. Workaround documented; iter-055 will land a
+  `member_ratchet` kind.
+- TM-05: constant-time-compare audit not yet end-to-end.
+- TM-08: builds not yet reproducible.
+- TM-11: one pre-existing CLI test failure
+  (`Mock(_groups)`).
+
 ## [0.11.8] — 2026-05-09
 
 ### Qt GUI — smart auto-scroll

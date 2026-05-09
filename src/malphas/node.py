@@ -47,6 +47,12 @@ from .sealed_sender import seal as seal_from
 from .sealed_sender import unseal as unseal_from
 from .transport import BaseTransport, DirectTransport
 
+# Wire-protocol version. Bumped when the byte-level layout of
+# anything in PROTOCOL.md sections 4-9 changes. Frozen at 1 from
+# release `1.0.0-rc1` onward; further changes go through the
+# additive-only rules in PROTOCOL.md §10.
+WIRE_VERSION = 1
+
 # Wire message types
 MSG_HANDSHAKE     = 0x01
 MSG_HANDSHAKE_ACK = 0x02
@@ -1235,6 +1241,7 @@ class MalphasNode:
             eph_sig = self.identity.sign(eph_pub)
 
             hello = json.dumps({
+                "v": WIRE_VERSION,
                 "eph_pub": eph_pub.hex(),
                 "eph_sig": eph_sig.hex(),
                 "peer_id": self.identity.peer_id,
@@ -1255,6 +1262,14 @@ class MalphasNode:
                 return False
 
             their_data = json.loads(their_hello.decode())
+
+            # Wire-version check. Lenient on missing (pre-1.0.0-rc1
+            # peers don't send it); strict on mismatch (a future
+            # bump means the protocol changed, refuse to talk).
+            their_v = their_data.get("v")
+            if their_v is not None and their_v != WIRE_VERSION:
+                return False
+
             their_eph = bytes.fromhex(their_data["eph_pub"])
             their_eph_sig = bytes.fromhex(their_data["eph_sig"])
             their_x25519 = bytes.fromhex(their_data["x25519_pub"])
