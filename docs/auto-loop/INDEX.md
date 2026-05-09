@@ -36,3 +36,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 009 | iter-009-next-target.md | Next-target selection (file transfer staged) | done |
 | 010a | iter-010-plan-file-transfer.md | Plan: file transfer chunked | done |
 | 010b | iter-010-green-file-transfer.md | Green: file transfer chunked | done |
+| 011 | iter-011-next-target.md | Next-target selection (CLI commands) | done |
