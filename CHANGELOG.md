@@ -3,6 +3,52 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.1] — 2026-05-09
+
+### Qt GUI — full feature parity with the tkinter GUI
+
+The Qt port from 0.11.0 is now a working chat client, not just a
+shell. Everything the tk GUI does, the Qt GUI does.
+
+- Asyncio bridge wired. on_message / on_receipt /
+  on_pin_violation / on_file_offer / on_file_complete /
+  on_group_invite / on_group_message all push events onto a
+  queue.Queue, drained on the GUI thread by a 50 ms QTimer.
+- Sidebar populated from address-book contacts + unsaved
+  discovered peers + groups. Live search filter on label /
+  peer_id / group name.
+- Per-conversation chat history (self.conversations dict);
+  switching peer rehydrates the bubble scrollview.
+- Send / receive: direct messages and group messages. Outgoing
+  bubble (right, accent red), incoming bubble (left, with hashed
+  avatar), system events in centered italic pills.
+- File transfer round-trip: QFileDialog for picking outgoing
+  file, QMessageBox.question for incoming offer, accept_file_offer
+  on yes, getSaveFileName for completed bytes.
+- Invite flow: generate (clipboard + info popup), import
+  (clipboard parse + self-invite guard + connect + optional save
+  to address book via QInputDialog).
+- Group ops: create, add member, leave.
+- Mnemonic backup: word-grid dialog with copy-to-clipboard.
+- About dialog with sigil, version, peer_id, GitHub link.
+- Auto-reconnect at launch fans out every saved contact.
+- Tor lock indicator: green padlock in header when the node has
+  a public .onion; hidden otherwise.
+- Status bar refreshed every 1 s with port and active label.
+
+### Fixed in this iter
+
+- Standalone preview (launch_qt_gui() with no node) now also
+  populates the conversation header and renders an avatar; the
+  earlier guard returned before drawing when book is None.
+- Tor lock used a CSS property toggle that left the glyph
+  half-rendered when off; switched to plain setVisible.
+
+### Internal
+
+- QListWidgetItem isn't hashable; sidebar key now stored on the
+  item via setData(UserRole+1, key) instead of a dict.
+
 ## [0.11.0] — 2026-05-09
 
 ### Added — PySide6/Qt GUI skeleton
