@@ -1,10 +1,13 @@
 """
 Tkinter desktop GUI for malphas.
 
-The asyncio loop that drives the MalphasNode runs in a background
-daemon thread (`AsyncBridge`). The Tk thread keeps the mainloop and
-polls a `queue.Queue` every 50 ms to consume node-side callbacks
-without blocking either side.
+Telegram/WhatsApp-flavored chat layout: bubble messages, circular
+peer avatars, search-filtered sidebar, vector icon buttons (no
+emoji), the malphas sigil PNG bundled as a package asset.
+
+The asyncio loop that drives MalphasNode runs in a background daemon
+thread (`AsyncBridge`). The Tk thread keeps the mainloop and polls a
+`queue.Queue` every 50 ms to consume node-side callbacks.
 
 Entry point: `launch_gui(node, book, bridge, salt_path)`.
 """
@@ -12,7 +15,7 @@ Entry point: `launch_gui(node, book, bridge, salt_path)`.
 from __future__ import annotations
 
 import asyncio
-import math
+import hashlib
 import queue
 import threading
 import time
@@ -20,40 +23,61 @@ import tkinter as tk
 import tkinter.font as tkfont
 import webbrowser
 from concurrent.futures import Future
+from importlib.resources import files
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any
 
 from .addressbook import AddressBook, Contact
+from .gui_icons import (
+    IconButton,
+    draw_alert,
+    draw_copy,
+    draw_door_out,
+    draw_lock,
+    draw_paperclip,
+    draw_plus,
+    draw_search,
+    draw_send,
+    draw_share,
+    draw_user_plus,
+    draw_users,
+)
 from .invite import generate_invite, parse_invite
 from .mnemonic import salt_to_mnemonic
 from .node import MalphasNode
 from .salt_store import SALT_LEN
 
 # ── Design system ────────────────────────────────────────────────────────────
-#
-# Three-tier dark palette with intentionally amplified contrast between
-# tiers, plus accent-tinted hover/active states. Tk is intrinsically
-# flat — depth here comes from layering (BG_BASE → BG_SURFACE → BG_RAISED),
-# divider lines, and accent borders on selection.
 
-BG_BASE     = "#0a0a0d"   # window background
-BG_SURFACE  = "#15151a"   # sidebars, header, status bar
-BG_RAISED   = "#22232a"   # chat pane, input row, dialogs
-BG_HOVER    = "#2a2b34"   # sidebar item hover
-BG_ACTIVE   = "#33141a"   # sidebar item active (accent-tinted)
-BG_DIVIDER  = "#34343d"   # 1px lines
+# Three-tier dark palette + dedicated bubble colors.
+BG_BASE     = "#0a0a0d"
+BG_SURFACE  = "#15151a"
+BG_RAISED   = "#1c1c22"
+BG_HOVER    = "#2a2b34"
+BG_ACTIVE   = "#33141a"
+BG_DIVIDER  = "#2c2c34"
+
+BUBBLE_THEM = "#26262e"     # incoming
+BUBBLE_YOU  = "#5e1c1c"     # outgoing (deep red)
+BUBBLE_SYS  = "#1f2026"     # system
 
 FG_PRIMARY  = "#ececec"
 FG_MUTED    = "#9a9a9a"
 FG_FAINT    = "#5e5e68"
 
-ACCENT      = "#d23a3a"   # malphas red
+ACCENT      = "#d23a3a"
 ACCENT_DIM  = "#7a2222"
 ACCENT_GLOW = "#ff5555"
 OK_GREEN    = "#5cb85c"
 WARN_AMBER  = "#e0a830"
 INFO_CYAN   = "#5b9fd8"
+
+# Avatar palette — distinct, well-saturated, hashed by peer_id.
+AVATAR_PALETTE = [
+    "#c44e4e", "#c47e4e", "#c4a44e", "#7eb84e", "#4eb88a",
+    "#4e9bc4", "#4e72c4", "#7e4ec4", "#b84e9b", "#b8584e",
+]
 
 PAD_XS = 4
 PAD_SM = 8
@@ -61,74 +85,81 @@ PAD_MD = 12
 PAD_LG = 16
 PAD_XL = 24
 
-WIN_W = 1200
-WIN_H = 780
-SIDEBAR_W = 280
+WIN_W = 1240
+WIN_H = 800
+SIDEBAR_W = 320
 
 GITHUB_URL = "https://github.com/CristianDArrigo/malphas"
 
 
-# ── Malphas seal (drawn via Canvas, no asset file) ───────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def draw_malphas_seal(c: tk.Canvas, cx: float, cy: float, r: float,
-                      ring: str, mark: str, dot: str) -> None:
-    """Render an abstract Malphas-style demonic seal centered at (cx, cy)
-    with outer radius `r`. Three concentric rings, an inverted triangle,
-    a hexagram inside, four cardinal dots on the outer ring, a thin
-    pin-down central spear.
-    """
-    # Outer ring (thick)
-    c.create_oval(cx - r, cy - r, cx + r, cy + r,
-                  outline=ring, width=max(2, int(r / 24)))
-    # Mid ring (thin)
-    rm = r * 0.78
-    c.create_oval(cx - rm, cy - rm, cx + rm, cy + rm,
-                  outline=mark, width=1)
-    # Inner ring (thin, smaller)
-    rs = r * 0.34
-    c.create_oval(cx - rs, cy - rs, cx + rs, cy + rs,
-                  outline=mark, width=1)
+def _short(peer_id: str, n: int = 12) -> str:
+    return peer_id[:n] + ("…" if len(peer_id) > n else "")
 
-    # Inverted equilateral triangle (▽) inscribed in the mid ring
-    pts = []
-    for i in range(3):
-        angle = math.pi / 2 + 2 * math.pi * i / 3 + math.pi  # rotate so apex is down
-        pts.extend([cx + rm * math.cos(angle),
-                    cy + rm * math.sin(angle)])
-    c.create_polygon(*pts, outline=mark, fill="",
-                     width=max(1, int(r / 32)))
 
-    # Hexagram (Star of Solomon) inside — two overlapping triangles
-    rh = r * 0.50
-    pts1, pts2 = [], []
-    for i in range(3):
-        a1 = math.pi / 2 + 2 * math.pi * i / 3
-        a2 = -math.pi / 2 + 2 * math.pi * i / 3
-        pts1.extend([cx + rh * math.cos(a1), cy + rh * math.sin(a1)])
-        pts2.extend([cx + rh * math.cos(a2), cy + rh * math.sin(a2)])
-    c.create_polygon(*pts1, outline=ring, fill="", width=1)
-    c.create_polygon(*pts2, outline=ring, fill="", width=1)
+def _ts() -> str:
+    return time.strftime("%H:%M")
 
-    # Vertical descending spear inside (Malphas iconography hint)
-    c.create_line(cx, cy - rs * 0.85, cx, cy + r * 0.92,
-                  fill=ring, width=1)
-    # Cross-bar near the spear's top (small)
-    c.create_line(cx - rs * 0.35, cy - rs * 0.55,
-                  cx + rs * 0.35, cy - rs * 0.55,
-                  fill=ring, width=1)
 
-    # 4 cardinal dots on the outer ring
-    for angle in (math.pi / 2, -math.pi / 2, 0.0, math.pi):
-        x = cx + r * math.cos(angle)
-        y = cy + r * math.sin(angle)
-        d = max(2.0, r / 18)
-        c.create_oval(x - d, y - d, x + d, y + d, fill=dot, outline="")
+def _pick_font(root: tk.Misc, candidates: list[str]) -> str:
+    available = set(tkfont.families(root))
+    for name in candidates:
+        if name in available:
+            return name
+    return "TkDefaultFont"
 
-    # Central dot
-    cd = max(2.0, r / 22)
-    c.create_oval(cx - cd, cy - cd, cx + cd, cy + cd,
-                  fill=dot, outline="")
+
+def _avatar_color(peer_id: str) -> str:
+    """Deterministic color from peer_id hash."""
+    h = hashlib.blake2s(peer_id.encode("utf-8"), digest_size=4).digest()
+    idx = int.from_bytes(h, "big") % len(AVATAR_PALETTE)
+    return AVATAR_PALETTE[idx]
+
+
+def _avatar_initial(label: str) -> str:
+    label = label.strip()
+    if not label:
+        return "?"
+    return label[0].upper()
+
+
+def _load_sigil() -> tk.PhotoImage | None:
+    """Load the bundled malphas-sigil.png. Returns None if missing
+    (e.g. installed without assets, dev tree without copy).
+
+    Tk's PhotoImage accepts `file=` for a filesystem path (the typical
+    editable install or wheel-on-disk case) and `data=` only for
+    base64-encoded bytes. We prefer the file path; fall back to base64
+    when the resource is virtual (zipapp / packaged wheel)."""
+    import base64
+    try:
+        path = files("malphas").joinpath("assets/sigil.png")
+        on_disk = str(path)
+        try:
+            if Path(on_disk).is_file():
+                return tk.PhotoImage(file=on_disk)
+        except Exception:
+            pass
+        # Resource lives inside a zip/wheel: read bytes, base64-encode,
+        # hand to PhotoImage as data.
+        with path.open("rb") as f:
+            raw = f.read()
+        return tk.PhotoImage(data=base64.b64encode(raw).decode("ascii"))
+    except Exception:
+        return None
+
+
+def _scale_photo(img: tk.PhotoImage, target: int) -> tk.PhotoImage:
+    """Subsample a PhotoImage to approximately `target` pixels per side."""
+    src = img.width()
+    if src <= 0 or target <= 0:
+        return img
+    factor = max(1, src // target)
+    if factor > 1:
+        return img.subsample(factor, factor)
+    return img
 
 
 # ── AsyncBridge ──────────────────────────────────────────────────────────────
@@ -169,101 +200,118 @@ class AsyncBridge:
         self._thread.join(timeout=timeout)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Avatar widget ────────────────────────────────────────────────────────────
 
 
-def _short(peer_id: str, n: int = 12) -> str:
-    return peer_id[:n] + ("…" if len(peer_id) > n else "")
+class Avatar(tk.Canvas):
+    """A circular avatar with a single-letter initial.
+
+    Color derived deterministically from peer_id (or group_id).
+    """
+
+    def __init__(self, parent: tk.Misc, label: str, key: str,
+                 size: int = 36, bg: str = BG_SURFACE,
+                 font: tkfont.Font | None = None) -> None:
+        super().__init__(parent, width=size, height=size, bg=bg,
+                          highlightthickness=0, bd=0)
+        color = _avatar_color(key)
+        # Filled circle
+        self.create_oval(2, 2, size - 2, size - 2, fill=color, outline="")
+        # Initial
+        f = font or tkfont.Font(family="TkDefaultFont",
+                                  size=max(9, int(size * 0.40)),
+                                  weight="bold")
+        self.create_text(size / 2, size / 2,
+                         text=_avatar_initial(label),
+                         fill=FG_PRIMARY, font=f)
 
 
-def _ts() -> str:
-    return time.strftime("%H:%M")
-
-
-def _pick_font(root: tk.Misc, candidates: list[str]) -> str:
-    available = set(tkfont.families(root))
-    for name in candidates:
-        if name in available:
-            return name
-    return "TkDefaultFont"
-
-
-# ── Sidebar item (custom widget) ─────────────────────────────────────────────
+# ── Sidebar item ─────────────────────────────────────────────────────────────
 
 
 class SidebarItem(tk.Frame):
-    """A clickable conversation row with hover + active states.
+    """A clickable conversation row: avatar + title/subtitle + unread.
 
-    Layered on plain tk.Frame so we can paint a left accent bar when
-    selected (Treeview can't do that), and switch background on
-    enter/leave for proper hover feedback.
+    Hover and active states; left accent bar on active.
     """
 
     def __init__(
         self,
         parent: tk.Misc,
-        glyph: str,
+        kind: str,             # "peer" | "group"
+        key: str,              # peer_id or group_id
         title: str,
         subtitle: str,
         unread: bool,
-        on_click: Any,
+        on_click,
         font_body: tkfont.Font,
         font_small: tkfont.Font,
     ) -> None:
         super().__init__(parent, bg=BG_SURFACE, bd=0, highlightthickness=0)
         self._on_click = on_click
         self._active = False
+        self._kind = kind
+        self.key = key
 
-        # Left accent bar (hidden when inactive — same color as bg).
         self._bar = tk.Frame(self, bg=BG_SURFACE, width=3)
         self._bar.pack(side=tk.LEFT, fill=tk.Y)
 
-        # Inner padding container
         self._inner = tk.Frame(self, bg=BG_SURFACE)
         self._inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
                           padx=PAD_MD, pady=PAD_SM)
 
-        # Glyph (●, ◦, ▣)
-        self._glyph = tk.Label(self._inner, text=glyph, bg=BG_SURFACE,
-                                fg=FG_MUTED, font=font_body)
-        self._glyph.pack(side=tk.LEFT, padx=(0, PAD_SM))
+        # Avatar
+        self._avatar = Avatar(self._inner, title, key, size=36, bg=BG_SURFACE)
+        self._avatar.pack(side=tk.LEFT, padx=(0, PAD_MD))
 
-        # Title + subtitle stacked
         text_box = tk.Frame(self._inner, bg=BG_SURFACE)
         text_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self._title = tk.Label(text_box, text=title, bg=BG_SURFACE,
+        title_row = tk.Frame(text_box, bg=BG_SURFACE)
+        title_row.pack(fill=tk.X)
+        self._title = tk.Label(title_row, text=title, bg=BG_SURFACE,
                                 fg=FG_PRIMARY, font=font_body, anchor="w")
-        self._title.pack(side=tk.TOP, fill=tk.X, anchor="w")
-        if subtitle:
-            self._sub = tk.Label(text_box, text=subtitle, bg=BG_SURFACE,
-                                  fg=FG_FAINT, font=font_small, anchor="w")
-            self._sub.pack(side=tk.TOP, fill=tk.X, anchor="w")
-        else:
-            self._sub = None
+        self._title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # Group tag (small "GROUP" badge for group rows)
+        if kind == "group":
+            tk.Label(title_row, text="GROUP", bg=BG_SURFACE, fg=INFO_CYAN,
+                      font=font_small).pack(side=tk.RIGHT)
 
-        # Unread badge on the right
-        self._badge = tk.Label(self._inner, text="●" if unread else "",
+        self._sub = tk.Label(text_box, text=subtitle, bg=BG_SURFACE,
+                              fg=FG_FAINT, font=font_small, anchor="w")
+        self._sub.pack(fill=tk.X)
+
+        # Unread badge container (to the right of the avatar/text row)
+        self._badge_text = tk.StringVar(value="●" if unread else "")
+        self._badge = tk.Label(self._inner, textvariable=self._badge_text,
                                 bg=BG_SURFACE,
                                 fg=ACCENT if unread else BG_SURFACE,
                                 font=font_small)
         self._badge.pack(side=tk.RIGHT)
 
-        # Bind click + hover on every child (Tk doesn't propagate)
-        for w in (self, self._bar, self._inner, self._glyph,
-                  self._title, self._badge,
-                  *([self._sub] if self._sub else [])):
-            w.bind("<Button-1>", self._click)
-            w.bind("<Enter>", self._enter)
-            w.bind("<Leave>", self._leave)
+        # Bind click + hover on every leaf
+        self._bind_recursive(self)
+
+    def _bind_recursive(self, w: tk.Misc) -> None:
+        w.bind("<Button-1>", self._click)
+        w.bind("<Enter>", self._enter)
+        w.bind("<Leave>", self._leave)
+        for child in w.winfo_children():
+            self._bind_recursive(child)
 
     def _bg(self, color: str) -> None:
-        for w in (self, self._inner, self._glyph, self._title, self._badge):
-            w.configure(bg=color)
-        if self._sub:
-            self._sub.configure(bg=color)
-        # Inner text_box parent of title/sub
+        for w in (self, self._inner, self._title, self._sub, self._badge,
+                  self._avatar):
+            try:
+                w.configure(bg=color)
+            except tk.TclError:
+                pass
+        # text_box
         try:
             self._title.master.configure(bg=color)
+        except tk.TclError:
+            pass
+        try:
+            self._title.master.master.configure(bg=color)
         except tk.TclError:
             pass
 
@@ -291,6 +339,153 @@ class SidebarItem(tk.Frame):
             self._bar.configure(bg=BG_SURFACE)
 
 
+# ── Message bubble ───────────────────────────────────────────────────────────
+
+
+class MessageBubble(tk.Frame):
+    """A single chat bubble — left for them, right for you, full-width
+    for system. Includes timestamp under the bubble.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        sender: str,           # display name (or "" for system)
+        body: str,
+        kind: str,             # "you" | "them" | "system"
+        font_body: tkfont.Font,
+        font_small: tkfont.Font,
+        color: str | None = None,
+        avatar_key: str | None = None,
+    ) -> None:
+        super().__init__(parent, bg=BG_RAISED)
+
+        if kind == "system":
+            row = tk.Frame(self, bg=BG_RAISED)
+            row.pack(fill=tk.X, pady=(PAD_SM, PAD_SM))
+            inner = tk.Frame(row, bg=BUBBLE_SYS)
+            inner.pack(anchor="center")
+            tk.Label(inner, text=body, bg=BUBBLE_SYS,
+                      fg=FG_MUTED, font=font_small,
+                      padx=PAD_MD, pady=PAD_XS).pack()
+            return
+
+        is_self = (kind == "you")
+        bubble_bg = BUBBLE_YOU if is_self else BUBBLE_THEM
+        align = "e" if is_self else "w"
+
+        row = tk.Frame(self, bg=BG_RAISED)
+        row.pack(fill=tk.X, padx=PAD_LG, pady=(PAD_XS, 0))
+
+        # Avatar on the left for "them"; we omit it for "you" to keep
+        # outgoing aligned right.
+        if not is_self and avatar_key:
+            av = Avatar(row, sender, avatar_key, size=32, bg=BG_RAISED)
+            av.pack(side=tk.LEFT, anchor="n", padx=(0, PAD_SM))
+
+        bubble_wrap = tk.Frame(row, bg=BG_RAISED)
+        bubble_wrap.pack(side=tk.RIGHT if is_self else tk.LEFT,
+                          anchor=align, fill=tk.NONE, expand=False)
+
+        bubble = tk.Frame(bubble_wrap, bg=bubble_bg)
+        bubble.pack(anchor=align)
+
+        # Sender name (for them, or for groups where color hint helps)
+        if not is_self and sender:
+            tk.Label(bubble, text=sender, bg=bubble_bg,
+                      fg=color or ACCENT, font=font_small,
+                      padx=PAD_MD, pady=(PAD_XS, 0),
+                      anchor="w").pack(fill=tk.X)
+
+        # Body. Use a Label with wraplength so long messages wrap.
+        body_label = tk.Label(bubble, text=body, bg=bubble_bg,
+                               fg=FG_PRIMARY, font=font_body,
+                               wraplength=560, justify="left",
+                               padx=PAD_MD,
+                               pady=PAD_SM if not (sender and not is_self) else PAD_XS,
+                               anchor="w")
+        body_label.pack(fill=tk.X)
+
+        # Timestamp under the bubble
+        ts_label = tk.Label(bubble_wrap, text=_ts(), bg=BG_RAISED,
+                             fg=FG_FAINT, font=font_small)
+        ts_label.pack(anchor=align, padx=PAD_XS, pady=(2, 0))
+
+
+# ── Scrollable chat container ────────────────────────────────────────────────
+
+
+class ChatPane(tk.Frame):
+    """A vertically scrollable list of widgets (MessageBubble instances).
+
+    Built on a Canvas + inner Frame so we can pack arbitrary widgets
+    (not just text rows) and they all scroll together.
+    """
+
+    def __init__(self, parent: tk.Misc) -> None:
+        super().__init__(parent, bg=BG_RAISED)
+        self._canvas = tk.Canvas(self, bg=BG_RAISED, highlightthickness=0,
+                                  bd=0)
+        self._sb = ttk.Scrollbar(self, orient="vertical",
+                                  command=self._canvas.yview,
+                                  style="Vertical.TScrollbar")
+        self._canvas.configure(yscrollcommand=self._sb.set)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.inner = tk.Frame(self._canvas, bg=BG_RAISED)
+        self._win = self._canvas.create_window((0, 0), window=self.inner,
+                                                 anchor="nw")
+
+        self._canvas.bind("<Configure>", self._on_canvas_resize)
+        self.inner.bind("<Configure>", self._on_inner_resize)
+
+        self._canvas.bind(
+            "<Enter>",
+            lambda e: self._canvas.bind_all("<MouseWheel>", self._on_wheel),
+        )
+        self._canvas.bind(
+            "<Leave>",
+            lambda e: self._canvas.unbind_all("<MouseWheel>"),
+        )
+        # Linux: Button-4/5
+        self._canvas.bind(
+            "<Enter>",
+            lambda e: (
+                self._canvas.bind_all("<MouseWheel>", self._on_wheel),
+                self._canvas.bind_all("<Button-4>",
+                                       lambda ev: self._canvas.yview_scroll(-1, "units")),
+                self._canvas.bind_all("<Button-5>",
+                                       lambda ev: self._canvas.yview_scroll(1, "units")),
+            ),
+            add="+",
+        )
+
+    def _on_canvas_resize(self, event: tk.Event) -> None:
+        self._canvas.itemconfigure(self._win, width=event.width)
+
+    def _on_inner_resize(self, _event: object) -> None:
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _on_wheel(self, event: tk.Event) -> None:
+        try:
+            self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except tk.TclError:
+            pass
+
+    def clear(self) -> None:
+        for child in self.inner.winfo_children():
+            child.destroy()
+
+    def add_widget(self, w: tk.Misc) -> None:
+        w.pack(fill=tk.X)
+        self.scroll_to_end()
+
+    def scroll_to_end(self) -> None:
+        self.update_idletasks()
+        self._canvas.yview_moveto(1.0)
+
+
 # ── MalphasGUI ───────────────────────────────────────────────────────────────
 
 
@@ -307,22 +502,31 @@ class MalphasGUI:
         self.bridge = bridge
         self.salt_path = salt_path
         self.active: str | None = None
-        self._scrollback: dict[str, list[tuple[str, str]]] = {}
+        # Per-conversation list of (kind, sender, body, color, ts) tuples,
+        # so we can re-render the chat pane on selection switch.
+        self._scrollback: dict[str, list[dict[str, Any]]] = {}
         self._pending_offers: dict[str, tuple[str, dict]] = {}
         self._completed_files: dict[str, tuple[str, str, bytes]] = {}
         self._unread: set[str] = set()
         self._sidebar_items: dict[str, SidebarItem] = {}
+        self._search_query = ""
         self.event_queue: queue.Queue = queue.Queue()
 
         self.root = tk.Tk()
         self.root.title(f"malphas — {_short(node.identity.peer_id, 16)}")
         self.root.geometry(f"{WIN_W}x{WIN_H}")
-        self.root.minsize(860, 580)
+        self.root.minsize(900, 600)
         self.root.configure(bg=BG_BASE)
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
 
         self._init_fonts()
         self._setup_style()
+        self._sigil_full = _load_sigil()
+        # Pre-scaled images for the various spots that show the sigil.
+        self._sigil_header = _scale_photo(self._sigil_full, 28) if self._sigil_full else None
+        self._sigil_empty  = _scale_photo(self._sigil_full, 180) if self._sigil_full else None
+        self._sigil_dialog = _scale_photo(self._sigil_full, 110) if self._sigil_full else None
+
         self._build_ui()
         self._wire_callbacks()
 
@@ -343,7 +547,7 @@ class MalphasGUI:
         ])
         self.f_body  = tkfont.Font(family=sans, size=10)
         self.f_bold  = tkfont.Font(family=sans, size=10, weight="bold")
-        self.f_h1    = tkfont.Font(family=sans, size=14, weight="bold")
+        self.f_h1    = tkfont.Font(family=sans, size=15, weight="bold")
         self.f_h2    = tkfont.Font(family=sans, size=11, weight="bold")
         self.f_small = tkfont.Font(family=sans, size=9)
         self.f_tiny  = tkfont.Font(family=sans, size=8)
@@ -367,11 +571,6 @@ class MalphasGUI:
 
         s.configure("TLabel", background=BG_BASE, foreground=FG_PRIMARY)
         s.configure("Surface.TLabel", background=BG_SURFACE, foreground=FG_PRIMARY)
-        s.configure("Heading.TLabel", background=BG_SURFACE,
-                    foreground=FG_FAINT, font=self.f_tiny,
-                    padding=(PAD_MD, PAD_LG, PAD_MD, PAD_XS))
-        s.configure("Title.TLabel", background=BG_SURFACE,
-                    foreground=FG_PRIMARY, font=self.f_h1)
         s.configure("Status.TLabel", background=BG_SURFACE,
                     foreground=FG_MUTED, font=self.f_small,
                     padding=(PAD_MD, PAD_SM))
@@ -393,6 +592,10 @@ class MalphasGUI:
         s.configure("TEntry", fieldbackground=BG_RAISED, foreground=FG_PRIMARY,
                     insertcolor=ACCENT, borderwidth=0,
                     padding=(PAD_MD, PAD_SM), font=self.f_body)
+        s.configure("Search.TEntry", fieldbackground=BG_HOVER,
+                    foreground=FG_PRIMARY, insertcolor=ACCENT,
+                    borderwidth=0, padding=(PAD_MD, PAD_SM),
+                    font=self.f_body)
 
         s.configure("Vertical.TScrollbar", background=BG_SURFACE,
                     troughcolor=BG_SURFACE, borderwidth=0, arrowsize=12)
@@ -405,7 +608,7 @@ class MalphasGUI:
         self._build_menubar()
         self._build_header()
 
-        body = ttk.Frame(self.root)
+        body = tk.Frame(self.root, bg=BG_BASE)
         body.pack(fill=tk.BOTH, expand=True)
 
         self._build_sidebar(body)
@@ -419,9 +622,12 @@ class MalphasGUI:
                           borderwidth=0, font=self.f_body)
         self.root.config(menu=menubar)
 
-        m_file = tk.Menu(menubar, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
-                         activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
-                         font=self.f_body)
+        def mk(parent: tk.Menu) -> tk.Menu:
+            return tk.Menu(parent, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
+                            activebackground=ACCENT_DIM,
+                            activeforeground=FG_PRIMARY, font=self.f_body)
+
+        m_file = mk(menubar)
         m_file.add_command(label="Generate invite (copy to clipboard)",
                            command=self._action_export, accelerator="Ctrl+E")
         m_file.add_command(label="Import invite from clipboard…",
@@ -436,25 +642,21 @@ class MalphasGUI:
         m_file.add_command(label="Quit", command=self._on_quit, accelerator="Ctrl+Q")
         menubar.add_cascade(label="File", menu=m_file)
 
-        m_view = tk.Menu(menubar, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
-                         activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
-                         font=self.f_body)
-        m_view.add_command(label="Refresh peer list", command=self._refresh_sidebar,
-                           accelerator="F5")
+        m_view = mk(menubar)
+        m_view.add_command(label="Refresh peer list",
+                           command=self._refresh_sidebar, accelerator="F5")
         menubar.add_cascade(label="View", menu=m_view)
 
-        m_group = tk.Menu(menubar, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
-                          activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
-                          font=self.f_body)
-        m_group.add_command(label="Create new group…", command=self._action_group_new)
+        m_group = mk(menubar)
+        m_group.add_command(label="Create new group…",
+                            command=self._action_group_new)
         m_group.add_command(label="Add member to active group…",
                             command=self._action_group_add)
-        m_group.add_command(label="Leave active group", command=self._action_group_leave)
+        m_group.add_command(label="Leave active group",
+                            command=self._action_group_leave)
         menubar.add_cascade(label="Group", menu=m_group)
 
-        m_help = tk.Menu(menubar, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
-                         activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
-                         font=self.f_body)
+        m_help = mk(menubar)
         m_help.add_command(label="About malphas", command=self._action_about)
         m_help.add_command(label="Open GitHub repo",
                            command=lambda: webbrowser.open(GITHUB_URL))
@@ -466,41 +668,53 @@ class MalphasGUI:
         self.root.bind("<F5>", lambda e: self._refresh_sidebar())
 
     def _build_header(self) -> None:
-        header = tk.Frame(self.root, bg=BG_SURFACE, height=60)
+        header = tk.Frame(self.root, bg=BG_SURFACE, height=64)
         header.pack(fill=tk.X, side=tk.TOP)
         header.pack_propagate(False)
 
-        # Left: small seal + brand + peer_id
+        # Left: sigil + brand + peer_id
         left = tk.Frame(header, bg=BG_SURFACE)
         left.pack(side=tk.LEFT, fill=tk.Y, padx=(PAD_LG, 0))
 
-        seal = tk.Canvas(left, width=36, height=36, bg=BG_SURFACE,
-                          highlightthickness=0, bd=0)
-        seal.pack(side=tk.LEFT, pady=PAD_MD)
-        draw_malphas_seal(seal, 18, 18, 16, ACCENT, FG_PRIMARY, ACCENT)
-
+        if self._sigil_header is not None:
+            tk.Label(left, image=self._sigil_header, bg=BG_SURFACE
+                      ).pack(side=tk.LEFT, pady=PAD_MD)
         text_box = tk.Frame(left, bg=BG_SURFACE)
         text_box.pack(side=tk.LEFT, padx=(PAD_MD, 0), pady=PAD_MD)
         tk.Label(text_box, text="malphas", bg=BG_SURFACE, fg=FG_PRIMARY,
                   font=self.f_h1).pack(anchor="w")
         tk.Label(text_box, text=_short(self.node.identity.peer_id, 16),
-                  bg=BG_SURFACE, fg=FG_MUTED, font=self.f_mono_sm).pack(anchor="w")
+                  bg=BG_SURFACE, fg=FG_MUTED, font=self.f_mono_sm
+                  ).pack(anchor="w")
 
-        # Right: connection dot + counters
+        # Right: lock icon (security indicator) + counters + dot
         right = tk.Frame(header, bg=BG_SURFACE)
         right.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, PAD_LG))
 
         rwrap = tk.Frame(right, bg=BG_SURFACE)
         rwrap.pack(side=tk.RIGHT, pady=PAD_MD)
+
+        # Connection status dot
         self.dot = tk.Label(rwrap, text="●", bg=BG_SURFACE, fg=FG_FAINT,
                              font=self.f_body)
         self.dot.pack(side=tk.RIGHT, padx=(PAD_SM, 0))
+
+        # Counters
         self.header_status_var = tk.StringVar()
         tk.Label(rwrap, textvariable=self.header_status_var,
                   bg=BG_SURFACE, fg=FG_MUTED, font=self.f_small
-                  ).pack(side=tk.RIGHT)
+                  ).pack(side=tk.RIGHT, padx=(0, PAD_SM))
 
-        # Bottom 1px divider
+        # Tor lock indicator (only shown if we're on .onion)
+        self._lock_btn = IconButton(
+            rwrap, drawer=draw_lock, on_click=lambda: None,
+            size=24, bg=BG_SURFACE, hover_bg=BG_SURFACE,
+            color=OK_GREEN, hover_color=OK_GREEN,
+            variant="ghost",
+            tooltip="end-to-end encrypted",
+        )
+        self._lock_btn.pack(side=tk.RIGHT, padx=(0, PAD_SM))
+
         tk.Frame(self.root, height=1, bg=BG_DIVIDER).pack(fill=tk.X, side=tk.TOP)
 
     def _build_sidebar(self, parent: tk.Misc) -> None:
@@ -508,20 +722,48 @@ class MalphasGUI:
         sidebar.pack(side=tk.LEFT, fill=tk.Y)
         sidebar.pack_propagate(False)
 
-        # Vertical divider on the right edge
-        # (placed by parent layout — see _build_main)
-        # Heading
-        tk.Label(sidebar, text="CONVERSATIONS", bg=BG_SURFACE, fg=FG_FAINT,
-                  font=self.f_tiny, anchor="w").pack(
-                      anchor="w", padx=PAD_MD, pady=(PAD_LG, PAD_SM))
+        # Search row
+        search_wrap = tk.Frame(sidebar, bg=BG_SURFACE)
+        search_wrap.pack(fill=tk.X, padx=PAD_MD, pady=(PAD_MD, PAD_SM))
 
-        # Scrollable container
+        # Search icon (left of entry)
+        search_icon = tk.Canvas(search_wrap, width=20, height=20,
+                                  bg=BG_HOVER, highlightthickness=0, bd=0)
+        search_icon.pack(side=tk.LEFT, fill=tk.Y, ipady=PAD_XS)
+        draw_search(search_icon, 2, 2, 16, FG_MUTED)
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", self._on_search_change)
+        search_entry = ttk.Entry(search_wrap, textvariable=self.search_var,
+                                  style="Search.TEntry")
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=PAD_XS)
+
+        # Action buttons row
+        actions = tk.Frame(sidebar, bg=BG_SURFACE)
+        actions.pack(fill=tk.X, padx=PAD_MD, pady=(0, PAD_SM))
+
+        IconButton(actions, drawer=draw_share, on_click=self._action_export,
+                   size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                   color=FG_MUTED, hover_color=FG_PRIMARY,
+                   tooltip="Generate invite").pack(side=tk.LEFT, padx=(0, PAD_XS))
+        IconButton(actions, drawer=draw_plus, on_click=self._action_import,
+                   size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                   color=FG_MUTED, hover_color=FG_PRIMARY,
+                   tooltip="Import invite from clipboard"
+                   ).pack(side=tk.LEFT, padx=(0, PAD_XS))
+        IconButton(actions, drawer=draw_users, on_click=self._action_group_new,
+                   size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                   color=FG_MUTED, hover_color=FG_PRIMARY,
+                   tooltip="Create new group").pack(side=tk.LEFT)
+
+        # Conversations list (scrollable)
         scroll_wrap = tk.Frame(sidebar, bg=BG_SURFACE)
         scroll_wrap.pack(fill=tk.BOTH, expand=True)
 
         canvas = tk.Canvas(scroll_wrap, bg=BG_SURFACE, highlightthickness=0,
                             bd=0)
-        sb = ttk.Scrollbar(scroll_wrap, orient="vertical", command=canvas.yview,
+        sb = ttk.Scrollbar(scroll_wrap, orient="vertical",
+                            command=canvas.yview,
                             style="Vertical.TScrollbar")
         canvas.configure(yscrollcommand=sb.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -533,133 +775,104 @@ class MalphasGUI:
             (0, 0), window=self._sidebar_inner, anchor="nw"
         )
 
-        def _resize(event: object) -> None:
-            canvas.itemconfigure(self._sidebar_window, width=canvas.winfo_width())
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        canvas.bind("<Configure>", _resize)
+        canvas.bind("<Configure>",
+                     lambda e: canvas.itemconfigure(self._sidebar_window,
+                                                     width=e.width))
         self._sidebar_inner.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
         )
-        # Mousewheel on hover
         canvas.bind("<Enter>",
-                     lambda e: canvas.bind_all("<MouseWheel>", self._on_mousewheel))
+                     lambda e: canvas.bind_all("<MouseWheel>",
+                                                 self._on_sidebar_wheel))
         canvas.bind("<Leave>",
                      lambda e: canvas.unbind_all("<MouseWheel>"))
 
-        # Bottom action area
-        actions = tk.Frame(sidebar, bg=BG_SURFACE)
-        actions.pack(fill=tk.X, padx=PAD_MD, pady=PAD_MD)
-        ttk.Button(actions, text="+  Import invite", style="Ghost.TButton",
-                    command=self._action_import).pack(fill=tk.X, pady=(0, PAD_XS))
-        ttk.Button(actions, text="↗  Generate invite", style="Ghost.TButton",
-                    command=self._action_export).pack(fill=tk.X)
-
-        # Vertical divider between sidebar and main
+        # Vertical divider on the right edge
         tk.Frame(parent, width=1, bg=BG_DIVIDER).pack(side=tk.LEFT, fill=tk.Y)
 
-    def _on_mousewheel(self, event: tk.Event) -> None:
+    def _on_sidebar_wheel(self, event: tk.Event) -> None:
         try:
-            self._sidebar_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            self._sidebar_canvas.yview_scroll(int(-1 * (event.delta / 120)),
+                                                "units")
         except tk.TclError:
             pass
+
+    def _on_search_change(self, *args: object) -> None:
+        self._search_query = self.search_var.get().strip().lower()
+        self._refresh_sidebar()
 
     def _build_main(self, parent: tk.Misc) -> None:
         main = tk.Frame(parent, bg=BG_BASE)
         main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Conversation header
-        self.conv_header = tk.Frame(main, bg=BG_SURFACE, height=60)
+        # Conversation header (peer / group title bar)
+        self.conv_header = tk.Frame(main, bg=BG_SURFACE, height=64)
         self.conv_header.pack(fill=tk.X, side=tk.TOP)
         self.conv_header.pack_propagate(False)
 
-        title_box = tk.Frame(self.conv_header, bg=BG_SURFACE)
-        title_box.pack(side=tk.LEFT, fill=tk.Y, padx=PAD_LG, pady=PAD_SM)
-        self.conv_title_var = tk.StringVar(value="No conversation")
-        self.conv_sub_var = tk.StringVar(value="")
-        tk.Label(title_box, textvariable=self.conv_title_var, bg=BG_SURFACE,
-                  fg=FG_PRIMARY, font=self.f_h2, anchor="w").pack(anchor="w")
-        tk.Label(title_box, textvariable=self.conv_sub_var, bg=BG_SURFACE,
-                  fg=FG_MUTED, font=self.f_mono_sm, anchor="w").pack(anchor="w")
+        self.conv_header_inner = tk.Frame(self.conv_header, bg=BG_SURFACE)
+        self.conv_header_inner.pack(fill=tk.BOTH, expand=True,
+                                     padx=PAD_LG, pady=PAD_SM)
 
         tk.Frame(main, height=1, bg=BG_DIVIDER).pack(fill=tk.X, side=tk.TOP)
 
-        # Chat area (with empty-state overlay)
-        chat_frame = tk.Frame(main, bg=BG_RAISED)
-        chat_frame.pack(fill=tk.BOTH, expand=True)
+        # Chat area: ChatPane + empty-state overlay
+        self.chat_area = tk.Frame(main, bg=BG_RAISED)
+        self.chat_area.pack(fill=tk.BOTH, expand=True)
 
-        self.chat = tk.Text(chat_frame, bg=BG_RAISED, fg=FG_PRIMARY,
-                             insertbackground=ACCENT, borderwidth=0,
-                             padx=PAD_XL, pady=PAD_LG, wrap=tk.WORD,
-                             state=tk.DISABLED, font=self.f_mono,
-                             highlightthickness=0, spacing1=2, spacing3=4)
-        chat_sb = ttk.Scrollbar(chat_frame, orient="vertical",
-                                 command=self.chat.yview,
-                                 style="Vertical.TScrollbar")
-        self.chat.configure(yscrollcommand=chat_sb.set)
-        self.chat.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        chat_sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.chat.tag_configure("you",        foreground=FG_PRIMARY)
-        self.chat.tag_configure("them",       foreground=FG_PRIMARY)
-        self.chat.tag_configure("name_you",   foreground=FG_MUTED, font=self.f_bold)
-        self.chat.tag_configure("name_them",  foreground=ACCENT,   font=self.f_bold)
-        self.chat.tag_configure("ts",         foreground=FG_FAINT, font=self.f_small)
-        self.chat.tag_configure("system",     foreground=WARN_AMBER, font=self.f_small)
-        self.chat.tag_configure("group",      foreground=INFO_CYAN, font=self.f_bold)
-        self.chat.tag_configure("ok",         foreground=OK_GREEN, font=self.f_small)
-        self.chat.tag_configure("err",        foreground=ACCENT,   font=self.f_small)
+        self.chat_pane = ChatPane(self.chat_area)
+        self.chat_pane.pack(fill=tk.BOTH, expand=True)
 
-        # Empty-state: a Canvas with the seal + tagline
-        self.empty_canvas = tk.Canvas(chat_frame, bg=BG_RAISED,
-                                       highlightthickness=0, bd=0)
-
+        # Empty-state overlay (Frame above the ChatPane)
+        self.empty_frame = tk.Frame(self.chat_area, bg=BG_RAISED)
+        if self._sigil_empty is not None:
+            tk.Label(self.empty_frame, image=self._sigil_empty, bg=BG_RAISED
+                      ).pack(pady=(PAD_XL * 2, PAD_LG))
+        tk.Label(self.empty_frame, text="malphas", bg=BG_RAISED,
+                  fg=FG_MUTED, font=self.f_h1).pack()
+        tk.Label(self.empty_frame, text="pick a conversation, "
+                                          "or import an invite to start",
+                  bg=BG_RAISED, fg=FG_FAINT, font=self.f_body
+                  ).pack(pady=(PAD_XS, 0))
         self._show_empty(True)
-        chat_frame.bind("<Configure>", self._on_chat_resize)
 
-        # Input row
-        input_wrap = tk.Frame(main, bg=BG_RAISED)
-        input_wrap.pack(fill=tk.X, side=tk.BOTTOM)
+        # Input row at the bottom
         tk.Frame(main, height=1, bg=BG_DIVIDER).pack(fill=tk.X, side=tk.BOTTOM)
+        input_wrap = tk.Frame(main, bg=BG_SURFACE)
+        input_wrap.pack(fill=tk.X, side=tk.BOTTOM)
 
-        input_inner = tk.Frame(input_wrap, bg=BG_RAISED)
-        input_inner.pack(fill=tk.X, padx=PAD_LG, pady=PAD_LG)
+        input_inner = tk.Frame(input_wrap, bg=BG_SURFACE)
+        input_inner.pack(fill=tk.X, padx=PAD_LG, pady=PAD_MD)
 
+        # File button (left)
+        IconButton(input_inner, drawer=draw_paperclip,
+                   on_click=self._action_send_file,
+                   size=36, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                   color=FG_MUTED, hover_color=FG_PRIMARY,
+                   tooltip="Send a file").pack(side=tk.LEFT, padx=(0, PAD_SM))
+
+        # Entry container (rounded look via bg + padding)
+        entry_wrap = tk.Frame(input_inner, bg=BG_RAISED)
+        entry_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, PAD_SM))
         self.input_var = tk.StringVar()
-        self.entry = ttk.Entry(input_inner, textvariable=self.input_var,
-                                font=self.f_mono)
-        self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True,
-                         padx=(0, PAD_SM), ipady=PAD_XS)
+        self.entry = tk.Entry(entry_wrap, textvariable=self.input_var,
+                                bg=BG_RAISED, fg=FG_PRIMARY,
+                                insertbackground=ACCENT,
+                                relief=tk.FLAT, font=self.f_body, bd=0,
+                                highlightthickness=0)
+        self.entry.pack(fill=tk.X, padx=PAD_MD, pady=PAD_SM, ipady=4)
         self.entry.bind("<Return>", self._on_send)
 
-        ttk.Button(input_inner, text="📎  file", style="Ghost.TButton",
-                    command=self._action_send_file).pack(side=tk.LEFT, padx=(0, PAD_XS))
-        ttk.Button(input_inner, text="send", style="Accent.TButton",
-                    command=self._on_send).pack(side=tk.LEFT)
-
-    def _on_chat_resize(self, event: tk.Event) -> None:
-        if not self.empty_canvas.winfo_ismapped():
-            return
-        self._draw_empty()
-
-    def _draw_empty(self) -> None:
-        c = self.empty_canvas
-        c.delete("all")
-        w = c.winfo_width()
-        h = c.winfo_height()
-        if w < 50 or h < 50:
-            return
-        cx, cy = w / 2, h / 2 - 30
-        r = min(w, h) * 0.18
-        r = max(60.0, min(140.0, r))
-        draw_malphas_seal(c, cx, cy, r, ACCENT, FG_FAINT, ACCENT_DIM)
-        # Tagline
-        c.create_text(cx, cy + r + PAD_LG * 2,
-                       text="malphas",
-                       fill=FG_MUTED, font=self.f_h1)
-        c.create_text(cx, cy + r + PAD_LG * 2 + 28,
-                       text="pick a conversation, or import an invite",
-                       fill=FG_FAINT, font=self.f_body)
+        # Send button (right, accent variant)
+        IconButton(input_inner, drawer=draw_send,
+                   on_click=self._on_send,
+                   size=36, bg=ACCENT, hover_bg=ACCENT,
+                   accent_bg=ACCENT, accent_hover=ACCENT_GLOW,
+                   color=FG_PRIMARY, hover_color=FG_PRIMARY,
+                   accent_color=FG_PRIMARY,
+                   variant="accent",
+                   tooltip="Send (Enter)").pack(side=tk.LEFT)
 
     def _build_statusbar(self) -> None:
         tk.Frame(self.root, height=1, bg=BG_DIVIDER).pack(fill=tk.X, side=tk.BOTTOM)
@@ -670,11 +883,60 @@ class MalphasGUI:
 
     def _show_empty(self, on: bool) -> None:
         if on:
-            self.empty_canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
-            # draw after a tick so winfo_width has been resolved
-            self.root.after(50, self._draw_empty)
+            self.empty_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
         else:
-            self.empty_canvas.place_forget()
+            self.empty_frame.place_forget()
+
+    # ── Conversation header ─────────────────────────────────────────────────
+
+    def _redraw_conv_header(self) -> None:
+        for child in self.conv_header_inner.winfo_children():
+            child.destroy()
+        if not self.active:
+            tk.Label(self.conv_header_inner, text="No conversation selected",
+                      bg=BG_SURFACE, fg=FG_MUTED, font=self.f_h2,
+                      anchor="w").pack(side=tk.LEFT)
+            return
+
+        group = self.node._groups.get_by_id(self.active)
+        if group is not None:
+            label = group.name
+            sub = (f"group · {group.member_count()} members · "
+                   f"{_short(group.group_id, 16)}")
+            avatar_key = group.group_id
+        else:
+            contact = self.book.get_by_peer_id(self.active)
+            label = contact.label if contact else "(unsaved peer)"
+            sub = _short(self.active, 32)
+            avatar_key = self.active
+
+        # Avatar
+        Avatar(self.conv_header_inner, label, avatar_key, size=44,
+                bg=BG_SURFACE).pack(side=tk.LEFT, padx=(0, PAD_MD))
+
+        # Title + sub
+        text_box = tk.Frame(self.conv_header_inner, bg=BG_SURFACE)
+        text_box.pack(side=tk.LEFT, fill=tk.Y)
+        tk.Label(text_box, text=label, bg=BG_SURFACE, fg=FG_PRIMARY,
+                  font=self.f_h2, anchor="w").pack(anchor="w")
+        tk.Label(text_box, text=sub, bg=BG_SURFACE, fg=FG_MUTED,
+                  font=self.f_mono_sm, anchor="w").pack(anchor="w")
+
+        # Right side: group action buttons (only when active is group)
+        if group is not None:
+            right = tk.Frame(self.conv_header_inner, bg=BG_SURFACE)
+            right.pack(side=tk.RIGHT, fill=tk.Y)
+            IconButton(right, drawer=draw_user_plus,
+                        on_click=self._action_group_add,
+                        size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                        color=FG_MUTED, hover_color=FG_PRIMARY,
+                        tooltip="Add member to group"
+                        ).pack(side=tk.LEFT, padx=(PAD_XS, 0))
+            IconButton(right, drawer=draw_door_out,
+                        on_click=self._action_group_leave,
+                        size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                        color=FG_MUTED, hover_color=FG_PRIMARY,
+                        tooltip="Leave group").pack(side=tk.LEFT, padx=(PAD_XS, 0))
 
     # ── Event drain ────────────────────────────────────────────────────────
 
@@ -692,8 +954,11 @@ class MalphasGUI:
         if kind == "message":
             self._on_msg(ev[1], ev[2])
         elif kind == "receipt":
-            self._append_chat(ev[2], "ok" if ev[3] else "err",
-                              "    " + ("✓ delivered" if ev[3] else "✗ no receipt"))
+            ok = ev[3]
+            self._add_system(ev[2],
+                             "delivered" if ok else "no receipt",
+                             icon=draw_send if ok else draw_alert,
+                             color=OK_GREEN if ok else WARN_AMBER)
         elif kind == "pin_violation":
             messagebox.showerror(
                 "Key mismatch",
@@ -723,8 +988,8 @@ class MalphasGUI:
                 contact = self.book.get_by_peer_id(self.active)
                 active_label = contact.label if contact else _short(self.active)
         onion = self.node.transport.public_address or ""
-        tor_marker = "  ·  tor" if onion.endswith(".onion") else ""
-
+        is_tor = onion.endswith(".onion")
+        tor_marker = "  ·  tor" if is_tor else ""
         n_groups = len(self.node._groups.all_groups())
         self.header_status_var.set(
             f"{n_peers} peer{'s' if n_peers != 1 else ''}"
@@ -738,51 +1003,60 @@ class MalphasGUI:
         self.root.after(1000, self._refresh_status)
 
     def _refresh_sidebar(self) -> None:
-        # Clear previous items
+        # Wipe
         for child in self._sidebar_inner.winfo_children():
             child.destroy()
         self._sidebar_items = {}
 
-        # PEERS section
-        tk.Label(self._sidebar_inner, text="PEERS", bg=BG_SURFACE,
-                  fg=FG_FAINT, font=self.f_tiny, anchor="w").pack(
-                      anchor="w", padx=PAD_MD, pady=(PAD_SM, PAD_XS))
+        q = self._search_query
 
+        def matches(*fields: str) -> bool:
+            if not q:
+                return True
+            return any(q in f.lower() for f in fields if f)
+
+        peers_added = 0
         seen: set[str] = set()
         for c in self.book.all():
+            if not matches(c.label, c.peer_id):
+                continue
             seen.add(c.peer_id)
-            sub = _short(c.peer_id, 12)
+            sub = _short(c.peer_id, 18)
             item = SidebarItem(
-                self._sidebar_inner, glyph="●", title=c.label, subtitle=sub,
+                self._sidebar_inner, kind="peer", key=c.peer_id,
+                title=c.label, subtitle=sub,
                 unread=c.peer_id in self._unread,
                 on_click=lambda pid=c.peer_id: self._select(pid),
                 font_body=self.f_body, font_small=self.f_mono_sm,
             )
             item.pack(fill=tk.X)
             self._sidebar_items[c.peer_id] = item
+            peers_added += 1
 
         for p in self.node.discovery.all_peers():
             pid = p["peer_id"]
             if pid in seen:
                 continue
+            if not matches(pid):
+                continue
             item = SidebarItem(
-                self._sidebar_inner, glyph="◦", title=_short(pid, 12),
-                subtitle="(unsaved)",
+                self._sidebar_inner, kind="peer", key=pid,
+                title=_short(pid, 12), subtitle="(unsaved)",
                 unread=pid in self._unread,
                 on_click=lambda x=pid: self._select(x),
                 font_body=self.f_body, font_small=self.f_mono_sm,
             )
             item.pack(fill=tk.X)
             self._sidebar_items[pid] = item
+            peers_added += 1
 
-        # GROUPS section
-        tk.Label(self._sidebar_inner, text="GROUPS", bg=BG_SURFACE,
-                  fg=FG_FAINT, font=self.f_tiny, anchor="w").pack(
-                      anchor="w", padx=PAD_MD, pady=(PAD_LG, PAD_XS))
-
+        groups_added = 0
         for g in self.node._groups.all_groups():
+            if not matches(g.name, g.group_id):
+                continue
             item = SidebarItem(
-                self._sidebar_inner, glyph="▣", title=g.name,
+                self._sidebar_inner, kind="group", key=g.group_id,
+                title=g.name,
                 subtitle=f"{g.member_count()} members",
                 unread=g.group_id in self._unread,
                 on_click=lambda gid=g.group_id: self._select(gid),
@@ -790,22 +1064,19 @@ class MalphasGUI:
             )
             item.pack(fill=tk.X)
             self._sidebar_items[g.group_id] = item
+            groups_added += 1
 
-        # Empty state
-        if not self.book.all() and not self.node._groups.all_groups() \
-                and not self.node.discovery.all_peers():
-            tk.Label(self._sidebar_inner,
-                      text="No peers yet.\nImport an invite to start.",
-                      bg=BG_SURFACE, fg=FG_FAINT, font=self.f_small,
-                      justify="center"
+        if peers_added == 0 and groups_added == 0:
+            empty_text = ("No matches" if q else
+                          "No conversations yet.\nImport an invite to start.")
+            tk.Label(self._sidebar_inner, text=empty_text, bg=BG_SURFACE,
+                      fg=FG_FAINT, font=self.f_small, justify="center"
                       ).pack(pady=PAD_XL, padx=PAD_LG)
 
-        # Mark active item
         if self.active and self.active in self._sidebar_items:
             self._sidebar_items[self.active].set_active(True)
 
     def _select(self, key: str) -> None:
-        # Mark previous inactive
         if self.active and self.active in self._sidebar_items:
             try:
                 self._sidebar_items[self.active].set_active(False)
@@ -818,67 +1089,60 @@ class MalphasGUI:
         self._render_active()
 
     def _render_active(self) -> None:
+        self._redraw_conv_header()
+        self.chat_pane.clear()
         if not self.active:
-            self.conv_title_var.set("No conversation")
-            self.conv_sub_var.set("")
-            self.chat.config(state=tk.NORMAL)
-            self.chat.delete("1.0", tk.END)
-            self.chat.config(state=tk.DISABLED)
             self._show_empty(True)
             return
         self._show_empty(False)
-        group = self.node._groups.get_by_id(self.active)
-        if group is not None:
-            self.conv_title_var.set(group.name)
-            self.conv_sub_var.set(
-                f"group  ·  {group.member_count()} members  ·  "
-                f"{_short(group.group_id, 16)}")
-        else:
-            contact = self.book.get_by_peer_id(self.active)
-            label = contact.label if contact else "(unsaved peer)"
-            self.conv_title_var.set(label)
-            self.conv_sub_var.set(_short(self.active, 24))
-
-        self.chat.config(state=tk.NORMAL)
-        self.chat.delete("1.0", tk.END)
-        for tag, text in self._scrollback.get(self.active, []):
-            self.chat.insert(tk.END, text + "\n", tag)
-        self.chat.config(state=tk.DISABLED)
-        self.chat.see(tk.END)
+        for entry in self._scrollback.get(self.active, []):
+            self._render_entry(entry)
+        self.chat_pane.scroll_to_end()
         self._set_status()
+
+    def _render_entry(self, entry: dict) -> None:
+        kind = entry["kind"]
+        if kind == "system":
+            bubble = MessageBubble(self.chat_pane.inner,
+                                    sender="", body=entry["body"],
+                                    kind="system",
+                                    font_body=self.f_body,
+                                    font_small=self.f_small)
+        else:
+            bubble = MessageBubble(
+                self.chat_pane.inner,
+                sender=entry["sender"],
+                body=entry["body"],
+                kind=kind,
+                font_body=self.f_body,
+                font_small=self.f_small,
+                color=entry.get("color"),
+                avatar_key=entry.get("avatar_key"),
+            )
+        self.chat_pane.add_widget(bubble)
 
     # ── Append helpers ──────────────────────────────────────────────────────
 
-    def _append_chat(self, conv_key: str, tag: str, text: str) -> None:
-        self._scrollback.setdefault(conv_key, []).append((tag, text))
+    def _record(self, conv_key: str, entry: dict) -> None:
+        self._scrollback.setdefault(conv_key, []).append(entry)
         if conv_key == self.active:
-            self.chat.config(state=tk.NORMAL)
-            self.chat.insert(tk.END, text + "\n", tag)
-            self.chat.config(state=tk.DISABLED)
-            self.chat.see(tk.END)
+            self._render_entry(entry)
 
-    def _append_message(self, conv_key: str, who: str, content: str,
-                        is_self: bool, group_name: str | None = None) -> None:
-        existing = self._scrollback.setdefault(conv_key, [])
-        if existing:
-            existing.append(("ts", ""))
-            if conv_key == self.active:
-                self.chat.config(state=tk.NORMAL)
-                self.chat.insert(tk.END, "\n", "ts")
-                self.chat.config(state=tk.DISABLED)
-        head = f"[{_ts()}]  "
-        prefix = f"[{group_name}] " if group_name else ""
-        name_tag = "name_you" if is_self else "name_them"
-        body_tag = "you" if is_self else "them"
-        existing.append(("ts", head + prefix + who))
-        existing.append((body_tag, "  " + content))
-        if conv_key == self.active:
-            self.chat.config(state=tk.NORMAL)
-            self.chat.insert(tk.END, head, "ts")
-            self.chat.insert(tk.END, prefix + who + "\n", name_tag)
-            self.chat.insert(tk.END, "  " + content + "\n", body_tag)
-            self.chat.config(state=tk.DISABLED)
-            self.chat.see(tk.END)
+    def _add_message(self, conv_key: str, sender: str, body: str,
+                      is_self: bool, avatar_key: str | None = None,
+                      color: str | None = None) -> None:
+        entry = {
+            "kind": "you" if is_self else "them",
+            "sender": sender,
+            "body": body,
+            "avatar_key": avatar_key or conv_key,
+            "color": color,
+        }
+        self._record(conv_key, entry)
+
+    def _add_system(self, conv_key: str, body: str,
+                     icon=None, color: str | None = None) -> None:
+        self._record(conv_key, {"kind": "system", "body": body})
 
     # ── Send ────────────────────────────────────────────────────────────────
 
@@ -889,12 +1153,13 @@ class MalphasGUI:
         self.input_var.set("")
         group = self.node._groups.get_by_id(self.active)
         if group is not None:
-            self.bridge.submit_coro(self.node.send_group_message(group.group_id, text))
-            self._append_message(self.active, "you", text, is_self=True,
-                                  group_name=group.name)
+            self.bridge.submit_coro(
+                self.node.send_group_message(group.group_id, text)
+            )
+            self._add_message(self.active, "you", text, is_self=True)
         else:
             self.bridge.submit_coro(self.node.send_message(self.active, text))
-            self._append_message(self.active, "you", text, is_self=True)
+            self._add_message(self.active, "you", text, is_self=True)
 
     # ── Node-callback handlers ─────────────────────────────────────────────
 
@@ -904,7 +1169,9 @@ class MalphasGUI:
 
     def _on_msg(self, from_id: str, content: str) -> None:
         label = self._conv_label(from_id)
-        self._append_message(from_id, label, content, is_self=False)
+        self._add_message(from_id, label, content, is_self=False,
+                           avatar_key=from_id,
+                           color=_avatar_color(from_id))
         if self.active != from_id:
             self._unread.add(from_id)
             self._refresh_sidebar()
@@ -922,8 +1189,8 @@ class MalphasGUI:
             parent=self.root)
         if ok:
             self.node.accept_file_offer(offer)
-            self._append_chat(from_id, "system",
-                              f"  ⇣  accepting {offer.get('name')} from {label}")
+            self._add_system(from_id,
+                              f"accepting {offer.get('name')} from {label}")
         else:
             self._pending_offers.pop(fid, None)
 
@@ -933,8 +1200,8 @@ class MalphasGUI:
         name = offer_entry[1].get("name", "file.bin") if offer_entry else "file.bin"
         self._completed_files[file_id] = (from_id, name, data)
         label = self._conv_label(from_id) if from_id != "?" else "?"
-        self._append_chat(from_id, "ok",
-                          f"  ✓ received {name} ({len(data)} bytes) from {label}")
+        self._add_system(from_id,
+                          f"received {name} ({len(data)} bytes) from {label}")
 
         path = filedialog.asksaveasfilename(parent=self.root, initialfile=name,
                                              title=f"Save '{name}' as…")
@@ -942,7 +1209,7 @@ class MalphasGUI:
             try:
                 with open(path, "wb") as f:
                     f.write(data)
-                self._append_chat(from_id, "ok", f"  ✓ saved to {path}")
+                self._add_system(from_id, f"saved to {path}")
                 self._completed_files.pop(file_id, None)
             except OSError as e:
                 messagebox.showerror("Save failed", str(e), parent=self.root)
@@ -950,16 +1217,17 @@ class MalphasGUI:
     def _on_group_invite(self, from_id: str, group_id: str, group_name: str,
                           members: list) -> None:
         label = self._conv_label(from_id)
-        self._append_chat(group_id, "system",
-                          f"  ⊕  {label} added you to '{group_name}' "
+        self._add_system(group_id,
+                          f"{label} added you to '{group_name}' "
                           f"({len(members)} members)")
         self._refresh_sidebar()
 
     def _on_group_msg(self, from_id: str, group_id: str, group_name: str,
                        content: str) -> None:
         label = self._conv_label(from_id)
-        self._append_message(group_id, label, content, is_self=False,
-                              group_name=group_name)
+        self._add_message(group_id, label, content, is_self=False,
+                           avatar_key=from_id,
+                           color=_avatar_color(from_id))
         if self.active != group_id:
             self._unread.add(group_id)
             self._refresh_sidebar()
@@ -977,7 +1245,7 @@ class MalphasGUI:
         self.root.clipboard_append(url)
         messagebox.showinfo(
             "Invite copied",
-            "A signed malphas:// invite is on your clipboard. "
+            "A signed malphas:// invite is on your clipboard.\n"
             "Send it to the peer over a channel you trust.",
             parent=self.root)
 
@@ -1064,8 +1332,8 @@ class MalphasGUI:
                                   "Could not start the transfer.",
                                   parent=self.root)
             return
-        self._append_chat(peer_id, "system",
-                          f"  ⇡  sending {Path(path).name} "
+        self._add_system(peer_id,
+                          f"sending {Path(path).name} "
                           f"(file_id {file_id[:16]}…)")
 
     def _action_backup(self) -> None:
@@ -1093,17 +1361,15 @@ class MalphasGUI:
         dlg.configure(bg=BG_BASE)
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("560x460")
+        dlg.geometry("580x500")
 
-        # Heading + small seal
         head = tk.Frame(dlg, bg=BG_BASE)
         head.pack(fill=tk.X, padx=PAD_XL, pady=(PAD_XL, PAD_XS))
-        seal = tk.Canvas(head, width=44, height=44, bg=BG_BASE,
-                          highlightthickness=0, bd=0)
-        seal.pack(side=tk.LEFT)
-        draw_malphas_seal(seal, 22, 22, 18, ACCENT, FG_PRIMARY, ACCENT)
+        if self._sigil_dialog is not None:
+            tk.Label(head, image=self._sigil_dialog, bg=BG_BASE
+                      ).pack(side=tk.LEFT)
         title_box = tk.Frame(head, bg=BG_BASE)
-        title_box.pack(side=tk.LEFT, padx=(PAD_MD, 0))
+        title_box.pack(side=tk.LEFT, padx=(PAD_LG, 0))
         tk.Label(title_box, text="Recovery mnemonic", bg=BG_BASE,
                   fg=FG_PRIMARY, font=self.f_h1).pack(anchor="w")
         tk.Label(title_box, text="The only way to recover this identity",
@@ -1113,7 +1379,7 @@ class MalphasGUI:
                             "Lose them and ~/.malphas/salt and you "
                             "lose this identity forever.",
                   bg=BG_BASE, fg=FG_MUTED, font=self.f_small,
-                  wraplength=500, justify="left").pack(
+                  wraplength=520, justify="left").pack(
                       anchor="w", padx=PAD_XL, pady=(PAD_LG, PAD_LG))
 
         grid = tk.Frame(dlg, bg=BG_RAISED)
@@ -1132,13 +1398,23 @@ class MalphasGUI:
         tk.Label(dlg, text="Treat them like a password: do NOT screenshot, "
                             "do NOT paste into a chat.",
                   bg=BG_BASE, fg=WARN_AMBER, font=self.f_small,
-                  wraplength=500, justify="left").pack(
+                  wraplength=520, justify="left").pack(
                       anchor="w", padx=PAD_XL, pady=(PAD_LG, PAD_XS))
 
         btn_row = tk.Frame(dlg, bg=BG_BASE)
         btn_row.pack(fill=tk.X, padx=PAD_XL, pady=PAD_LG)
-        ttk.Button(btn_row, text="Copy to clipboard", style="Ghost.TButton",
-                    command=lambda: self._copy_words(dlg, words)).pack(side=tk.LEFT)
+
+        copy_wrap = tk.Frame(btn_row, bg=BG_BASE)
+        copy_wrap.pack(side=tk.LEFT)
+        IconButton(copy_wrap, drawer=draw_copy,
+                    on_click=lambda: self._copy_words(dlg, words),
+                    size=36, bg=BG_BASE, hover_bg=BG_HOVER,
+                    color=FG_MUTED, hover_color=FG_PRIMARY,
+                    tooltip="Copy mnemonic to clipboard"
+                    ).pack(side=tk.LEFT)
+        tk.Label(copy_wrap, text=" copy", bg=BG_BASE, fg=FG_MUTED,
+                  font=self.f_body).pack(side=tk.LEFT)
+
         ttk.Button(btn_row, text="Done", style="Accent.TButton",
                     command=dlg.destroy).pack(side=tk.RIGHT)
 
@@ -1188,8 +1464,7 @@ class MalphasGUI:
                                   "Name already in use, or empty name.",
                                   parent=self.root)
             return
-        self._append_chat(gid, "system",
-                          f"  ⊕  group '{name}' created  ({gid[:16]}…)")
+        self._add_system(gid, f"group '{name}' created  ({gid[:16]}…)")
         self._refresh_sidebar()
 
     def _action_group_add(self) -> None:
@@ -1253,15 +1528,14 @@ class MalphasGUI:
         dlg.configure(bg=BG_BASE)
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("420x340")
+        dlg.geometry("440x380")
 
         body = tk.Frame(dlg, bg=BG_BASE)
         body.pack(fill=tk.BOTH, expand=True, padx=PAD_XL, pady=PAD_XL)
 
-        seal = tk.Canvas(body, width=120, height=120, bg=BG_BASE,
-                          highlightthickness=0, bd=0)
-        seal.pack(pady=(0, PAD_LG))
-        draw_malphas_seal(seal, 60, 60, 50, ACCENT, FG_PRIMARY, ACCENT)
+        if self._sigil_dialog is not None:
+            tk.Label(body, image=self._sigil_dialog, bg=BG_BASE
+                      ).pack(pady=(0, PAD_LG))
 
         tk.Label(body, text="malphas", bg=BG_BASE, fg=FG_PRIMARY,
                   font=self.f_h1).pack()
@@ -1272,7 +1546,7 @@ class MalphasGUI:
                   justify="center").pack()
         tk.Label(body, text=self.node.identity.peer_id, bg=BG_BASE,
                   fg=FG_FAINT, font=self.f_mono_sm,
-                  wraplength=360).pack(pady=(PAD_LG, 0))
+                  wraplength=380).pack(pady=(PAD_LG, 0))
 
         ttk.Button(body, text="Close", style="Accent.TButton",
                     command=dlg.destroy).pack(pady=(PAD_LG, 0))
@@ -1319,6 +1593,7 @@ class MalphasGUI:
 
         self.bridge.submit_coro(_auto())
         self._refresh_sidebar()
+        self._redraw_conv_header()
         try:
             self.root.mainloop()
         except KeyboardInterrupt:

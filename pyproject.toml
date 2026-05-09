@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "malphas"
-version = "0.10.3"
+version = "0.10.4"
 description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [
@@ -32,6 +32,7 @@ packages = ["src/malphas"]
 # type-annotated.
 [tool.hatch.build.targets.wheel.force-include]
 "src/malphas/py.typed" = "malphas/py.typed"
+"src/malphas/assets/sigil.png" = "malphas/assets/sigil.png"
 
 [project.optional-dependencies]
 dev = [
@@ -130,8 +131,10 @@ module = [
     "malphas.__main__",
     "malphas.splash",
     "malphas.gui",
+    "malphas.gui_icons",
 ]
 disable_error_code = [
+    "union-attr",
     "no-untyped-def",
     "no-untyped-call",
     "type-arg",

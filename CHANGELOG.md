@@ -3,6 +3,39 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.4] — 2026-05-09
+
+### GUI — chat-app-grade redesign
+
+User-supplied sigil PNG, vector-stroke icons (no emoji), Telegram/
+WhatsApp-flavored bubble chat layout.
+
+- **Bundled sigil**: `src/malphas/assets/sigil.png` (450×450 RGBA),
+  shipped via hatch `force-include`. Used in header (28px),
+  empty-state (180px), mnemonic dialog (110px), About (110px).
+- **Vector icons** (`src/malphas/gui_icons.py`): paperclip, send,
+  plus, share, users, user-plus, door-out, lock, copy, search,
+  alert. Each `draw_*` paints with Canvas primitives — no PNG/SVG/
+  Pillow dependency. New `IconButton` widget with hover/ghost/
+  accent variants and tooltip support.
+- **Chat bubbles** (`MessageBubble` + `ChatPane`): outgoing right
+  in deep red, incoming left with circular avatar, system events
+  centered in a flat pill. Each bubble carries its own timestamp.
+- **Avatars**: deterministic color from `BLAKE2s(peer_id)[:4]`
+  over a 10-color palette; initial is first char of label.
+- **Sidebar** rebuilt with `SidebarItem` widgets: avatar + title
+  + sub + unread dot + 3px accent bar on active. Live search row
+  at top, action toolbar (share / plus / users) below.
+- **Conversation header**: avatar + title + monospaced sub +
+  contextual right actions (add member / leave for groups).
+- **Tor lock icon** in header (green when `.onion` is up).
+- **Input row**: paperclip left (file), accent paper-plane right.
+- **No emoji anywhere** — all glyphs Canvas-drawn.
+
+### Wire format
+
+Unchanged.
+
 ## [0.10.3] — 2026-05-09
 
 ### GUI
