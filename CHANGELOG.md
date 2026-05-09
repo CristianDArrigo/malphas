@@ -3,6 +3,25 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.6] — 2026-05-09
+
+### Dev tooling
+
+- New `.github/dependabot.yml` — weekly grouped PRs for pip and
+  github-actions ecosystems. Minor/patch bumps grouped per ecosystem
+  to keep review noise low.
+- New `.pre-commit-config.yaml` — mirrors `scripts/check.sh --quick`:
+  ruff (with `--fix`), mypy on the whole package (so strict-bucket
+  overrides apply), bandit, plus stock hygiene hooks (trailing
+  whitespace, EOF newline, YAML/TOML syntax, merge-conflict markers,
+  large file guard at 512 KB).
+- README "CI quality gates" subsection now documents the
+  `pre-commit install` flow and the dependabot grouping.
+
+### Wire format
+
+Unchanged.
+
 ## [0.5.5] — 2026-05-09
 
 ### Documentation

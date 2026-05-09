@@ -1009,7 +1009,19 @@ scripts/check.sh --quick        # skip pytest (good for pre-commit)
 scripts/check.sh --no-coverage  # pytest without coverage gate (faster)
 ```
 
-The script honors a `$PYTHON` env var and falls back to `./.venv/bin/python` if that exists, otherwise to `python3`. Or run each gate by hand:
+The script honors a `$PYTHON` env var and falls back to `./.venv/bin/python` if that exists, otherwise to `python3`.
+
+For a pre-commit install of the same gates:
+
+```bash
+pip install pre-commit
+pre-commit install        # auto-runs on every git commit
+pre-commit run --all-files
+```
+
+Dependabot (`.github/dependabot.yml`) opens grouped weekly PRs for pip and GitHub-Actions updates, keeping minor and patch bumps current without flooding review.
+
+Or run each gate by hand:
 
 ```bash
 ruff check src/ tests/

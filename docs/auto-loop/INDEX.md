@@ -69,3 +69,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 036 | iter-036-green-mypy-sot.md | Green: single source of truth — mypy strict bucket | done |
 | 037 | iter-037-next-target.md | Next-target (cumulative SUMMARY.md) | done |
 | 038 | iter-038-green-summary.md | Green: cumulative SUMMARY.md | done |
+| 040 | iter-040-green-dependabot-precommit.md | Green: dependabot + pre-commit | done |

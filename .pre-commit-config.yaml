@@ -1,0 +1,49 @@
+# pre-commit hooks mirror scripts/check.sh --quick so the developer
+# catches the same gates locally before the CI does. Install with:
+#
+#     pip install pre-commit
+#     pre-commit install
+#
+# Run on demand:
+#
+#     pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+        files: ^(src|tests)/
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        # Run on the whole package so the strict-bucket overrides apply
+        # the same way they do in CI. Pyproject is read automatically.
+        files: ^src/malphas/
+        pass_filenames: false
+        entry: mypy src/malphas/
+        additional_dependencies:
+          # Stubs / runtime deps mypy needs to import the strict modules.
+          - "cryptography>=42.0"
+          - "argon2-cffi>=23.0"
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: ["-r", "-c", "pyproject.toml", "-l"]
+        files: ^src/malphas/
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
