@@ -3,6 +3,42 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.5] — 2026-05-09
+
+### Added — Qt GUI smoke tests
+
+`tests/test_gui_qt.py` (17 tests). The tk GUI had 7 smoke
+tests guarding it; the Qt port had zero. Without coverage
+there, a regression in `gui_qt.py` (a missing import, a
+broken QSS f-string, a removed attribute, etc.) would slip
+past CI.
+
+The whole module is `pytest.importorskip("PySide6")`-guarded
+so it auto-skips when the optional `gui-qt` extra isn't
+installed. Tests run under `QT_QPA_PLATFORM=offscreen` so
+they work in headless CI.
+
+Coverage:
+
+- helpers: `_short`, `_ts`, `_avatar_color` (determinism +
+  palette membership), `_avatar_initial`
+- `_qss()` builds clean (no leftover f-string braces, all
+  expected anchors present)
+- `_load_sigil` returns a non-empty `QPixmap`
+- `_sigil_with_halo` produces a properly-padded composite
+- `Avatar` constructs and paints
+- `BubbleRow` constructs in all three sides (you / them / sys)
+- `MalphasQtWindow` constructs in standalone-preview mode
+- sidebar row add + key round-trip via UserRole+1
+- send button carries a `QGraphicsDropShadowEffect`
+  (regression guard for the round-3 polish)
+- `_add_message` / `_add_system` book-keeping for unread state
+
+Wire-level behavior (sending messages, draining the
+AsyncBridge queue, file transfer) is not asserted here — the
+node tests cover those behaviors, and `MalphasQtWindow`
+delegates to them.
+
 ## [0.11.4] — 2026-05-09
 
 ### Qt GUI — visual polish round 3
