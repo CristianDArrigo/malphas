@@ -34,7 +34,8 @@ jobs:
             src/malphas/obfuscation.py \
             src/malphas/pinstore.py \
             src/malphas/invite.py \
-            src/malphas/files.py
+            src/malphas/files.py \
+            src/malphas/secure_buffer.py
 
   test:
     runs-on: ubuntu-latest

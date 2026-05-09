@@ -3,6 +3,39 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.3.3] — 2026-05-09
+
+### Security
+
+- New `malphas.secure_buffer.SecureBytes`: a wiped-on-drop, mlock-when-
+  possible byte buffer for sensitive material. Implementation:
+  - `bytearray` storage that can be overwritten in place.
+  - Best-effort `libc.mlock` on POSIX so pages aren't paged to swap.
+    Failures degrade silently — defense in depth, not a hard guarantee.
+  - Zeroization on `wipe()`, `__exit__`, and `__del__`.
+  - Constant-time equality.
+- `identity._derive_seed` now returns a `SecureBytes`. Both
+  `create_identity` and `create_identity_with_book_key` consume the
+  seed inside a `with` block so the Argon2 output is wiped before the
+  function returns. The derived `book_key` continues to be returned as
+  plain `bytes` for compatibility with `AddressBook`/`PinStore`;
+  tightening that surface is future work.
+
+### Internal
+
+- 13 new tests in `tests/test_secure_buffer.py` covering construction,
+  wipe lifecycle, slicing/iteration semantics, constant-time equality,
+  context-manager wipe-on-exit, and graceful mlock failure.
+- `malphas.secure_buffer` added to the mypy strict bucket.
+- `_derive_seed`'s callers refactored to use the new context-manager
+  pattern; one downstream test (`test_security_crypto.test_identity_
+  and_book_key_use_different_contexts`) materializes a `bytes(seed)`
+  copy before passing to the cryptography library.
+
+### Wire format
+
+Unchanged.
+
 ## [0.3.2] — 2026-05-09
 
 ### Documentation

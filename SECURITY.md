@@ -38,8 +38,10 @@ unsupported. This project is pre-1.0 and the wire format may change.
   Migration to BLAKE2s/SHA-256 planned in 0.3 (wire-breaking).
 - Argon2id salt is a public constant. Per-user salt would require disk state;
   trade-off currently weighted toward zero-disk policy.
-- Memory not `mlock`ed; sensitive material may end up in swap on systems with
-  swap enabled.
+- The Argon2 seed is mlock'd best-effort via `malphas.secure_buffer` and
+  zeroized after the keypairs are derived. Other sensitive material
+  (session keys, ratchet roots, address book master key) is not yet
+  wrapped in `SecureBytes`; tightening that surface is tracked work.
 
 ## Cryptographic primitives
 

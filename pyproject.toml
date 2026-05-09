@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "malphas"
-version = "0.3.2"
+version = "0.3.3"
 description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [
@@ -53,6 +53,7 @@ module = [
     "malphas.pinstore",
     "malphas.invite",
     "malphas.files",
+    "malphas.secure_buffer",
 ]
 strict = true
 

@@ -203,7 +203,10 @@ class TestHKDF:
         This is the core security invariant for key independence.
         """
         from malphas.identity import _derive_seed
-        seed = _derive_seed("test-passphrase")
+        # _derive_seed returns a SecureBytes; cryptography's HKDF requires
+        # a buffer-protocol-compatible object, so we materialize an
+        # immutable bytes copy for the duration of this test.
+        seed = bytes(_derive_seed("test-passphrase"))
         k1 = hkdf_derive(seed, b"malphas-identity-v1", b"keypair-seed")
         k2 = hkdf_derive(seed, b"malphas-addressbook-v1", b"addressbook-encryption-key")
         assert k1 != k2
