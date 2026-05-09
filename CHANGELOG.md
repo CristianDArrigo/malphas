@@ -3,6 +3,42 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.0] — 2026-05-09 — WIRE-BREAKING
+
+### Wire format
+
+- `peer_id` is now derived as `BLAKE2s(ed25519_pub, digest_size=20)`
+  instead of `SHA1(ed25519_pub)`. Both produce a 160-bit identifier
+  hex-encoded to 40 characters; storage formats, regexes
+  (`[0-9a-f]{40}`), and the on-wire 20-byte raw form are unchanged.
+  But the value of every existing peer_id changes — a 0.5.0 peer and a
+  0.4.x peer derive different identifiers from the same passphrase.
+
+### Security
+
+- BLAKE2s replaces SHA1 as the peer_id hash. SHA1 was flagged by
+  bandit (B324) and was using the construction in a way that, while
+  not directly security-critical (the value is an identifier, not a
+  capability), still surfaced as a red flag in any review. BLAKE2s is
+  collision-resistant by design and faster on small inputs.
+- The bandit `B324` and ruff `S324` global skips have been removed.
+  The two test sites that benchmark Argon2 against SHA1 keep an
+  inline `# noqa` with `usedforsecurity=False`.
+
+### Internal
+
+- New `tests/test_security_argon2_panic.test_peer_id_is_blake2s_not_sha1`
+  regression guard.
+- `tests/test_security_identity.test_peer_id_is_blake2s_of_ed25519_pubkey`
+  replaces the previous SHA1-based invariant test.
+- Comments in `discovery.py` and `onion.py` updated.
+- Module docstring in `identity.py` rewritten.
+
+### Wire format
+
+Wire-breaking. A 0.5.0 client cannot communicate with a 0.4.x client.
+Upgrade both peers before the cut-over.
+
 ## [0.4.0] — 2026-05-09 — WIRE-BREAKING
 
 ### Wire format

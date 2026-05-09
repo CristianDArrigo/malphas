@@ -1,8 +1,11 @@
 """
 Identity layer.
 Argon2id(passphrase) -> 64-byte seed -> Ed25519 + X25519 keypairs.
-The public peer_id exposed on the network is SHA1(ed25519_pubkey)
-(SHA1 is used as a 160-bit identifier, not for security).
+The public peer_id exposed on the network is BLAKE2s(ed25519_pubkey,
+digest_size=20) — a 160-bit collision-resistant identifier. It is
+hex-encoded to 40 characters on the wire; the length matches the
+SHA1-based peer_id used in pre-0.5.0 builds, so storage and parser
+formats (regexes, address book entries) remain unchanged.
 No passphrase is ever stored or logged.
 """
 
@@ -78,7 +81,7 @@ def _derive_seed(passphrase: str) -> SecureBytes:
 
 @dataclass(frozen=True)
 class Identity:
-    peer_id: str          # SHA1(ed25519_pubkey_bytes) — public identifier
+    peer_id: str          # BLAKE2s(ed25519_pubkey_bytes, digest_size=20) — 40-char hex public identifier
     ed25519_priv: Ed25519PrivateKey
     ed25519_pub: Ed25519PublicKey
     x25519_priv: X25519PrivateKey
@@ -124,8 +127,10 @@ def create_identity(passphrase: str) -> Identity:
         x_pub = x_priv.public_key()
         x_pub_bytes = x_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
 
-        # Peer ID: SHA1 of ed25519 pubkey (hex, 40 chars)
-        peer_id = hashlib.sha1(ed_pub_bytes).hexdigest()
+        # Peer ID: BLAKE2s of ed25519 pubkey, truncated to 20 bytes
+        # (40 hex chars). BLAKE2s is collision-resistant and faster than
+        # SHA-256 on small inputs.
+        peer_id = hashlib.blake2s(ed_pub_bytes, digest_size=20).hexdigest()
         # _derive_seed's SecureBytes is wiped on context exit below.
 
     return Identity(
@@ -139,7 +144,7 @@ def create_identity(passphrase: str) -> Identity:
 
 
 def peer_id_from_pubkey(ed25519_pub_bytes: bytes) -> str:
-    return hashlib.sha1(ed25519_pub_bytes).hexdigest()
+    return hashlib.blake2s(ed25519_pub_bytes, digest_size=20).hexdigest()
 
 
 def create_identity_with_book_key(passphrase: str) -> tuple:
@@ -173,7 +178,7 @@ def create_identity_with_book_key(passphrase: str) -> tuple:
         x_pub = x_priv.public_key()
         x_pub_bytes = x_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
 
-        peer_id = hashlib.sha1(ed_pub_bytes).hexdigest()
+        peer_id = hashlib.blake2s(ed_pub_bytes, digest_size=20).hexdigest()
 
         # Address book key — derived from same seed, different context.
         # Cryptographically independent from the keypairs above.

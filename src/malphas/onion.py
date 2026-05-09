@@ -29,8 +29,10 @@ from .crypto import (
 )
 
 FINAL_HOP_MARKER = b"\x00" * 20  # 20 zero bytes = "deliver to me"
-PEER_ID_LEN = 20  # SHA1 hex is 40 chars but we store raw 20 bytes on wire
-# Actually peer_id is hex string (40 chars) but on wire we use 20 raw bytes
+# peer_id is BLAKE2s(ed25519_pub, digest_size=20). The hex-encoded form
+# (40 chars) is used in storage and display; the raw 20-byte form is
+# packed onto the wire.
+PEER_ID_LEN = 20
 
 
 def peer_id_to_bytes(peer_id_hex: str) -> bytes:

@@ -6,7 +6,7 @@ Verifies:
 - Deterministic derivation
 - Key independence (identity vs book key)
 - Different passphrases produce different keys
-- SHA1 peer_id is correct
+- BLAKE2s peer_id is correct (since v0.5.0, was SHA1 in <=0.4.x)
 - Ed25519 sign/verify integrity
 """
 
@@ -39,10 +39,10 @@ class TestIdentityDeterminism:
         assert a.x25519_pub_bytes != b.x25519_pub_bytes
         assert a.ed25519_pub_bytes != b.ed25519_pub_bytes
 
-    def test_peer_id_is_sha1_of_ed25519_pubkey(self):
-        """peer_id must be SHA1(ed25519_pubkey) — protocol invariant."""
+    def test_peer_id_is_blake2s_of_ed25519_pubkey(self):
+        """peer_id must be BLAKE2s(ed25519_pubkey, 20) — protocol invariant since v0.5.0."""
         ident = create_identity("test-passphrase")
-        expected = hashlib.sha1(ident.ed25519_pub_bytes).hexdigest()
+        expected = hashlib.blake2s(ident.ed25519_pub_bytes, digest_size=20).hexdigest()
         assert ident.peer_id == expected
 
     def test_peer_id_is_40_hex_chars(self):

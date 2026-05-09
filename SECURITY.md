@@ -34,8 +34,8 @@ unsupported. This project is pre-1.0 and the wire format may change.
 
 ## Known limitations
 
-- SHA1 used for `peer_id` (160-bit identifier, not security-critical).
-  Migration to BLAKE2s/SHA-256 planned in 0.3 (wire-breaking).
+- ~~SHA1 used for `peer_id` (160-bit identifier, not security-critical).~~
+  Replaced with `BLAKE2s(ed25519_pub, digest_size=20)` in 0.5.0 (wire-breaking).
 - Argon2id salt is a public constant. Per-user salt would require disk state;
   trade-off currently weighted toward zero-disk policy.
 - The Argon2 seed is mlock'd best-effort via `malphas.secure_buffer` and

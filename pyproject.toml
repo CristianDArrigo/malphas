@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "malphas"
-version = "0.4.0"
+version = "0.5.0"
 description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [
@@ -75,7 +75,6 @@ skips = [
     "B110",  # try/except/pass: fail-closed silent drop policy
     "B112",  # try/except/continue: stale-peer eviction
     "B311",  # random: only used for non-crypto jitter
-    "B324",  # SHA1: identifier, not security; fix tracked for 0.4.0
     "B404",  # subprocess: needed for Tor HS setup
     "B603",  # subprocess no shell: arguments are constants/internal paths
     "B607",  # partial path: subprocess args are absolute or system tools
@@ -126,7 +125,6 @@ ignore = [
     # Triaged backlog — keep silenced until each is reviewed individually.
     # Each carries an existing design rationale (see docs/auto-loop/iter-007).
     "S110",  # try-except-pass: fail-closed silent drops are a feature
-    "S324",  # SHA1 used as identifier, not for security; tracked B1 in iter-001
     "S603",  # subprocess without shell=True: setup.sh / Tor key install
     "S104",  # bind 0.0.0.0: needed for LAN/Tor; documented
     "S108",  # /tmp: hidden-service key staging dir, deleted after copy

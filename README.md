@@ -218,7 +218,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 │  Argon2id(passphrase) → 64-byte seed                           │
 │  seed[:32] → Ed25519 private key    seed[32:] → X25519 key     │
 │  HKDF(seed, "addressbook-encryption-key") → ChaCha20 key       │
-│  SHA1(ed25519_pub) → peer_id (40-char hex)                     │
+│  BLAKE2s(ed25519_pub, 20) → peer_id (40-char hex)              │
 │  ed25519_pub → .onion address (Tor v3 algorithm)               │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -613,13 +613,13 @@ Argon2id(time=3, memory=64MB, parallelism=4)
     │
     ▼
 64-byte seed
-    ├─── seed[:32] ───────────────────────────► Ed25519 private key → peer_id = SHA1(ed25519_pub)
+    ├─── seed[:32] ───────────────────────────► Ed25519 private key → peer_id = BLAKE2s(ed25519_pub, 20)
     ├─── seed[32:] ───────────────────────────► X25519 private key
     │
     └─── HKDF(info="addressbook-encryption-key") ──► 32-byte ChaCha20 key (address book + pin store)
 ```
 
-**peer_id** is the SHA1 of the Ed25519 public key, expressed as a 40-character lowercase hex string. It is the primary identifier shared with other peers.
+**peer_id** is `BLAKE2s(ed25519_pub, digest_size=20)`, expressed as a 40-character lowercase hex string. It is the primary identifier shared with other peers. (Pre-0.5.0 builds used SHA1 — same length, different value.)
 
 **Passphrase security.** Argon2id requires 64MB of RAM and approximately 200ms per derivation attempt. An attacker attempting to brute-force the passphrase from the encrypted address book file faces this cost for every attempt, making dictionary attacks against common passphrases computationally expensive and attacks against strong passphrases effectively impossible.
 

@@ -53,3 +53,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 025 | iter-025-next-target.md | Next-target (0.4.0 line: auth-type prefix) | done |
 | 026 | iter-026-green-auth-prefix.md | Green: auth-type prefix (v0.4.0, wire-breaking) | done |
 | 027 | iter-027-next-target.md | Next-target (BLAKE2s peer_id → v0.5.0) | done |
+| 028 | iter-028-green-blake2s-peerid.md | Green: BLAKE2s peer_id (v0.5.0, wire-breaking) | done |

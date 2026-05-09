@@ -46,16 +46,33 @@ class TestArgon2Derivation:
 
     def test_not_sha1(self):
         """
-        Verify the derivation is NOT the old SHA1 approach.
+        Verify the seed derivation is NOT the old SHA1 approach.
         This is a regression test — if Argon2 is removed accidentally,
         this catches it immediately.
         """
         passphrase = "test-passphrase"
         seed = _derive_seed(passphrase)
-        sha1_raw = hashlib.sha1(passphrase.encode()).digest()
+        sha1_raw = hashlib.sha1(passphrase.encode(), usedforsecurity=False).digest()  # noqa: S324
         # The Argon2 output must not start with or contain the raw SHA1
         assert sha1_raw not in seed
         assert seed[:20] != sha1_raw
+
+    def test_peer_id_is_blake2s_not_sha1(self):
+        """
+        v0.5.0+ derives peer_id from BLAKE2s(ed25519_pub, 20), not SHA1.
+        Regression test: a future refactor that re-introduces SHA1 here
+        would silently break the wire compat with existing 0.5.0+ peers.
+        """
+        from malphas.identity import create_identity, peer_id_from_pubkey
+        ident = create_identity("blake2s-regression")
+        ed_pub = ident.ed25519_pub_bytes
+
+        sha1_pid = hashlib.sha1(ed_pub, usedforsecurity=False).hexdigest()  # noqa: S324
+        blake2_pid = hashlib.blake2s(ed_pub, digest_size=20).hexdigest()
+
+        assert ident.peer_id == blake2_pid
+        assert ident.peer_id != sha1_pid
+        assert peer_id_from_pubkey(ed_pub) == blake2_pid
 
     def test_single_char_difference_produces_completely_different_seed(self):
         """Avalanche effect — one char difference → completely different output."""
@@ -120,10 +137,10 @@ class TestArgon2Derivation:
 
         passphrase = "timing-test"
 
-        # SHA1 time
+        # SHA1 time (used as a fast-baseline reference, not for security)
         sha1_start = time.time()
         for _ in range(100):
-            hashlib.sha1(passphrase.encode()).digest()
+            hashlib.sha1(passphrase.encode(), usedforsecurity=False).digest()  # noqa: S324
         sha1_time = (time.time() - sha1_start) / 100
 
         # Argon2 time

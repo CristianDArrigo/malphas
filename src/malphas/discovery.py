@@ -14,12 +14,12 @@ log = logging.getLogger("malphas.discovery")
 log.addHandler(logging.NullHandler())  # no-log policy: NullHandler by default
 
 K = 8  # Kademlia bucket size
-ID_BITS = 160  # SHA1 = 160 bits
+ID_BITS = 160  # BLAKE2s digest_size=20 → 160 bits (was SHA1 pre-0.5.0)
 
 
 @dataclass
 class PeerInfo:
-    peer_id: str          # 40-char hex SHA1
+    peer_id: str          # 40-char hex BLAKE2s(ed25519_pub, digest_size=20)
     host: str
     port: int
     x25519_pub: bytes     # 32-byte X25519 public key
