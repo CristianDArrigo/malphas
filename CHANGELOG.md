@@ -3,6 +3,31 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.3.7] — 2026-05-09
+
+### Documentation
+
+- README: **Threat Model** updated. Replay protection and the
+  `SecureBytes`-wrapped Argon2 seed are now in the "Protected against"
+  list; the "Not protected against" entry on RAM exposure is qualified
+  to make clear that `mlock` covers the seed only, against swap, not
+  against `/proc/$pid/mem`.
+- README: new **CI quality gates** subsection with the full table
+  (ruff, mypy strict, bandit, coverage, hypothesis) and the local
+  invocation cheatsheet.
+- README: new **Web API endpoints** table covering all 9 REST routes
+  plus the `/ws` WebSocket and its three push event types.
+- README: **Test suite** table extended with the seven test files
+  added during the auto-loop (replay, microfixes, files, cli_files,
+  api_files, secure_buffer, fuzz_parsers).
+- README: **Project structure** lists the three new modules
+  (`replay.py`, `files.py`, `secure_buffer.py`).
+
+### Wire format
+
+Unchanged. Closes the v0.3.x mini-release line; v0.4.0 will open the
+wire-breaking changes track.
+
 ## [0.3.6] — 2026-05-09
 
 ### Features

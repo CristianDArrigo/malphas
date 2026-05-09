@@ -134,6 +134,8 @@ malphas is designed to protect against the following adversaries:
 - Impersonation after first contact — key pinning detects if a peer's Ed25519 key changes, which indicates either a passphrase change or an attacker
 - Brute force attacks on the address book — Argon2id makes offline dictionary attacks computationally prohibitive (64MB RAM + ~200ms per attempt)
 - Proof of authorship — deniable authentication (HMAC) prevents cryptographic attribution of messages to a specific sender
+- Replay attacks on the application layer — every successfully delivered message records `(from_peer_id, msg_id)` in a bounded sliding window; a re-injected onion packet is dropped silently, with no second user-visible delivery, no second store entry, and no second receipt
+- Argon2 seed in swap — the derived seed is wrapped in a `SecureBytes` buffer that is `mlock`'d (best-effort) and zeroized as soon as the keypairs are extracted
 
 **Partially protected against:**
 
@@ -142,7 +144,7 @@ malphas is designed to protect against the following adversaries:
 
 **Not protected against:**
 
-- Physical device compromise while malphas is running — messages in RAM are accessible via memory dump
+- Physical device compromise while malphas is running — messages in RAM are accessible via memory dump (the `mlock`'d `SecureBytes` covers the Argon2 seed only, and only against swap; an attacker with `/proc/$pid/mem` reads everything)
 - Compromised operating system (keyloggers, malware) — any software with kernel access can intercept the passphrase at entry time
 - Social engineering of the peer — malphas secures the channel, not the human at the other end
 - Legal compulsion of the peer — if your interlocutor is compelled to disclose, malphas cannot help
@@ -958,6 +960,13 @@ pytest tests/test_tor_e2e.py -v
 | `test_invite.py` | Generate/parse roundtrip, signature verification, tampered blobs, validation | 17 |
 | `test_pinstore.py` | First contact pins, mismatch rejected, trust reset, persistence, handshake integration | 17 |
 | `test_tor_e2e.py` | Hidden service registration, .onion stable across restarts | 5 |
+| `test_replay_protection.py` | Bounded sliding window, ratchet/HMAC/Ed25519 path coverage, panic wipes | 14 |
+| `test_microfixes.py` | secrets.SystemRandom in circuits, jitter on reconnect, monotonic TTL | 5 |
+| `test_files.py` | Chunkify, dedup, out-of-order, SHA-256 mismatch, cap, panic, E2E intact | 14 |
+| `test_cli_files.py` | /sendfile, /accept, /reject, /savefile, /files, on_file_offer/complete | 12 |
+| `test_api_files.py` | POST send (multipart), accept, reject, GET list, GET download (drop-after) | 14 |
+| `test_secure_buffer.py` | mlock + zeroize, slice/iter/contains semantics, ctx-mgr wipe-on-exit | 13 |
+| `test_fuzz_parsers.py` | Hypothesis fuzz on peel_layer, unpad_payload, parse_invite, FileOffer | 8 |
 
 **What passing tests guarantee:**
 
@@ -977,6 +986,48 @@ pytest tests/test_tor_e2e.py -v
 - REST API validates all inputs and rejects malformed requests
 - CLI commands parse correctly and produce expected state changes
 - Tor hidden service registration succeeds with the node's Ed25519 key
+
+### CI quality gates
+
+Every push and pull request runs through a stack of blocking gates:
+
+| Stage | Tool | Configured in | What it catches |
+|---|---|---|---|
+| Style + bug | `ruff` | `[tool.ruff]` | imports, formatting, common bug patterns, security hints |
+| Static types | `mypy --strict` | `[[tool.mypy.overrides]]` | type errors on the strict bucket (8 modules so far) |
+| Static security | `bandit` | `[tool.bandit]` | hardcoded creds, weak crypto, unsafe subprocess, etc. |
+| Tests + coverage | `pytest --cov --cov-fail-under=65` | `[tool.coverage.*]` | regressions, branch coverage |
+| Property-based fuzz | `hypothesis` (inside tests) | per-test `@given` | parser crashes on untrusted bytes |
+
+Modules in the mypy strict bucket: `replay`, `crypto`, `memory`, `obfuscation`, `pinstore`, `invite`, `files`, `secure_buffer`. The bucket grows iteration by iteration — see `docs/auto-loop/` for the rolling log.
+
+```bash
+# Run the same gates locally
+ruff check src/ tests/
+mypy src/malphas/replay.py src/malphas/crypto.py ...   # the strict bucket
+bandit -r src/malphas/ -c pyproject.toml -l
+pytest tests/ -m "not tor and not slow" --cov --cov-fail-under=65
+```
+
+### Web API endpoints
+
+When run with `--mode web`, malphas exposes a localhost-only FastAPI surface (default `127.0.0.1:8080`) with WebSocket push for real-time events. The same node is driven by either the CLI or the web API — pick one per process.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/identity` | own peer_id + pubkeys + port |
+| GET | `/api/peers` | list peers in routing table |
+| POST | `/api/peers/connect` | connect to a peer (JSON body) |
+| POST | `/api/messages/send` | send a chat message (JSON body) |
+| GET | `/api/messages/{peer_id}` | conversation history with peer |
+| POST | `/api/files/send` | upload + send a file (multipart) |
+| GET | `/api/files` | pending offers + completed transfers |
+| POST | `/api/files/accept` | register an incoming file offer |
+| POST | `/api/files/reject` | drop a pending offer |
+| GET | `/api/files/{file_id}/download` | stream a completed file (single-shot, drops the in-RAM copy) |
+| WS | `/ws` | push events: `message`, `file_offer`, `file_complete` |
+
+CORS allows only `http://localhost` and `http://127.0.0.1` origins. There is no auth on the local API by design — the threat model assumes the local user owns the loopback.
 
 ---
 
@@ -999,6 +1050,9 @@ malphas/
 │   ├── addressbook.py   encrypted persistent contact storage
 │   ├── pinstore.py      TOFU key pinning, encrypted persistence
 │   ├── invite.py        signed malphas:// invite URLs
+│   ├── replay.py        bounded sliding-window replay cache
+│   ├── files.py         chunked file transfer (offer/chunk/ack)
+│   ├── secure_buffer.py SecureBytes (mlock + zeroize) for key material
 │   ├── cli_ui.py        prompt_toolkit + rich interactive terminal
 │   ├── api.py           FastAPI + WebSocket (web mode)
 │   ├── splash.py        ASCII splash screen
