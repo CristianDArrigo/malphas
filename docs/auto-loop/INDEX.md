@@ -42,3 +42,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 014 | iter-014-green-readme.md | Green: README docs for file transfer | done |
 | 015 | iter-015-next-target.md | Next-target selection (mlock + secure erase) | done |
 | 016 | iter-016-green-secure-buffer.md | Green: SecureBytes (mlock + zeroize) | done |
+| 017 | iter-017-next-target.md | Next-target selection (Hypothesis fuzz) | done |
