@@ -1,7 +1,9 @@
 """
-Shared design tokens for the Tk-based GUI. Both `gui.py` and the
-custom dialog widgets in `gui_dialogs.py` import from this module so
-the palette and font sizing stay in one place.
+Shared design tokens (palette + spacing) for the malphas GUI.
+
+Originally extracted to back the tkinter GUI; will also feed the
+upcoming PySide6 port so the dark theme stays identical between
+the two implementations during the transition.
 """
 
 from __future__ import annotations

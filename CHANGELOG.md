@@ -3,6 +3,27 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.9] — 2026-05-09
+
+### Reverted
+
+- The custom `gui_dialogs` module is removed. Tk-level hover
+  events on a Frame+Label compound widget have an unavoidable
+  parent/child Enter/Leave race that produced visible flicker
+  even when bindings were collapsed onto a single child. Rather
+  than keep ad-hoc workarounds in tk, dialogs revert to
+  `tkinter.messagebox` / `tkinter.simpledialog` for now. The
+  user-facing chrome will be rebuilt on PySide6 / Qt where
+  proper QSS theming and animation handling are available.
+- `gui_theme.py` is kept — palette stays identical, will feed
+  the Qt port via QSS.
+
+### Added
+
+- `gui-qt` optional extra in `pyproject.toml`:
+  `PySide6 >= 6.6` and `qasync >= 0.27` (asyncio integration).
+  The Qt port begins in 0.11.x.
+
 ## [0.10.8] — 2026-05-09
 
 ### Fixed

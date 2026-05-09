@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "malphas"
-version = "0.10.8"
+version = "0.10.9"
 description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [
@@ -44,6 +44,10 @@ dev = [
     "mypy>=1.10",
     "hypothesis>=6",
     "bandit>=1.7",
+]
+gui-qt = [
+    "PySide6>=6.6",
+    "qasync>=0.27",     # asyncio loop integration for Qt
 ]
 
 [tool.coverage.run]
@@ -132,7 +136,6 @@ module = [
     "malphas.splash",
     "malphas.gui",
     "malphas.gui_icons",
-    "malphas.gui_dialogs",
     "malphas.gui_theme",
 ]
 disable_error_code = [
