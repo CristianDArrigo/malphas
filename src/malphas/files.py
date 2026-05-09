@@ -173,7 +173,13 @@ class IncomingFile:
         if not self.is_complete():
             raise ValueError("File not yet complete")
         ordered = b"".join(self._chunks[i] for i in range(self._offer.chunk_count))
-        if hashlib.sha256(ordered).hexdigest() != self._offer.sha256:
+        # Constant-time compare. The hash isn't a secret, but a
+        # timing oracle on the integrity check is exactly the kind of
+        # thing TM-05 calls out — better to leave nothing on the table.
+        import hmac as _hmac
+        if not _hmac.compare_digest(
+                hashlib.sha256(ordered).hexdigest(),
+                self._offer.sha256):
             raise ValueError("SHA-256 mismatch — file corrupted or tampered")
         if len(ordered) != self._offer.size:
             raise ValueError(

@@ -3,6 +3,39 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [1.0.0-rc2] — 2026-05-09
+
+### Resolved — TM-05 constant-time compare audit
+
+Wire-compatible follow-up to rc1. Audited every byte/string
+comparison in `src/malphas/`, fixed the two sites that were
+using `==` on a value where a timing oracle could fingerprint
+contents.
+
+- `pinstore.check_and_pin`: pinned-key match now uses
+  `hmac.compare_digest` instead of `==`.
+- `files.IncomingFile.assemble`: SHA-256 integrity compare now
+  uses `hmac.compare_digest` instead of `!=`.
+
+Other comparisons surveyed and left as-is (rationale in
+`tests/test_constant_time.py` docstring): peer_id routing
+(public identifier), addressbook label search (user input),
+final-hop sentinel in onion peel (public marker), AEAD and
+signature verifies (constant-time inside `cryptography.hazmat`).
+
+### Added — `tests/test_constant_time.py`
+
+Nine cases. Two source-grep guards (regression-detect if
+someone refactors `compare_digest` away from `pinstore.py`,
+`files.py`, or `crypto.hmac_verify`). Seven behavioural smokes
+across HMAC verify, pinstore match/mismatch, file assemble
+correct-hash / wrong-hash.
+
+### Updated
+
+- `THREAT_MODEL.md` §5: TM-05 marked resolved with reference to
+  the iter doc and the test file.
+
 ## [1.0.0-rc1] — 2026-05-09
 
 ### Wire format frozen — release candidate

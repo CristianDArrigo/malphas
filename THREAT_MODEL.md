@@ -142,7 +142,7 @@ release.
 | TM-02 | High     | No external cryptographic protocol review.                               | REVIEW_REQUEST.md |
 | TM-03 | High     | Wire format has been broken 4× in two months. Not stable yet.            | PROTOCOL.md, frozen at `1.0.0-rc1`. |
 | TM-04 | Medium   | TOFU window: first connect to a new peer trusts the public key on faith. | by design; documented in invite flow. |
-| TM-05 | Medium   | Constant-time compares not audited end-to-end.                           | iter-053+    |
+| TM-05 | ~~Medium~~ resolved | Constant-time compares audited (iter-054). `pinstore` and `files` integrity check now use `hmac.compare_digest`. Other comparisons either go through `cryptography.hazmat` (constant-time by construction) or compare public identifiers where timing leaks no secret. Regression-tested in `tests/test_constant_time.py`. | iter-054 ✅ |
 | TM-06 | Medium   | Cover traffic optional and basic; doesn't defeat traffic analysis.       | future       |
 | TM-07 | Medium   | Ed25519 signatures are non-deniable; signed messages can be leaked.      | future (OTR-style MAC). |
 | TM-08 | Medium   | No reproducible build; wheel ships whatever your toolchain produces.     | RELEASE.md (planned) |

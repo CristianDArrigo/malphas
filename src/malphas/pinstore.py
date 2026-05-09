@@ -43,7 +43,11 @@ class PinStore:
             self._save()
             return True, None
 
-        if existing == pub_hex:
+        # Constant-time compare so a timing oracle can't be used to
+        # fingerprint pin-store contents byte-by-byte. Pinned keys
+        # are nominally public, but the safe path is the cheap path.
+        import hmac as _hmac
+        if _hmac.compare_digest(existing, pub_hex):
             return True, None
 
         # Mismatch
