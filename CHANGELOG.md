@@ -3,6 +3,49 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.2] — 2026-05-09
+
+### Qt GUI — visual polish round 1
+
+User shared a screenshot of the running app. Three visible bugs +
+a polish pass.
+
+Fixed
+- Empty conversation header showed a stray empty box where the
+  avatar would go. The 44x44 holder was always present; now
+  `setVisible(False)` until a conversation is picked.
+- Standalone preview's header tried to render `peer_id = "—"`
+  which leaked a tiny dash chip into the layout. The sub-label
+  is only added when a real `node` is attached.
+- All sidebar items showed the red accent strip simultaneously
+  because Qt's `:selected` pseudo-state doesn't propagate
+  through widgets installed via `setItemWidget`. Active state
+  is now applied imperatively by `_add_sidebar_row`, and
+  `_select` re-renders the list so the highlight follows the
+  click.
+
+Polish
+- Sidebar rows wrapped in a styled `QFrame#PeerRow` so each
+  item gets `border-radius: 10px`, hover bg, and an active
+  3-px accent strip on the left. Group rows show a small
+  `GROUP` tag in info-cyan next to the title.
+- Bubble corners now asymmetric (16px on three corners, 4px
+  on the tail-side corner: bottom-right for "you", bottom-left
+  for "them") for that chat-app speech-bubble shape.
+- Empty-state sigil now sits on a softly tinted halo
+  (`_sigil_with_halo`, paints a `BG_RAISED` circle behind the
+  PNG) so the all-black artwork reads against the dark base.
+- Header / counter / status / lock / empty-hint labels all
+  forced to `background: transparent` so the parent surface
+  bleeds through (was leaving subtle ghost boxes around text).
+- Tor lock toggled via `setVisible` instead of CSS color
+  swap (the property toggle had been leaving the glyph half-
+  rendered when off).
+
+Internal
+- Sidebar key stored on `QListWidgetItem` via `setData
+  (UserRole+1)` (item is unhashable, can't be a dict key).
+
 ## [0.11.1] — 2026-05-09
 
 ### Qt GUI — full feature parity with the tkinter GUI

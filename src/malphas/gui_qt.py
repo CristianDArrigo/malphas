@@ -73,6 +73,29 @@ def _load_sigil() -> QtGui.QPixmap | None:
     return pm
 
 
+def _sigil_with_halo(sigil: QtGui.QPixmap, size_px: int,
+                      halo_color: str = T.BG_RAISED,
+                      pad: int = 26) -> QtGui.QPixmap:
+    """Composite a lighter-circle halo behind the sigil so the
+    black artwork reads against the dark base background."""
+    side = size_px + pad * 2
+    out = QtGui.QPixmap(side, side)
+    out.fill(QtCore.Qt.GlobalColor.transparent)
+    p = QtGui.QPainter(out)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    p.setBrush(QtGui.QColor(halo_color))
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    p.drawEllipse(0, 0, side, side)
+    scaled = sigil.scaled(
+        size_px, size_px,
+        QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+        QtCore.Qt.TransformationMode.SmoothTransformation,
+    )
+    p.drawPixmap(pad, pad, scaled)
+    p.end()
+    return out
+
+
 # ── QSS theme ────────────────────────────────────────────────────────────────
 
 
@@ -97,6 +120,16 @@ def _qss() -> str:
         color: {T.FG_MUTED};
         font-family: "JetBrains Mono", "SF Mono", "Cascadia Mono", monospace;
         font-size: 9pt;
+        background: transparent;
+    }}
+    QLabel#HeaderBrand {{
+        background: transparent;
+    }}
+    QLabel#TorLock, QLabel#StatusDot {{
+        background: transparent;
+    }}
+    QLabel#EmptyHint {{
+        background: transparent;
     }}
     QLabel#StatusDot[connected="true"] {{ color: {T.OK_GREEN}; }}
     QLabel#StatusDot[connected="false"] {{ color: {T.FG_FAINT}; }}
@@ -127,15 +160,23 @@ def _qss() -> str:
         padding: 0;
     }}
     QListWidget#PeerList::item {{
-        padding: 4px 0;
+        padding: 0;
         border: none;
+        margin: 1px 0;
     }}
-    QListWidget#PeerList::item:hover {{
+    /* PeerRow / PeerAccent state is set imperatively (Qt QSS
+       :selected pseudo-state doesn't propagate through
+       setItemWidget). The bare rule below sets the off state. */
+    QFrame#PeerRow {{
+        background-color: transparent;
+        border-radius: 10px;
+    }}
+    QFrame#PeerRow:hover {{
         background-color: {T.BG_HOVER};
     }}
-    QListWidget#PeerList::item:selected {{
-        background-color: {T.BG_ACTIVE};
-        border-left: 3px solid {T.ACCENT};
+    QFrame#PeerAccent {{
+        background-color: transparent;
+        border-radius: 2px;
     }}
 
     QFrame#ConvHeader {{
@@ -150,21 +191,24 @@ def _qss() -> str:
     QLabel#BubbleThem {{
         background-color: {T.BUBBLE_THEM};
         color: {T.FG_PRIMARY};
-        padding: 9px 14px;
-        border-radius: 14px;
+        padding: 10px 15px;
+        border-radius: 16px;
+        border-bottom-left-radius: 4px;
     }}
     QLabel#BubbleYou {{
         background-color: {T.BUBBLE_YOU};
         color: {T.FG_PRIMARY};
-        padding: 9px 14px;
-        border-radius: 14px;
+        padding: 10px 15px;
+        border-radius: 16px;
+        border-bottom-right-radius: 4px;
     }}
     QLabel#BubbleSys {{
         background-color: {T.BUBBLE_SYS};
         color: {T.FG_MUTED};
-        padding: 6px 12px;
+        padding: 5px 14px;
         border-radius: 12px;
         font-style: italic;
+        font-size: 9pt;
     }}
     QLabel#BubbleTimestamp {{
         color: {T.FG_FAINT};
@@ -446,11 +490,12 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         brand.setObjectName("HeaderBrand")
         h.addWidget(brand)
 
-        peer_id = self.node.identity.peer_id if self.node else "—"
-        sub = QtWidgets.QLabel(_short(peer_id, 16))
-        sub.setObjectName("HeaderSub")
-        sub.setToolTip(peer_id)
-        h.addWidget(sub)
+        if self.node is not None:
+            peer_id = self.node.identity.peer_id
+            sub = QtWidgets.QLabel(_short(peer_id, 16))
+            sub.setObjectName("HeaderSub")
+            sub.setToolTip(peer_id)
+            h.addWidget(sub)
 
         h.addStretch()
 
@@ -550,6 +595,10 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
 
         self.conv_avatar_holder = QtWidgets.QWidget()
         self.conv_avatar_holder.setFixedSize(44, 44)
+        self.conv_avatar_holder.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.conv_avatar_holder.setStyleSheet("background: transparent;")
+        self.conv_avatar_holder.setVisible(False)
         self.conv_avatar_layout = QtWidgets.QVBoxLayout(self.conv_avatar_holder)
         self.conv_avatar_layout.setContentsMargins(0, 0, 0, 0)
         chl.addWidget(self.conv_avatar_holder)
@@ -594,12 +643,9 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         ev.addStretch()
         if self._sigil is not None:
             sigil_lbl = QtWidgets.QLabel()
-            sigil_lbl.setPixmap(self._sigil.scaled(
-                200, 200,
-                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                QtCore.Qt.TransformationMode.SmoothTransformation,
-            ))
+            sigil_lbl.setPixmap(_sigil_with_halo(self._sigil, 200, pad=32))
             sigil_lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            sigil_lbl.setStyleSheet("background: transparent;")
             ev.addWidget(sigil_lbl)
         hint = QtWidgets.QLabel("pick a peer or generate an invite to start")
         hint.setObjectName("EmptyHint")
@@ -695,36 +741,74 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
 
     def _add_sidebar_row(self, key: str, title: str, sub: str,
                           is_group: bool) -> None:
-        row = QtWidgets.QWidget()
-        row.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, False)
-        h = QtWidgets.QHBoxLayout(row)
-        h.setContentsMargins(10, 6, 10, 6)
-        h.setSpacing(T.PAD_SM)
+        is_active = (key == self.active)
 
-        h.addWidget(Avatar(title or "?", key, size=38))
+        row = QtWidgets.QFrame()
+        row.setObjectName("PeerRow")
+        row.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        if is_active:
+            row.setStyleSheet(
+                "QFrame#PeerRow { background-color: "
+                f"{T.BG_ACTIVE}; border-radius: 10px; }}")
+        outer = QtWidgets.QHBoxLayout(row)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        accent = QtWidgets.QFrame()
+        accent.setObjectName("PeerAccent")
+        accent.setFixedWidth(3)
+        accent.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        if is_active:
+            accent.setStyleSheet(
+                "QFrame#PeerAccent { background-color: "
+                f"{T.ACCENT}; border-radius: 2px; }}")
+        outer.addWidget(accent)
+
+        body = QtWidgets.QHBoxLayout()
+        body.setContentsMargins(10, 8, 10, 8)
+        body.setSpacing(T.PAD_SM)
+
+        body.addWidget(Avatar(title or "?", key, size=40))
 
         text = QtWidgets.QVBoxLayout()
-        text.setSpacing(0)
+        text.setSpacing(1)
         text.setContentsMargins(0, 0, 0, 0)
+
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
         title_lbl = QtWidgets.QLabel(title)
         title_lbl.setStyleSheet(
             f"color: {T.FG_PRIMARY}; font-weight: 600; background: transparent;"
+            "font-size: 10pt;"
         )
+        title_row.addWidget(title_lbl)
+        if is_group:
+            tag = QtWidgets.QLabel("GROUP")
+            tag.setStyleSheet(
+                f"color: {T.INFO_CYAN}; background: transparent; "
+                "font-size: 7pt; font-weight: 700; letter-spacing: 1px;"
+            )
+            title_row.addWidget(tag)
+        title_row.addStretch()
+        text.addLayout(title_row)
+
         sub_lbl = QtWidgets.QLabel(sub)
         sub_lbl.setStyleSheet(
             f"color: {T.FG_MUTED}; font-size: 9pt; "
             "font-family: 'JetBrains Mono', monospace; background: transparent;"
         )
-        text.addWidget(title_lbl)
         text.addWidget(sub_lbl)
-        h.addLayout(text, 1)
+        body.addLayout(text, 1)
 
         if key in self.unread:
             dot = QtWidgets.QLabel("●")
             dot.setStyleSheet(
                 f"color: {T.ACCENT}; font-size: 11pt; background: transparent;"
             )
-            h.addWidget(dot)
+            body.addWidget(dot)
+
+        outer.addLayout(body, 1)
 
         item = QtWidgets.QListWidgetItem(self.peers)
         item.setSizeHint(row.sizeHint())
@@ -741,9 +825,9 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
 
     def _select(self, key: str) -> None:
         self.active = key
-        if key in self.unread:
-            self.unread.discard(key)
-            self._refresh_sidebar()
+        self.unread.discard(key)
+        # Refresh so the new active row gets accent + tinted bg.
+        self._refresh_sidebar()
         self._redraw_conv_header()
         self._redraw_chat()
 
@@ -758,9 +842,12 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
                 w.deleteLater()
 
         if not self.active:
+            self.conv_avatar_holder.setVisible(False)
             self.conv_title.setText("No conversation selected")
             self.conv_sub.setText("")
             return
+
+        self.conv_avatar_holder.setVisible(True)
 
         # Standalone-preview path: no node, no book.
         if self.node is None:
