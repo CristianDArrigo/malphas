@@ -15,6 +15,12 @@ import json
 import secrets
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.asymmetric.x25519 import (
+        X25519PrivateKey,
+    )
 
 from .crypto import (
     decrypt,
@@ -102,7 +108,8 @@ def _unpack_header(data: bytes):
     return msg_type, length
 
 
-def _resolve_sealed_from(data: dict, my_x25519_priv: object) -> str:
+def _resolve_sealed_from(
+        data: dict, my_x25519_priv: "X25519PrivateKey") -> str:
     """
     Recover the sender peer_id from a sealed envelope embedded in
     `data` (`from_eph` + `from_sealed`). Returns the empty string on

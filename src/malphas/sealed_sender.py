@@ -33,6 +33,8 @@ from __future__ import annotations
 import base64
 import binascii
 
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
 from .crypto import (
     decrypt,
     ecdh_shared_secret,
@@ -65,7 +67,7 @@ def seal(from_peer_id: str, dest_x25519_pub: bytes) -> tuple[str, str]:
 def unseal(
     eph_pub_hex: str,
     sealed_b64: str,
-    my_x25519_priv: object,  # X25519PrivateKey, but typed at call site
+    my_x25519_priv: X25519PrivateKey,
 ) -> str:
     """
     Recover `from_peer_id` from a sealed envelope.
@@ -86,7 +88,7 @@ def unseal(
     except (ValueError, binascii.Error) as e:
         raise ValueError(f"invalid sealed b64: {e}") from e
 
-    shared = ecdh_shared_secret(my_x25519_priv, eph_pub)  # type: ignore[arg-type]
+    shared = ecdh_shared_secret(my_x25519_priv, eph_pub)
     from_key = hkdf_derive(shared, salt=_SALT, info=_INFO, length=32)
     plaintext = decrypt(from_key, sealed, aad=eph_pub)
     return plaintext.decode("utf-8")
