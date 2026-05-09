@@ -3,6 +3,21 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.5] — 2026-05-09
+
+### Documentation
+
+- New `docs/auto-loop/SUMMARY.md` — cumulative overview of the entire
+  autonomous-loop session (iter 1 through 38). Maps every iter to its
+  release, summarizes by area what changed, lists what was deliberately
+  NOT touched and why, and proposes next steps for the user. Designed
+  as a single re-entry point.
+- `docs/auto-loop/INDEX.md` now links to SUMMARY.md as the first stop.
+
+### Wire format
+
+Unchanged.
+
 ## [0.5.4] — 2026-05-09
 
 ### Engineering

@@ -1,5 +1,10 @@
 # Auto-Loop Development Log
 
+> **Tornando dal lavoro?** Leggi prima [`SUMMARY.md`](SUMMARY.md) — è
+> un overview di tutta la sessione autonoma in 2 minuti, mappa
+> iter→version→topic, sezione "cosa NON è stato toccato" e
+> suggerimenti per la prossima sessione.
+
 Ricorsivo loop autonomo: review → plan → TDD → implement → repeat.
 
 Operatore: Claude (modalità auto, opus 4.7).
@@ -63,3 +68,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 035 | iter-035-next-target.md | Next-target (single SoT for strict bucket) | done |
 | 036 | iter-036-green-mypy-sot.md | Green: single source of truth — mypy strict bucket | done |
 | 037 | iter-037-next-target.md | Next-target (cumulative SUMMARY.md) | done |
+| 038 | iter-038-green-summary.md | Green: cumulative SUMMARY.md | done |
