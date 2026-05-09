@@ -3,6 +3,47 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.3] — 2026-05-09
+
+### GUI
+
+- **Malphas seal logo** drawn via `tkinter.Canvas` primitives (no PNG
+  asset). Three concentric rings + inverted equilateral triangle +
+  hexagram (Star of Solomon) + descending spear + 4 cardinal dots.
+  Used in:
+  - the header (small, 32px)
+  - the empty-state pane (large, scales with window)
+  - the recovery-mnemonic dialog (44px)
+  - the About dialog (120px)
+- **Custom sidebar** (`SidebarItem`) replaces the ttk `Treeview`:
+  - 3px left accent bar on active row (color = malphas red)
+  - hover state (bg lightens to `#2a2b34`)
+  - active state (bg `#33141a` accent-tinted, accent bar visible)
+  - per-row title + monospaced subtitle + unread dot badge on the right
+  - mousewheel scrolling, custom scrollbar
+- **Empty state**: large seal centered + "malphas" wordmark + tagline,
+  rendered on a Canvas that resizes with the chat pane.
+- **About dialog** redesigned as a `Toplevel` with the seal at the top.
+- **Recovery-mnemonic dialog** gets the seal in the header beside the title.
+- **Color palette** rebalanced for more depth:
+  - `BG_BASE`    `#0a0a0d` (was `#0e0e10`) — darker
+  - `BG_RAISED`  `#22232a` (was `#1d1d22`) — lighter
+  - `BG_HOVER`   `#2a2b34` — new
+  - `BG_ACTIVE`  `#33141a` — new (accent-tinted)
+  - `BG_DIVIDER` `#34343d` — more visible 1px lines
+  - `ACCENT_GLOW` `#ff5555` — bright red for button-pressed feedback
+
+### Tor support in `--mode gui`
+
+`malphas --mode gui --tor` now also registers the Tor v3 hidden
+service through the asyncio bridge. Before 0.10.3 it only opened
+the SOCKS5 proxy outbound; inbound `.onion` traffic was lost.
+Mirrors the `_run_cli` flow.
+
+### Wire format
+
+Unchanged.
+
 ## [0.10.2] — 2026-05-09
 
 ### GUI redesign

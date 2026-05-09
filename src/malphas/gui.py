@@ -12,6 +12,7 @@ Entry point: `launch_gui(node, book, bridge, salt_path)`.
 from __future__ import annotations
 
 import asyncio
+import math
 import queue
 import threading
 import time
@@ -30,19 +31,26 @@ from .node import MalphasNode
 from .salt_store import SALT_LEN
 
 # ── Design system ────────────────────────────────────────────────────────────
+#
+# Three-tier dark palette with intentionally amplified contrast between
+# tiers, plus accent-tinted hover/active states. Tk is intrinsically
+# flat — depth here comes from layering (BG_BASE → BG_SURFACE → BG_RAISED),
+# divider lines, and accent borders on selection.
 
-BG_BASE     = "#0e0e10"
-BG_SURFACE  = "#16161a"
-BG_RAISED   = "#1d1d22"
-BG_DIVIDER  = "#26262d"
+BG_BASE     = "#0a0a0d"   # window background
+BG_SURFACE  = "#15151a"   # sidebars, header, status bar
+BG_RAISED   = "#22232a"   # chat pane, input row, dialogs
+BG_HOVER    = "#2a2b34"   # sidebar item hover
+BG_ACTIVE   = "#33141a"   # sidebar item active (accent-tinted)
+BG_DIVIDER  = "#34343d"   # 1px lines
 
 FG_PRIMARY  = "#ececec"
 FG_MUTED    = "#9a9a9a"
-FG_FAINT    = "#666670"
+FG_FAINT    = "#5e5e68"
 
-ACCENT      = "#d23a3a"
-ACCENT_SOFT = "#5a1f1f"
-ACCENT_TINT = "#2a1414"
+ACCENT      = "#d23a3a"   # malphas red
+ACCENT_DIM  = "#7a2222"
+ACCENT_GLOW = "#ff5555"
 OK_GREEN    = "#5cb85c"
 WARN_AMBER  = "#e0a830"
 INFO_CYAN   = "#5b9fd8"
@@ -53,11 +61,74 @@ PAD_MD = 12
 PAD_LG = 16
 PAD_XL = 24
 
-WIN_W = 1180
-WIN_H = 760
-SIDEBAR_W = 260
+WIN_W = 1200
+WIN_H = 780
+SIDEBAR_W = 280
 
 GITHUB_URL = "https://github.com/CristianDArrigo/malphas"
+
+
+# ── Malphas seal (drawn via Canvas, no asset file) ───────────────────────────
+
+
+def draw_malphas_seal(c: tk.Canvas, cx: float, cy: float, r: float,
+                      ring: str, mark: str, dot: str) -> None:
+    """Render an abstract Malphas-style demonic seal centered at (cx, cy)
+    with outer radius `r`. Three concentric rings, an inverted triangle,
+    a hexagram inside, four cardinal dots on the outer ring, a thin
+    pin-down central spear.
+    """
+    # Outer ring (thick)
+    c.create_oval(cx - r, cy - r, cx + r, cy + r,
+                  outline=ring, width=max(2, int(r / 24)))
+    # Mid ring (thin)
+    rm = r * 0.78
+    c.create_oval(cx - rm, cy - rm, cx + rm, cy + rm,
+                  outline=mark, width=1)
+    # Inner ring (thin, smaller)
+    rs = r * 0.34
+    c.create_oval(cx - rs, cy - rs, cx + rs, cy + rs,
+                  outline=mark, width=1)
+
+    # Inverted equilateral triangle (▽) inscribed in the mid ring
+    pts = []
+    for i in range(3):
+        angle = math.pi / 2 + 2 * math.pi * i / 3 + math.pi  # rotate so apex is down
+        pts.extend([cx + rm * math.cos(angle),
+                    cy + rm * math.sin(angle)])
+    c.create_polygon(*pts, outline=mark, fill="",
+                     width=max(1, int(r / 32)))
+
+    # Hexagram (Star of Solomon) inside — two overlapping triangles
+    rh = r * 0.50
+    pts1, pts2 = [], []
+    for i in range(3):
+        a1 = math.pi / 2 + 2 * math.pi * i / 3
+        a2 = -math.pi / 2 + 2 * math.pi * i / 3
+        pts1.extend([cx + rh * math.cos(a1), cy + rh * math.sin(a1)])
+        pts2.extend([cx + rh * math.cos(a2), cy + rh * math.sin(a2)])
+    c.create_polygon(*pts1, outline=ring, fill="", width=1)
+    c.create_polygon(*pts2, outline=ring, fill="", width=1)
+
+    # Vertical descending spear inside (Malphas iconography hint)
+    c.create_line(cx, cy - rs * 0.85, cx, cy + r * 0.92,
+                  fill=ring, width=1)
+    # Cross-bar near the spear's top (small)
+    c.create_line(cx - rs * 0.35, cy - rs * 0.55,
+                  cx + rs * 0.35, cy - rs * 0.55,
+                  fill=ring, width=1)
+
+    # 4 cardinal dots on the outer ring
+    for angle in (math.pi / 2, -math.pi / 2, 0.0, math.pi):
+        x = cx + r * math.cos(angle)
+        y = cy + r * math.sin(angle)
+        d = max(2.0, r / 18)
+        c.create_oval(x - d, y - d, x + d, y + d, fill=dot, outline="")
+
+    # Central dot
+    cd = max(2.0, r / 22)
+    c.create_oval(cx - cd, cy - cd, cx + cd, cy + cd,
+                  fill=dot, outline="")
 
 
 # ── AsyncBridge ──────────────────────────────────────────────────────────────
@@ -117,6 +188,109 @@ def _pick_font(root: tk.Misc, candidates: list[str]) -> str:
     return "TkDefaultFont"
 
 
+# ── Sidebar item (custom widget) ─────────────────────────────────────────────
+
+
+class SidebarItem(tk.Frame):
+    """A clickable conversation row with hover + active states.
+
+    Layered on plain tk.Frame so we can paint a left accent bar when
+    selected (Treeview can't do that), and switch background on
+    enter/leave for proper hover feedback.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        glyph: str,
+        title: str,
+        subtitle: str,
+        unread: bool,
+        on_click: Any,
+        font_body: tkfont.Font,
+        font_small: tkfont.Font,
+    ) -> None:
+        super().__init__(parent, bg=BG_SURFACE, bd=0, highlightthickness=0)
+        self._on_click = on_click
+        self._active = False
+
+        # Left accent bar (hidden when inactive — same color as bg).
+        self._bar = tk.Frame(self, bg=BG_SURFACE, width=3)
+        self._bar.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Inner padding container
+        self._inner = tk.Frame(self, bg=BG_SURFACE)
+        self._inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
+                          padx=PAD_MD, pady=PAD_SM)
+
+        # Glyph (●, ◦, ▣)
+        self._glyph = tk.Label(self._inner, text=glyph, bg=BG_SURFACE,
+                                fg=FG_MUTED, font=font_body)
+        self._glyph.pack(side=tk.LEFT, padx=(0, PAD_SM))
+
+        # Title + subtitle stacked
+        text_box = tk.Frame(self._inner, bg=BG_SURFACE)
+        text_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._title = tk.Label(text_box, text=title, bg=BG_SURFACE,
+                                fg=FG_PRIMARY, font=font_body, anchor="w")
+        self._title.pack(side=tk.TOP, fill=tk.X, anchor="w")
+        if subtitle:
+            self._sub = tk.Label(text_box, text=subtitle, bg=BG_SURFACE,
+                                  fg=FG_FAINT, font=font_small, anchor="w")
+            self._sub.pack(side=tk.TOP, fill=tk.X, anchor="w")
+        else:
+            self._sub = None
+
+        # Unread badge on the right
+        self._badge = tk.Label(self._inner, text="●" if unread else "",
+                                bg=BG_SURFACE,
+                                fg=ACCENT if unread else BG_SURFACE,
+                                font=font_small)
+        self._badge.pack(side=tk.RIGHT)
+
+        # Bind click + hover on every child (Tk doesn't propagate)
+        for w in (self, self._bar, self._inner, self._glyph,
+                  self._title, self._badge,
+                  *([self._sub] if self._sub else [])):
+            w.bind("<Button-1>", self._click)
+            w.bind("<Enter>", self._enter)
+            w.bind("<Leave>", self._leave)
+
+    def _bg(self, color: str) -> None:
+        for w in (self, self._inner, self._glyph, self._title, self._badge):
+            w.configure(bg=color)
+        if self._sub:
+            self._sub.configure(bg=color)
+        # Inner text_box parent of title/sub
+        try:
+            self._title.master.configure(bg=color)
+        except tk.TclError:
+            pass
+
+    def _click(self, _event: object) -> None:
+        try:
+            self._on_click()
+        except Exception:
+            pass
+
+    def _enter(self, _event: object) -> None:
+        if not self._active:
+            self._bg(BG_HOVER)
+
+    def _leave(self, _event: object) -> None:
+        if not self._active:
+            self._bg(BG_SURFACE)
+
+    def set_active(self, active: bool) -> None:
+        self._active = active
+        if active:
+            self._bg(BG_ACTIVE)
+            self._bar.configure(bg=ACCENT)
+        else:
+            self._bg(BG_SURFACE)
+            self._bar.configure(bg=BG_SURFACE)
+
+
 # ── MalphasGUI ───────────────────────────────────────────────────────────────
 
 
@@ -137,12 +311,13 @@ class MalphasGUI:
         self._pending_offers: dict[str, tuple[str, dict]] = {}
         self._completed_files: dict[str, tuple[str, str, bytes]] = {}
         self._unread: set[str] = set()
+        self._sidebar_items: dict[str, SidebarItem] = {}
         self.event_queue: queue.Queue = queue.Queue()
 
         self.root = tk.Tk()
         self.root.title(f"malphas — {_short(node.identity.peer_id, 16)}")
         self.root.geometry(f"{WIN_W}x{WIN_H}")
-        self.root.minsize(820, 560)
+        self.root.minsize(860, 580)
         self.root.configure(bg=BG_BASE)
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
 
@@ -171,6 +346,7 @@ class MalphasGUI:
         self.f_h1    = tkfont.Font(family=sans, size=14, weight="bold")
         self.f_h2    = tkfont.Font(family=sans, size=11, weight="bold")
         self.f_small = tkfont.Font(family=sans, size=9)
+        self.f_tiny  = tkfont.Font(family=sans, size=8)
         self.f_mono  = tkfont.Font(family=mono, size=10)
         self.f_mono_sm = tkfont.Font(family=mono, size=9)
 
@@ -192,8 +368,8 @@ class MalphasGUI:
         s.configure("TLabel", background=BG_BASE, foreground=FG_PRIMARY)
         s.configure("Surface.TLabel", background=BG_SURFACE, foreground=FG_PRIMARY)
         s.configure("Heading.TLabel", background=BG_SURFACE,
-                    foreground=FG_FAINT, font=self.f_small,
-                    padding=(PAD_MD, PAD_MD, PAD_MD, PAD_XS))
+                    foreground=FG_FAINT, font=self.f_tiny,
+                    padding=(PAD_MD, PAD_LG, PAD_MD, PAD_XS))
         s.configure("Title.TLabel", background=BG_SURFACE,
                     foreground=FG_PRIMARY, font=self.f_h1)
         s.configure("Status.TLabel", background=BG_SURFACE,
@@ -203,33 +379,25 @@ class MalphasGUI:
         s.configure("TButton", background=BG_RAISED, foreground=FG_PRIMARY,
                     borderwidth=0, padding=(PAD_MD, PAD_SM), font=self.f_body)
         s.map("TButton",
-              background=[("active", ACCENT_SOFT), ("pressed", ACCENT_SOFT)])
+              background=[("active", ACCENT_DIM), ("pressed", ACCENT_DIM)])
         s.configure("Accent.TButton", background=ACCENT, foreground=FG_PRIMARY,
                     borderwidth=0, padding=(PAD_LG, PAD_SM), font=self.f_bold)
         s.map("Accent.TButton",
-              background=[("active", ACCENT_SOFT), ("pressed", ACCENT_SOFT)])
+              background=[("active", ACCENT_GLOW), ("pressed", ACCENT_DIM)])
         s.configure("Ghost.TButton", background=BG_SURFACE, foreground=FG_MUTED,
                     borderwidth=0, padding=(PAD_MD, PAD_SM), font=self.f_body)
         s.map("Ghost.TButton",
-              background=[("active", BG_RAISED)],
+              background=[("active", BG_HOVER)],
               foreground=[("active", FG_PRIMARY)])
 
         s.configure("TEntry", fieldbackground=BG_RAISED, foreground=FG_PRIMARY,
                     insertcolor=ACCENT, borderwidth=0,
                     padding=(PAD_MD, PAD_SM), font=self.f_body)
 
-        s.configure("Sidebar.Treeview", background=BG_SURFACE, foreground=FG_PRIMARY,
-                    fieldbackground=BG_SURFACE, borderwidth=0,
-                    rowheight=28, font=self.f_body)
-        s.map("Sidebar.Treeview",
-              background=[("selected", ACCENT_TINT)],
-              foreground=[("selected", FG_PRIMARY)])
-        s.layout("Sidebar.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
-
         s.configure("Vertical.TScrollbar", background=BG_SURFACE,
                     troughcolor=BG_SURFACE, borderwidth=0, arrowsize=12)
         s.map("Vertical.TScrollbar",
-              background=[("active", BG_RAISED), ("pressed", ACCENT_SOFT)])
+              background=[("active", BG_RAISED), ("pressed", ACCENT_DIM)])
 
     # ── UI build ────────────────────────────────────────────────────────────
 
@@ -240,26 +408,19 @@ class MalphasGUI:
         body = ttk.Frame(self.root)
         body.pack(fill=tk.BOTH, expand=True)
 
-        paned = ttk.PanedWindow(body, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True)
-
-        self._build_sidebar(paned)
-        self._build_main(paned)
-        try:
-            paned.sashpos(0, SIDEBAR_W)
-        except tk.TclError:
-            pass
+        self._build_sidebar(body)
+        self._build_main(body)
 
         self._build_statusbar()
 
     def _build_menubar(self) -> None:
         menubar = tk.Menu(self.root, bg=BG_SURFACE, fg=FG_PRIMARY,
-                          activebackground=ACCENT_SOFT, activeforeground=FG_PRIMARY,
+                          activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
                           borderwidth=0, font=self.f_body)
         self.root.config(menu=menubar)
 
         m_file = tk.Menu(menubar, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
-                         activebackground=ACCENT_SOFT, activeforeground=FG_PRIMARY,
+                         activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
                          font=self.f_body)
         m_file.add_command(label="Generate invite (copy to clipboard)",
                            command=self._action_export, accelerator="Ctrl+E")
@@ -276,14 +437,14 @@ class MalphasGUI:
         menubar.add_cascade(label="File", menu=m_file)
 
         m_view = tk.Menu(menubar, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
-                         activebackground=ACCENT_SOFT, activeforeground=FG_PRIMARY,
+                         activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
                          font=self.f_body)
         m_view.add_command(label="Refresh peer list", command=self._refresh_sidebar,
                            accelerator="F5")
         menubar.add_cascade(label="View", menu=m_view)
 
         m_group = tk.Menu(menubar, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
-                          activebackground=ACCENT_SOFT, activeforeground=FG_PRIMARY,
+                          activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
                           font=self.f_body)
         m_group.add_command(label="Create new group…", command=self._action_group_new)
         m_group.add_command(label="Add member to active group…",
@@ -292,7 +453,7 @@ class MalphasGUI:
         menubar.add_cascade(label="Group", menu=m_group)
 
         m_help = tk.Menu(menubar, tearoff=0, bg=BG_SURFACE, fg=FG_PRIMARY,
-                         activebackground=ACCENT_SOFT, activeforeground=FG_PRIMARY,
+                         activebackground=ACCENT_DIM, activeforeground=FG_PRIMARY,
                          font=self.f_body)
         m_help.add_command(label="About malphas", command=self._action_about)
         m_help.add_command(label="Open GitHub repo",
@@ -305,76 +466,127 @@ class MalphasGUI:
         self.root.bind("<F5>", lambda e: self._refresh_sidebar())
 
     def _build_header(self) -> None:
-        header = ttk.Frame(self.root, style="Surface.TFrame",
-                            padding=(PAD_LG, PAD_MD))
+        header = tk.Frame(self.root, bg=BG_SURFACE, height=60)
         header.pack(fill=tk.X, side=tk.TOP)
+        header.pack_propagate(False)
 
-        left = ttk.Frame(header, style="Surface.TFrame")
-        left.pack(side=tk.LEFT, fill=tk.Y)
-        ttk.Label(left, text="malphas", style="Title.TLabel").pack(side=tk.LEFT)
-        tk.Label(left, text=f"  ·  {_short(self.node.identity.peer_id, 16)}",
-                 bg=BG_SURFACE, fg=FG_MUTED, font=self.f_mono_sm).pack(side=tk.LEFT)
+        # Left: small seal + brand + peer_id
+        left = tk.Frame(header, bg=BG_SURFACE)
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(PAD_LG, 0))
 
-        right = ttk.Frame(header, style="Surface.TFrame")
-        right.pack(side=tk.RIGHT, fill=tk.Y)
-        self.dot = tk.Label(right, text="●", bg=BG_SURFACE, fg=FG_FAINT,
+        seal = tk.Canvas(left, width=36, height=36, bg=BG_SURFACE,
+                          highlightthickness=0, bd=0)
+        seal.pack(side=tk.LEFT, pady=PAD_MD)
+        draw_malphas_seal(seal, 18, 18, 16, ACCENT, FG_PRIMARY, ACCENT)
+
+        text_box = tk.Frame(left, bg=BG_SURFACE)
+        text_box.pack(side=tk.LEFT, padx=(PAD_MD, 0), pady=PAD_MD)
+        tk.Label(text_box, text="malphas", bg=BG_SURFACE, fg=FG_PRIMARY,
+                  font=self.f_h1).pack(anchor="w")
+        tk.Label(text_box, text=_short(self.node.identity.peer_id, 16),
+                  bg=BG_SURFACE, fg=FG_MUTED, font=self.f_mono_sm).pack(anchor="w")
+
+        # Right: connection dot + counters
+        right = tk.Frame(header, bg=BG_SURFACE)
+        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, PAD_LG))
+
+        rwrap = tk.Frame(right, bg=BG_SURFACE)
+        rwrap.pack(side=tk.RIGHT, pady=PAD_MD)
+        self.dot = tk.Label(rwrap, text="●", bg=BG_SURFACE, fg=FG_FAINT,
                              font=self.f_body)
         self.dot.pack(side=tk.RIGHT, padx=(PAD_SM, 0))
         self.header_status_var = tk.StringVar()
-        tk.Label(right, textvariable=self.header_status_var,
-                 bg=BG_SURFACE, fg=FG_MUTED, font=self.f_small
-                 ).pack(side=tk.RIGHT)
+        tk.Label(rwrap, textvariable=self.header_status_var,
+                  bg=BG_SURFACE, fg=FG_MUTED, font=self.f_small
+                  ).pack(side=tk.RIGHT)
 
+        # Bottom 1px divider
         tk.Frame(self.root, height=1, bg=BG_DIVIDER).pack(fill=tk.X, side=tk.TOP)
 
-    def _build_sidebar(self, parent: ttk.PanedWindow) -> None:
-        sidebar = ttk.Frame(parent, style="Surface.TFrame")
-        parent.add(sidebar, weight=0)
+    def _build_sidebar(self, parent: tk.Misc) -> None:
+        sidebar = tk.Frame(parent, bg=BG_SURFACE, width=SIDEBAR_W)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        sidebar.pack_propagate(False)
 
-        ttk.Label(sidebar, text="CONVERSATIONS", style="Heading.TLabel"
-                  ).pack(anchor="w", fill=tk.X)
+        # Vertical divider on the right edge
+        # (placed by parent layout — see _build_main)
+        # Heading
+        tk.Label(sidebar, text="CONVERSATIONS", bg=BG_SURFACE, fg=FG_FAINT,
+                  font=self.f_tiny, anchor="w").pack(
+                      anchor="w", padx=PAD_MD, pady=(PAD_LG, PAD_SM))
 
-        wrap = ttk.Frame(sidebar, style="Surface.TFrame")
-        wrap.pack(fill=tk.BOTH, expand=True, padx=PAD_XS, pady=(0, PAD_SM))
-        self.tree = ttk.Treeview(wrap, show="tree", selectmode="browse",
-                                  style="Sidebar.Treeview")
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview,
+        # Scrollable container
+        scroll_wrap = tk.Frame(sidebar, bg=BG_SURFACE)
+        scroll_wrap.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(scroll_wrap, bg=BG_SURFACE, highlightthickness=0,
+                            bd=0)
+        sb = ttk.Scrollbar(scroll_wrap, orient="vertical", command=canvas.yview,
                             style="Vertical.TScrollbar")
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
-        self.tree.tag_configure("section", foreground=FG_FAINT,
-                                 font=self.f_small)
-        self.tree.tag_configure("group", foreground=INFO_CYAN)
-        self.tree.tag_configure("unread", foreground=ACCENT, font=self.f_bold)
 
-        actions = ttk.Frame(sidebar, style="Surface.TFrame")
-        actions.pack(fill=tk.X, padx=PAD_SM, pady=(0, PAD_SM))
+        self._sidebar_canvas = canvas
+        self._sidebar_inner = tk.Frame(canvas, bg=BG_SURFACE)
+        self._sidebar_window = canvas.create_window(
+            (0, 0), window=self._sidebar_inner, anchor="nw"
+        )
+
+        def _resize(event: object) -> None:
+            canvas.itemconfigure(self._sidebar_window, width=canvas.winfo_width())
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        canvas.bind("<Configure>", _resize)
+        self._sidebar_inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        # Mousewheel on hover
+        canvas.bind("<Enter>",
+                     lambda e: canvas.bind_all("<MouseWheel>", self._on_mousewheel))
+        canvas.bind("<Leave>",
+                     lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        # Bottom action area
+        actions = tk.Frame(sidebar, bg=BG_SURFACE)
+        actions.pack(fill=tk.X, padx=PAD_MD, pady=PAD_MD)
         ttk.Button(actions, text="+  Import invite", style="Ghost.TButton",
-                   command=self._action_import).pack(fill=tk.X, pady=(0, PAD_XS))
+                    command=self._action_import).pack(fill=tk.X, pady=(0, PAD_XS))
         ttk.Button(actions, text="↗  Generate invite", style="Ghost.TButton",
-                   command=self._action_export).pack(fill=tk.X)
+                    command=self._action_export).pack(fill=tk.X)
 
-    def _build_main(self, parent: ttk.PanedWindow) -> None:
-        main = ttk.Frame(parent)
-        parent.add(main, weight=3)
+        # Vertical divider between sidebar and main
+        tk.Frame(parent, width=1, bg=BG_DIVIDER).pack(side=tk.LEFT, fill=tk.Y)
 
-        self.conv_header = ttk.Frame(main, style="Surface.TFrame",
-                                      padding=(PAD_LG, PAD_MD, PAD_LG, PAD_MD))
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        try:
+            self._sidebar_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except tk.TclError:
+            pass
+
+    def _build_main(self, parent: tk.Misc) -> None:
+        main = tk.Frame(parent, bg=BG_BASE)
+        main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Conversation header
+        self.conv_header = tk.Frame(main, bg=BG_SURFACE, height=60)
         self.conv_header.pack(fill=tk.X, side=tk.TOP)
+        self.conv_header.pack_propagate(False)
+
+        title_box = tk.Frame(self.conv_header, bg=BG_SURFACE)
+        title_box.pack(side=tk.LEFT, fill=tk.Y, padx=PAD_LG, pady=PAD_SM)
         self.conv_title_var = tk.StringVar(value="No conversation")
         self.conv_sub_var = tk.StringVar(value="")
-        title_box = ttk.Frame(self.conv_header, style="Surface.TFrame")
-        title_box.pack(side=tk.LEFT)
         tk.Label(title_box, textvariable=self.conv_title_var, bg=BG_SURFACE,
-                 fg=FG_PRIMARY, font=self.f_h2).pack(anchor="w")
+                  fg=FG_PRIMARY, font=self.f_h2, anchor="w").pack(anchor="w")
         tk.Label(title_box, textvariable=self.conv_sub_var, bg=BG_SURFACE,
-                 fg=FG_MUTED, font=self.f_mono_sm).pack(anchor="w")
+                  fg=FG_MUTED, font=self.f_mono_sm, anchor="w").pack(anchor="w")
 
         tk.Frame(main, height=1, bg=BG_DIVIDER).pack(fill=tk.X, side=tk.TOP)
 
-        chat_frame = ttk.Frame(main, style="Raised.TFrame")
+        # Chat area (with empty-state overlay)
+        chat_frame = tk.Frame(main, bg=BG_RAISED)
         chat_frame.pack(fill=tk.BOTH, expand=True)
 
         self.chat = tk.Text(chat_frame, bg=BG_RAISED, fg=FG_PRIMARY,
@@ -398,31 +610,56 @@ class MalphasGUI:
         self.chat.tag_configure("ok",         foreground=OK_GREEN, font=self.f_small)
         self.chat.tag_configure("err",        foreground=ACCENT,   font=self.f_small)
 
-        self.empty_var = tk.StringVar(
-            value="Pick a conversation from the sidebar,\n"
-                  "or import an invite from the clipboard\n"
-                  "to start chatting."
-        )
-        self.empty_label = tk.Label(chat_frame, textvariable=self.empty_var,
-                                     bg=BG_RAISED, fg=FG_FAINT,
-                                     font=self.f_body, justify="center")
-        self._show_empty(True)
+        # Empty-state: a Canvas with the seal + tagline
+        self.empty_canvas = tk.Canvas(chat_frame, bg=BG_RAISED,
+                                       highlightthickness=0, bd=0)
 
-        input_wrap = ttk.Frame(main, style="Raised.TFrame",
-                                padding=(PAD_LG, PAD_SM, PAD_LG, PAD_LG))
+        self._show_empty(True)
+        chat_frame.bind("<Configure>", self._on_chat_resize)
+
+        # Input row
+        input_wrap = tk.Frame(main, bg=BG_RAISED)
         input_wrap.pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Frame(main, height=1, bg=BG_DIVIDER).pack(fill=tk.X, side=tk.BOTTOM)
+
+        input_inner = tk.Frame(input_wrap, bg=BG_RAISED)
+        input_inner.pack(fill=tk.X, padx=PAD_LG, pady=PAD_LG)
 
         self.input_var = tk.StringVar()
-        self.entry = ttk.Entry(input_wrap, textvariable=self.input_var,
+        self.entry = ttk.Entry(input_inner, textvariable=self.input_var,
                                 font=self.f_mono)
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True,
                          padx=(0, PAD_SM), ipady=PAD_XS)
         self.entry.bind("<Return>", self._on_send)
 
-        ttk.Button(input_wrap, text="📎  file", style="Ghost.TButton",
-                   command=self._action_send_file).pack(side=tk.LEFT, padx=(0, PAD_XS))
-        ttk.Button(input_wrap, text="send", style="Accent.TButton",
-                   command=self._on_send).pack(side=tk.LEFT)
+        ttk.Button(input_inner, text="📎  file", style="Ghost.TButton",
+                    command=self._action_send_file).pack(side=tk.LEFT, padx=(0, PAD_XS))
+        ttk.Button(input_inner, text="send", style="Accent.TButton",
+                    command=self._on_send).pack(side=tk.LEFT)
+
+    def _on_chat_resize(self, event: tk.Event) -> None:
+        if not self.empty_canvas.winfo_ismapped():
+            return
+        self._draw_empty()
+
+    def _draw_empty(self) -> None:
+        c = self.empty_canvas
+        c.delete("all")
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w < 50 or h < 50:
+            return
+        cx, cy = w / 2, h / 2 - 30
+        r = min(w, h) * 0.18
+        r = max(60.0, min(140.0, r))
+        draw_malphas_seal(c, cx, cy, r, ACCENT, FG_FAINT, ACCENT_DIM)
+        # Tagline
+        c.create_text(cx, cy + r + PAD_LG * 2,
+                       text="malphas",
+                       fill=FG_MUTED, font=self.f_h1)
+        c.create_text(cx, cy + r + PAD_LG * 2 + 28,
+                       text="pick a conversation, or import an invite",
+                       fill=FG_FAINT, font=self.f_body)
 
     def _build_statusbar(self) -> None:
         tk.Frame(self.root, height=1, bg=BG_DIVIDER).pack(fill=tk.X, side=tk.BOTTOM)
@@ -433,9 +670,11 @@ class MalphasGUI:
 
     def _show_empty(self, on: bool) -> None:
         if on:
-            self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
+            self.empty_canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
+            # draw after a tick so winfo_width has been resolved
+            self.root.after(50, self._draw_empty)
         else:
-            self.empty_label.place_forget()
+            self.empty_canvas.place_forget()
 
     # ── Event drain ────────────────────────────────────────────────────────
 
@@ -499,59 +738,84 @@ class MalphasGUI:
         self.root.after(1000, self._refresh_status)
 
     def _refresh_sidebar(self) -> None:
-        self.tree.delete(*self.tree.get_children())
+        # Clear previous items
+        for child in self._sidebar_inner.winfo_children():
+            child.destroy()
+        self._sidebar_items = {}
 
-        peers_node = self.tree.insert("", "end", text="PEERS", open=True,
-                                       tags=("section",))
+        # PEERS section
+        tk.Label(self._sidebar_inner, text="PEERS", bg=BG_SURFACE,
+                  fg=FG_FAINT, font=self.f_tiny, anchor="w").pack(
+                      anchor="w", padx=PAD_MD, pady=(PAD_SM, PAD_XS))
+
         seen: set[str] = set()
         for c in self.book.all():
             seen.add(c.peer_id)
-            iid = f"peer:{c.peer_id}"
-            tag = ("unread",) if c.peer_id in self._unread else ()
-            badge = "  ●" if c.peer_id in self._unread else ""
-            self.tree.insert(peers_node, "end", iid=iid,
-                              text=f"   ●  {c.label}{badge}", tags=tag)
+            sub = _short(c.peer_id, 12)
+            item = SidebarItem(
+                self._sidebar_inner, glyph="●", title=c.label, subtitle=sub,
+                unread=c.peer_id in self._unread,
+                on_click=lambda pid=c.peer_id: self._select(pid),
+                font_body=self.f_body, font_small=self.f_mono_sm,
+            )
+            item.pack(fill=tk.X)
+            self._sidebar_items[c.peer_id] = item
+
         for p in self.node.discovery.all_peers():
             pid = p["peer_id"]
             if pid in seen:
                 continue
-            self.tree.insert(peers_node, "end", iid=f"peer:{pid}",
-                              text=f"   ◦  {_short(pid, 12)}",
-                              tags=("section",))
+            item = SidebarItem(
+                self._sidebar_inner, glyph="◦", title=_short(pid, 12),
+                subtitle="(unsaved)",
+                unread=pid in self._unread,
+                on_click=lambda x=pid: self._select(x),
+                font_body=self.f_body, font_small=self.f_mono_sm,
+            )
+            item.pack(fill=tk.X)
+            self._sidebar_items[pid] = item
 
-        groups_node = self.tree.insert("", "end", text="GROUPS", open=True,
-                                        tags=("section",))
+        # GROUPS section
+        tk.Label(self._sidebar_inner, text="GROUPS", bg=BG_SURFACE,
+                  fg=FG_FAINT, font=self.f_tiny, anchor="w").pack(
+                      anchor="w", padx=PAD_MD, pady=(PAD_LG, PAD_XS))
+
         for g in self.node._groups.all_groups():
-            iid = f"group:{g.group_id}"
-            unread = "  ●" if g.group_id in self._unread else ""
-            tag = ("group", "unread") if g.group_id in self._unread else ("group",)
-            self.tree.insert(groups_node, "end", iid=iid,
-                              text=f"   ▣  {g.name}  ({g.member_count()}){unread}",
-                              tags=tag)
+            item = SidebarItem(
+                self._sidebar_inner, glyph="▣", title=g.name,
+                subtitle=f"{g.member_count()} members",
+                unread=g.group_id in self._unread,
+                on_click=lambda gid=g.group_id: self._select(gid),
+                font_body=self.f_body, font_small=self.f_mono_sm,
+            )
+            item.pack(fill=tk.X)
+            self._sidebar_items[g.group_id] = item
 
-        if self.active:
-            tag = "group" if self.node._groups.get_by_id(self.active) else "peer"
-            iid = f"{tag}:{self.active}"
+        # Empty state
+        if not self.book.all() and not self.node._groups.all_groups() \
+                and not self.node.discovery.all_peers():
+            tk.Label(self._sidebar_inner,
+                      text="No peers yet.\nImport an invite to start.",
+                      bg=BG_SURFACE, fg=FG_FAINT, font=self.f_small,
+                      justify="center"
+                      ).pack(pady=PAD_XL, padx=PAD_LG)
+
+        # Mark active item
+        if self.active and self.active in self._sidebar_items:
+            self._sidebar_items[self.active].set_active(True)
+
+    def _select(self, key: str) -> None:
+        # Mark previous inactive
+        if self.active and self.active in self._sidebar_items:
             try:
-                self.tree.selection_set(iid)
-                self.tree.see(iid)
+                self._sidebar_items[self.active].set_active(False)
             except tk.TclError:
                 pass
-
-    def _on_tree_select(self, event: object | None = None) -> None:
-        sel = self.tree.selection()
-        if not sel:
-            return
-        iid = sel[0]
-        if iid.startswith("peer:"):
-            self.active = iid[5:]
-        elif iid.startswith("group:"):
-            self.active = iid[6:]
-        else:
-            return
-        self._unread.discard(self.active)
+        self.active = key
+        self._unread.discard(key)
+        if key in self._sidebar_items:
+            self._sidebar_items[key].set_active(True)
         self._render_active()
-        self._refresh_sidebar()
 
     def _render_active(self) -> None:
         if not self.active:
@@ -829,15 +1093,28 @@ class MalphasGUI:
         dlg.configure(bg=BG_BASE)
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("540x440")
+        dlg.geometry("560x460")
 
-        tk.Label(dlg, text="Recovery mnemonic", bg=BG_BASE, fg=FG_PRIMARY,
-                 font=self.f_h1).pack(anchor="w", padx=PAD_XL, pady=(PAD_XL, PAD_XS))
-        tk.Label(dlg, text="Write these 12 words down. They are the only way "
-                            "to recover your identity if ~/.malphas/salt is lost.",
+        # Heading + small seal
+        head = tk.Frame(dlg, bg=BG_BASE)
+        head.pack(fill=tk.X, padx=PAD_XL, pady=(PAD_XL, PAD_XS))
+        seal = tk.Canvas(head, width=44, height=44, bg=BG_BASE,
+                          highlightthickness=0, bd=0)
+        seal.pack(side=tk.LEFT)
+        draw_malphas_seal(seal, 22, 22, 18, ACCENT, FG_PRIMARY, ACCENT)
+        title_box = tk.Frame(head, bg=BG_BASE)
+        title_box.pack(side=tk.LEFT, padx=(PAD_MD, 0))
+        tk.Label(title_box, text="Recovery mnemonic", bg=BG_BASE,
+                  fg=FG_PRIMARY, font=self.f_h1).pack(anchor="w")
+        tk.Label(title_box, text="The only way to recover this identity",
+                  bg=BG_BASE, fg=FG_MUTED, font=self.f_small).pack(anchor="w")
+
+        tk.Label(dlg, text="Write these 12 words down, in order. "
+                            "Lose them and ~/.malphas/salt and you "
+                            "lose this identity forever.",
                   bg=BG_BASE, fg=FG_MUTED, font=self.f_small,
-                  wraplength=480, justify="left").pack(
-                      anchor="w", padx=PAD_XL, pady=(0, PAD_LG))
+                  wraplength=500, justify="left").pack(
+                      anchor="w", padx=PAD_XL, pady=(PAD_LG, PAD_LG))
 
         grid = tk.Frame(dlg, bg=BG_RAISED)
         grid.pack(fill=tk.X, padx=PAD_XL, pady=PAD_SM)
@@ -855,15 +1132,15 @@ class MalphasGUI:
         tk.Label(dlg, text="Treat them like a password: do NOT screenshot, "
                             "do NOT paste into a chat.",
                   bg=BG_BASE, fg=WARN_AMBER, font=self.f_small,
-                  wraplength=480, justify="left").pack(
+                  wraplength=500, justify="left").pack(
                       anchor="w", padx=PAD_XL, pady=(PAD_LG, PAD_XS))
 
         btn_row = tk.Frame(dlg, bg=BG_BASE)
         btn_row.pack(fill=tk.X, padx=PAD_XL, pady=PAD_LG)
         ttk.Button(btn_row, text="Copy to clipboard", style="Ghost.TButton",
-                   command=lambda: self._copy_words(dlg, words)).pack(side=tk.LEFT)
+                    command=lambda: self._copy_words(dlg, words)).pack(side=tk.LEFT)
         ttk.Button(btn_row, text="Done", style="Accent.TButton",
-                   command=dlg.destroy).pack(side=tk.RIGHT)
+                    command=dlg.destroy).pack(side=tk.RIGHT)
 
     def _copy_words(self, dlg: tk.Toplevel, words: list[str]) -> None:
         self.root.clipboard_clear()
@@ -971,13 +1248,34 @@ class MalphasGUI:
 
     def _action_about(self) -> None:
         from . import __version__
-        messagebox.showinfo(
-            "malphas",
-            f"malphas {__version__}\n"
-            "Privacy-first P2P messenger with onion routing.\n\n"
-            f"peer_id: {self.node.identity.peer_id}\n"
-            f"port:    {self.node.port}",
-            parent=self.root)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("About malphas")
+        dlg.configure(bg=BG_BASE)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.geometry("420x340")
+
+        body = tk.Frame(dlg, bg=BG_BASE)
+        body.pack(fill=tk.BOTH, expand=True, padx=PAD_XL, pady=PAD_XL)
+
+        seal = tk.Canvas(body, width=120, height=120, bg=BG_BASE,
+                          highlightthickness=0, bd=0)
+        seal.pack(pady=(0, PAD_LG))
+        draw_malphas_seal(seal, 60, 60, 50, ACCENT, FG_PRIMARY, ACCENT)
+
+        tk.Label(body, text="malphas", bg=BG_BASE, fg=FG_PRIMARY,
+                  font=self.f_h1).pack()
+        tk.Label(body, text=f"version {__version__}", bg=BG_BASE,
+                  fg=FG_MUTED, font=self.f_small).pack(pady=(0, PAD_MD))
+        tk.Label(body, text="Privacy-first P2P messenger\nwith onion routing",
+                  bg=BG_BASE, fg=FG_MUTED, font=self.f_body,
+                  justify="center").pack()
+        tk.Label(body, text=self.node.identity.peer_id, bg=BG_BASE,
+                  fg=FG_FAINT, font=self.f_mono_sm,
+                  wraplength=360).pack(pady=(PAD_LG, 0))
+
+        ttk.Button(body, text="Close", style="Accent.TButton",
+                    command=dlg.destroy).pack(pady=(PAD_LG, 0))
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
