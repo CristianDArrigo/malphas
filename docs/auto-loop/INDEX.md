@@ -52,3 +52,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 024 | iter-024-green-readme-consolidation.md | Green: README consolidation 0.3.x | done |
 | 025 | iter-025-next-target.md | Next-target (0.4.0 line: auth-type prefix) | done |
 | 026 | iter-026-green-auth-prefix.md | Green: auth-type prefix (v0.4.0, wire-breaking) | done |
+| 027 | iter-027-next-target.md | Next-target (BLAKE2s peer_id → v0.5.0) | done |
