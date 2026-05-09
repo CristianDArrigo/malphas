@@ -3,6 +3,39 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.3.6] — 2026-05-09
+
+### Features
+
+- **Web API for file transfer** — five new endpoints in `api.py`,
+  symmetric to the iter-012 CLI commands:
+  - `POST /api/files/send` — multipart upload + `node.send_file`
+    dispatch; returns `{file_id}`.
+  - `GET  /api/files` — JSON `{pending: [...], completed: [...]}`.
+  - `POST /api/files/accept` — register an incoming offer.
+  - `POST /api/files/reject` — drop a pending offer.
+  - `GET  /api/files/{file_id}/download` — stream the assembled
+    payload, then drop the in-RAM copy (zero-disk policy).
+- WebSocket pushes two new message types:
+  `{type: "file_offer", from, offer}` and
+  `{type: "file_complete", file_id, from, name, size}`.
+- `python-multipart>=0.0.9` added to runtime deps (required by FastAPI
+  multipart support).
+- Filenames in `Content-Disposition` are sanitized — only
+  `[A-Za-z0-9._-]` survive, slashes stripped, max 128 chars.
+
+### Internal
+
+- 14 new tests in `tests/test_api_files.py` (httpx + ASGITransport).
+- Removed `from __future__ import annotations` from `api.py`: pydantic
+  v2 cannot resolve forward-referenced inner classes for body models.
+  The other modules retain it.
+
+### Wire format
+
+Unchanged. Web API state lives in-process and is mutually exclusive
+with the CLI state (one mode per process invocation).
+
 ## [0.3.5] — 2026-05-09
 
 ### Engineering

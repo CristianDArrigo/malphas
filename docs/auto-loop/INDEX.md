@@ -47,3 +47,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 019 | iter-019-next-target.md | Next-target (coverage gate + bandit) | done |
 | 020 | iter-020-green-coverage-bandit.md | Green: coverage gate + bandit | done |
 | 021 | iter-021-next-target.md | Next-target (Web API for file transfer) | done |
+| 022 | iter-022-green-api-files.md | Green: Web API for file transfer | done |
