@@ -193,7 +193,14 @@ async def _run_web(args) -> None:
 
 
 def main():
+    from . import __version__
+
     parser = argparse.ArgumentParser(description="Malphas P2P messenger")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"malphas {__version__}",
+    )
     parser.add_argument("--mode", choices=["cli", "web"], default="cli")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7777)

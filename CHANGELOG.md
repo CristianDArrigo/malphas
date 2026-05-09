@@ -3,6 +3,30 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.7] — 2026-05-09
+
+### User-facing
+
+- New `--version` flag on the CLI: `malphas --version` prints
+  `malphas <X.Y.Z>` and exits 0.
+- `malphas.__version__` is now resolved at runtime from the installed
+  package metadata (`importlib.metadata.version("malphas")`). No more
+  drift between `pyproject.toml` and a hardcoded constant.
+
+### Engineering
+
+- New `src/malphas/py.typed` marker (PEP 561). Downstream consumers
+  that import `malphas` now get full type-checking support against
+  our annotated source.
+- `[tool.hatch.build.targets.wheel.force-include]` ensures the marker
+  ships in built wheels.
+- Closes finding **C7** from the iter-001 review (`__init__.py`
+  exposed an obsolete hardcoded `__version__`).
+
+### Wire format
+
+Unchanged.
+
 ## [0.5.6] — 2026-05-09
 
 ### Dev tooling
