@@ -3,6 +3,42 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.7] — 2026-05-09
+
+### Fixed — mnemonic dialog: real root cause
+
+The user shared one more screenshot showing the dialog with
+*70+ one-character cells*, which finally exposed the actual
+bug. The previous "invisible words" symptom and this
+"hundreds of single-letter cells" symptom shared the same
+root cause:
+
+  `salt_to_mnemonic(data)` returns a single space-separated
+  string ("abandon ability able about ..."), not a `list`.
+
+`_action_backup` in `gui_qt.py` was passing the string
+straight into `_show_mnemonic_dialog(words)`, which then did
+`for i, w in enumerate(words)` — iterating over the
+**characters** of the string instead of the words. With a
+12-word mnemonic averaging ~6 letters that produced ~80 cells,
+each containing a single character, displayed in a 3-column
+grid that overflowed the dialog vertically. On smaller
+windows the cells got compressed enough that letters fell
+outside the rendered region, presenting as "invisible".
+
+The tk GUI (`gui.py`) had the right pattern all along —
+`salt_to_mnemonic(data).split()`. The Qt version was missing
+the `.split()`. Added it.
+
+Also kept from the round of attempts above: the QFrame +
+QLabel cell pattern for reliable bg painting, and the
+`QFontDatabase.systemFont(FixedFont)` that dodges font-
+family fallback misses. Both are still load-bearing for
+correct rendering across PySide6 configurations.
+
+Verified via headless render: 12 words, monospace, raised
+cards, 4 × 3 grid.
+
 ## [0.11.6] — 2026-05-09
 
 ### Sidebar action buttons — colored tones

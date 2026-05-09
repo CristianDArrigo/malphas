@@ -1342,7 +1342,10 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
                 self, "Backup failed",
                 f"Salt size mismatch: {len(data)} != {SALT_LEN}")
             return
-        words = salt_to_mnemonic(data)
+        # salt_to_mnemonic returns a single space-separated string,
+        # not a list. Splitting was missing here, which is what
+        # produced the "100+ one-character cells" the user reported.
+        words = salt_to_mnemonic(data).split()
         self._show_mnemonic_dialog(words)
 
     def _show_mnemonic_dialog(self, words: list[str]) -> None:
@@ -1367,31 +1370,53 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
 
-        # Grid of words. Use an explicit QFont and minimal inline
-        # stylesheet (QDialog QLabel rules in the global QSS were
-        # competing with the cell-level color/bg, leaving the words
-        # invisible in some configurations).
-        mono = QtGui.QFont()
-        mono.setFamilies(["JetBrains Mono", "SF Mono", "Cascadia Mono",
-                            "Ubuntu Mono", "DejaVu Sans Mono", "monospace"])
-        mono.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+        # Grid of words. We've had multiple failures making this
+        # render reliably with stylesheets (QSS f-string brace
+        # mishaps, global QDialog QLabel rules silently overriding
+        # inline ones, font fallback going through the body sans
+        # chain). Belt-and-suspenders approach below: explicit
+        # QFont with monospace fallbacks, explicit QPalette for
+        # bg+fg (bypasses QSS entirely for the cell paint), no
+        # inline stylesheet at all.
+        # Pull the system's known-good fixed-width font instead of
+        # naming families — this returns whatever Qt has actually
+        # registered as monospace, no fallback misses.
+        mono = QtGui.QFontDatabase.systemFont(
+            QtGui.QFontDatabase.SystemFont.FixedFont)
         mono.setPointSize(11)
+        mono.setBold(False)
+
+        # Wrap each word in a QFrame: QFrame respects QSS
+        # background-color reliably (QLabel needs WA_StyledBackground
+        # which has been a flake source in PySide6). The QFrame paints
+        # the card bg + radius, the inner QLabel just renders text.
+        cell_qss = (
+            "QFrame#WordCell { background-color: "
+            f"{T.BG_RAISED}; border-radius: 6px; }}"
+        )
+        text_color = T.FG_PRIMARY
 
         grid = QtWidgets.QGridLayout()
         grid.setHorizontalSpacing(T.PAD_SM)
         grid.setVerticalSpacing(T.PAD_SM)
-        cell_qss = (
-            "QLabel { background-color: "
-            f"{T.BG_RAISED}; color: {T.FG_PRIMARY}; "
-            "padding: 10px 14px; border-radius: 6px; }"
-        )
         for i, w in enumerate(words):
-            cell = QtWidgets.QLabel(f"{i+1:>2}.  {w}")
-            cell.setFont(mono)
-            cell.setStyleSheet(cell_qss)
-            cell.setAlignment(QtCore.Qt.AlignmentFlag.AlignVCenter
+            frame = QtWidgets.QFrame()
+            frame.setObjectName("WordCell")
+            frame.setAttribute(
+                QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+            frame.setStyleSheet(cell_qss)
+            inner = QtWidgets.QHBoxLayout(frame)
+            inner.setContentsMargins(14, 10, 14, 10)
+
+            label = QtWidgets.QLabel(f"{i+1:>2}.  {w}")
+            label.setFont(mono)
+            label.setStyleSheet(
+                f"color: {text_color}; background: transparent;")
+            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignVCenter
                                 | QtCore.Qt.AlignmentFlag.AlignLeft)
-            grid.addWidget(cell, i // 3, i % 3)
+            inner.addWidget(label)
+
+            grid.addWidget(frame, i // 3, i % 3)
         v.addLayout(grid)
 
         warn = QtWidgets.QLabel(
