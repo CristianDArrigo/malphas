@@ -3,6 +3,32 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.6] — 2026-05-09
+
+### GUI — lighter palette + larger controls
+
+User feedback: pure-black sigil disappeared against a near-black
+background, and a few controls still felt small.
+
+- Palette lifted ~8-12 stops on the L axis:
+  - BG_BASE     #0a0a0d → #1f2129
+  - BG_SURFACE  #15151a → #262932
+  - BG_RAISED   #1c1c22 → #30333d
+  - BG_HOVER    #2a2b34 → #3d4150
+  - BG_DIVIDER  #2c2c34 → #3a3d47
+  - BUBBLE_THEM #26262e → #363944
+  - BUBBLE_YOU  #5e1c1c → #7a2828
+  - BUBBLE_SYS  #1f2026 → #2a2c35
+  - FG_PRIMARY  #ececec → #f0f0f2
+  - FG_MUTED    #9a9a9a → #b0b2bb
+- Button sizes bumped again:
+  - Tor lock indicator           30 → 34 px
+  - Sidebar action toolbar       40 → 46 px
+  - Conversation header          38 → 44 px
+  - Input row paperclip / send   44 → 52 px
+  - Mnemonic dialog copy         42 → 48 px
+- Sidebar search icon enlarged: canvas 26→34 px, glyph 20→26 px.
+
 ## [0.10.5] — 2026-05-09
 
 ### GUI — icon legibility
