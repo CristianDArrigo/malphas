@@ -708,7 +708,7 @@ class MalphasGUI:
         # Tor lock indicator (only shown if we're on .onion)
         self._lock_btn = IconButton(
             rwrap, drawer=draw_lock, on_click=lambda: None,
-            size=24, bg=BG_SURFACE, hover_bg=BG_SURFACE,
+            size=30, bg=BG_SURFACE, hover_bg=BG_SURFACE,
             color=OK_GREEN, hover_color=OK_GREEN,
             variant="ghost",
             tooltip="end-to-end encrypted",
@@ -727,10 +727,10 @@ class MalphasGUI:
         search_wrap.pack(fill=tk.X, padx=PAD_MD, pady=(PAD_MD, PAD_SM))
 
         # Search icon (left of entry)
-        search_icon = tk.Canvas(search_wrap, width=20, height=20,
+        search_icon = tk.Canvas(search_wrap, width=26, height=26,
                                   bg=BG_HOVER, highlightthickness=0, bd=0)
         search_icon.pack(side=tk.LEFT, fill=tk.Y, ipady=PAD_XS)
-        draw_search(search_icon, 2, 2, 16, FG_MUTED)
+        draw_search(search_icon, 3, 3, 20, FG_MUTED)
 
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", self._on_search_change)
@@ -743,16 +743,16 @@ class MalphasGUI:
         actions.pack(fill=tk.X, padx=PAD_MD, pady=(0, PAD_SM))
 
         IconButton(actions, drawer=draw_share, on_click=self._action_export,
-                   size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                   size=40, bg=BG_SURFACE, hover_bg=BG_HOVER,
                    color=FG_MUTED, hover_color=FG_PRIMARY,
                    tooltip="Generate invite").pack(side=tk.LEFT, padx=(0, PAD_XS))
         IconButton(actions, drawer=draw_plus, on_click=self._action_import,
-                   size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                   size=40, bg=BG_SURFACE, hover_bg=BG_HOVER,
                    color=FG_MUTED, hover_color=FG_PRIMARY,
                    tooltip="Import invite from clipboard"
                    ).pack(side=tk.LEFT, padx=(0, PAD_XS))
         IconButton(actions, drawer=draw_users, on_click=self._action_group_new,
-                   size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                   size=40, bg=BG_SURFACE, hover_bg=BG_HOVER,
                    color=FG_MUTED, hover_color=FG_PRIMARY,
                    tooltip="Create new group").pack(side=tk.LEFT)
 
@@ -848,7 +848,7 @@ class MalphasGUI:
         # File button (left)
         IconButton(input_inner, drawer=draw_paperclip,
                    on_click=self._action_send_file,
-                   size=36, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                   size=44, bg=BG_SURFACE, hover_bg=BG_HOVER,
                    color=FG_MUTED, hover_color=FG_PRIMARY,
                    tooltip="Send a file").pack(side=tk.LEFT, padx=(0, PAD_SM))
 
@@ -867,7 +867,7 @@ class MalphasGUI:
         # Send button (right, accent variant)
         IconButton(input_inner, drawer=draw_send,
                    on_click=self._on_send,
-                   size=36, bg=ACCENT, hover_bg=ACCENT,
+                   size=44, bg=ACCENT, hover_bg=ACCENT,
                    accent_bg=ACCENT, accent_hover=ACCENT_GLOW,
                    color=FG_PRIMARY, hover_color=FG_PRIMARY,
                    accent_color=FG_PRIMARY,
@@ -928,13 +928,13 @@ class MalphasGUI:
             right.pack(side=tk.RIGHT, fill=tk.Y)
             IconButton(right, drawer=draw_user_plus,
                         on_click=self._action_group_add,
-                        size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                        size=38, bg=BG_SURFACE, hover_bg=BG_HOVER,
                         color=FG_MUTED, hover_color=FG_PRIMARY,
                         tooltip="Add member to group"
                         ).pack(side=tk.LEFT, padx=(PAD_XS, 0))
             IconButton(right, drawer=draw_door_out,
                         on_click=self._action_group_leave,
-                        size=32, bg=BG_SURFACE, hover_bg=BG_HOVER,
+                        size=38, bg=BG_SURFACE, hover_bg=BG_HOVER,
                         color=FG_MUTED, hover_color=FG_PRIMARY,
                         tooltip="Leave group").pack(side=tk.LEFT, padx=(PAD_XS, 0))
 
@@ -1408,7 +1408,7 @@ class MalphasGUI:
         copy_wrap.pack(side=tk.LEFT)
         IconButton(copy_wrap, drawer=draw_copy,
                     on_click=lambda: self._copy_words(dlg, words),
-                    size=36, bg=BG_BASE, hover_bg=BG_HOVER,
+                    size=42, bg=BG_BASE, hover_bg=BG_HOVER,
                     color=FG_MUTED, hover_color=FG_PRIMARY,
                     tooltip="Copy mnemonic to clipboard"
                     ).pack(side=tk.LEFT)

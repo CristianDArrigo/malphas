@@ -18,25 +18,25 @@ import tkinter as tk
 
 
 def _line(c: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
-          color: str, width: float = 1.6) -> None:
+          color: str, width: float = 2.0) -> None:
     c.create_line(x1, y1, x2, y2, fill=color, width=width,
                   capstyle=tk.ROUND, joinstyle=tk.ROUND, smooth=False)
 
 
 def _arc(c: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
-         start: float, extent: float, color: str, width: float = 1.6) -> None:
+         start: float, extent: float, color: str, width: float = 2.0) -> None:
     c.create_arc(x1, y1, x2, y2, start=start, extent=extent,
                  outline=color, style=tk.ARC, width=width)
 
 
 def _circle(c: tk.Canvas, cx: float, cy: float, r: float, color: str,
-            width: float = 1.6, fill: str = "") -> None:
+            width: float = 2.0, fill: str = "") -> None:
     c.create_oval(cx - r, cy - r, cx + r, cy + r,
                   outline=color, width=width, fill=fill)
 
 
 def _polyline(c: tk.Canvas, points: list[tuple[float, float]],
-              color: str, width: float = 1.6) -> None:
+              color: str, width: float = 2.0) -> None:
     flat: list[float] = []
     for px, py in points:
         flat.extend([px, py])
@@ -59,15 +59,15 @@ def draw_paperclip(c: tk.Canvas, x: float, y: float, size: float,
     cy2 = y + size - pad
     # Outer J
     _arc(c, cx1, cy1, cx2, cy1 + (cy2 - cy1) * 0.55,
-         start=0, extent=180, color=color, width=1.8)
+         start=0, extent=180, color=color, width=2.2)
     _line(c, cx2, cy1 + (cy2 - cy1) * 0.275,
-          cx2, cy1 + (cy2 - cy1) * 0.85, color, 1.8)
+          cx2, cy1 + (cy2 - cy1) * 0.85, color, 2.2)
     _arc(c, cx1 + (cx2 - cx1) * 0.18, cy1 + (cy2 - cy1) * 0.55,
          cx2, cy2,
-         start=0, extent=-180, color=color, width=1.8)
+         start=0, extent=-180, color=color, width=2.2)
     # Inner segment (the part that "clips")
     _line(c, cx1 + (cx2 - cx1) * 0.18, cy1 + (cy2 - cy1) * 0.55,
-          cx1 + (cx2 - cx1) * 0.18, cy1 + (cy2 - cy1) * 0.30, color, 1.8)
+          cx1 + (cx2 - cx1) * 0.18, cy1 + (cy2 - cy1) * 0.30, color, 2.2)
 
 
 def draw_send(c: tk.Canvas, x: float, y: float, size: float,
@@ -82,19 +82,19 @@ def draw_send(c: tk.Canvas, x: float, y: float, size: float,
         (x + pad,           y + size * 0.50),
     ]
     c.create_polygon(*[v for p in pts for v in p],
-                     outline=color, fill="", width=1.8,
+                     outline=color, fill="", width=2.2,
                      joinstyle=tk.ROUND)
     # Inner fold line
     _line(c, x + size * 0.50, y + size * 0.62,
-          x + size - pad, y + pad, color, 1.4)
+          x + size - pad, y + pad, color, 1.8)
 
 
 def draw_plus(c: tk.Canvas, x: float, y: float, size: float,
               color: str) -> None:
     pad = size * 0.22
     cx, cy = x + size / 2, y + size / 2
-    _line(c, cx, y + pad, cx, y + size - pad, color, 1.8)
-    _line(c, x + pad, cy, x + size - pad, cy, color, 1.8)
+    _line(c, cx, y + pad, cx, y + size - pad, color, 2.2)
+    _line(c, x + pad, cy, x + size - pad, cy, color, 2.2)
 
 
 def draw_share(c: tk.Canvas, x: float, y: float, size: float,
@@ -106,10 +106,10 @@ def draw_share(c: tk.Canvas, x: float, y: float, size: float,
     b = (x + size * 0.25, y + size * 0.72)
     d = (x + size * 0.78, y + size * 0.50)
     # Connecting lines
-    _line(c, a[0] + r, a[1], d[0] - r, d[1] - r * 0.5, color, 1.6)
-    _line(c, b[0] + r, b[1], d[0] - r, d[1] + r * 0.5, color, 1.6)
+    _line(c, a[0] + r, a[1], d[0] - r, d[1] - r * 0.5, color, 2.4)
+    _line(c, b[0] + r, b[1], d[0] - r, d[1] + r * 0.5, color, 2.4)
     for cx, cy in (a, b, d):
-        _circle(c, cx, cy, r, color, width=1.6, fill="")
+        _circle(c, cx, cy, r, color, width=2.0, fill="")
 
 
 def draw_users(c: tk.Canvas, x: float, y: float, size: float,
@@ -118,23 +118,23 @@ def draw_users(c: tk.Canvas, x: float, y: float, size: float,
     # Left person (smaller, behind)
     head1_r = size * 0.13
     head1_cx, head1_cy = x + size * 0.36, y + size * 0.32
-    _circle(c, head1_cx, head1_cy, head1_r, color, 1.6)
+    _circle(c, head1_cx, head1_cy, head1_r, color, 2.4)
     body1_x1 = x + size * 0.18
     body1_x2 = x + size * 0.54
     body1_y1 = y + size * 0.50
     body1_y2 = y + size * 0.85
     _arc(c, body1_x1, body1_y1, body1_x2, body1_y2 + size * 0.3,
-         start=0, extent=180, color=color, width=1.6)
+         start=0, extent=180, color=color, width=2.0)
     # Right person (offset)
     head2_r = size * 0.13
     head2_cx, head2_cy = x + size * 0.66, y + size * 0.36
-    _circle(c, head2_cx, head2_cy, head2_r, color, 1.6)
+    _circle(c, head2_cx, head2_cy, head2_r, color, 2.4)
     body2_x1 = x + size * 0.46
     body2_x2 = x + size * 0.86
     body2_y1 = y + size * 0.55
     body2_y2 = y + size * 0.90
     _arc(c, body2_x1, body2_y1, body2_x2, body2_y2 + size * 0.3,
-         start=0, extent=180, color=color, width=1.6)
+         start=0, extent=180, color=color, width=2.0)
 
 
 def draw_user_plus(c: tk.Canvas, x: float, y: float, size: float,
@@ -142,19 +142,19 @@ def draw_user_plus(c: tk.Canvas, x: float, y: float, size: float,
     """Person + plus sign — add member."""
     head_r = size * 0.14
     head_cx, head_cy = x + size * 0.36, y + size * 0.32
-    _circle(c, head_cx, head_cy, head_r, color, 1.6)
+    _circle(c, head_cx, head_cy, head_r, color, 2.4)
     body_x1 = x + size * 0.16
     body_x2 = x + size * 0.56
     body_y1 = y + size * 0.50
     body_y2 = y + size * 0.85
     _arc(c, body_x1, body_y1, body_x2, body_y2 + size * 0.3,
-         start=0, extent=180, color=color, width=1.6)
+         start=0, extent=180, color=color, width=2.0)
     # Plus on the right
     plus_cx = x + size * 0.78
     plus_cy = y + size * 0.36
     plus_r = size * 0.12
-    _line(c, plus_cx - plus_r, plus_cy, plus_cx + plus_r, plus_cy, color, 1.8)
-    _line(c, plus_cx, plus_cy - plus_r, plus_cx, plus_cy + plus_r, color, 1.8)
+    _line(c, plus_cx - plus_r, plus_cy, plus_cx + plus_r, plus_cy, color, 2.2)
+    _line(c, plus_cx, plus_cy - plus_r, plus_cx, plus_cy + plus_r, color, 2.2)
 
 
 def draw_door_out(c: tk.Canvas, x: float, y: float, size: float,
@@ -166,18 +166,18 @@ def draw_door_out(c: tk.Canvas, x: float, y: float, size: float,
     box_y1 = y + pad
     box_x2 = x + size * 0.55
     box_y2 = y + size - pad
-    _line(c, box_x1, box_y1, box_x2, box_y1, color, 1.6)
-    _line(c, box_x1, box_y1, box_x1, box_y2, color, 1.6)
-    _line(c, box_x1, box_y2, box_x2, box_y2, color, 1.6)
+    _line(c, box_x1, box_y1, box_x2, box_y1, color, 2.4)
+    _line(c, box_x1, box_y1, box_x1, box_y2, color, 2.4)
+    _line(c, box_x1, box_y2, box_x2, box_y2, color, 2.4)
     # Arrow shaft
     arrow_y = y + size / 2
     arrow_x1 = x + size * 0.40
     arrow_x2 = x + size - pad
-    _line(c, arrow_x1, arrow_y, arrow_x2, arrow_y, color, 1.8)
+    _line(c, arrow_x1, arrow_y, arrow_x2, arrow_y, color, 2.2)
     # Arrow head
     head_size = size * 0.16
-    _line(c, arrow_x2, arrow_y, arrow_x2 - head_size, arrow_y - head_size, color, 1.8)
-    _line(c, arrow_x2, arrow_y, arrow_x2 - head_size, arrow_y + head_size, color, 1.8)
+    _line(c, arrow_x2, arrow_y, arrow_x2 - head_size, arrow_y - head_size, color, 2.2)
+    _line(c, arrow_x2, arrow_y, arrow_x2 - head_size, arrow_y + head_size, color, 2.2)
 
 
 def draw_lock(c: tk.Canvas, x: float, y: float, size: float,
@@ -189,14 +189,14 @@ def draw_lock(c: tk.Canvas, x: float, y: float, size: float,
     body_y1 = y + size * 0.45
     body_y2 = y + size - pad
     c.create_rectangle(body_x1, body_y1, body_x2, body_y2,
-                       outline=color, width=1.6, fill="")
+                       outline=color, width=2.0, fill="")
     # Shackle
     shackle_x1 = x + size * 0.30
     shackle_x2 = x + size * 0.70
     shackle_y1 = y + pad
     shackle_y2 = body_y1 + size * 0.15
     _arc(c, shackle_x1, shackle_y1, shackle_x2, shackle_y2,
-         start=0, extent=180, color=color, width=1.8)
+         start=0, extent=180, color=color, width=2.2)
     # Keyhole
     cx, cy = x + size / 2, y + size * 0.65
     _circle(c, cx, cy, size * 0.05, color, 1.4, fill=color)
@@ -209,11 +209,11 @@ def draw_copy(c: tk.Canvas, x: float, y: float, size: float,
     # Back
     b1 = (x + pad,            y + pad,
           x + size * 0.72,    y + size * 0.78)
-    c.create_rectangle(*b1, outline=color, width=1.6, fill="")
+    c.create_rectangle(*b1, outline=color, width=2.0, fill="")
     # Front (offset down-right)
     f1 = (x + size * 0.28,    y + size * 0.32,
           x + size - pad,     y + size - pad)
-    c.create_rectangle(*f1, outline=color, width=1.6, fill="")
+    c.create_rectangle(*f1, outline=color, width=2.0, fill="")
 
 
 def draw_search(c: tk.Canvas, x: float, y: float, size: float,
@@ -222,13 +222,13 @@ def draw_search(c: tk.Canvas, x: float, y: float, size: float,
     glass_r = size * 0.30
     glass_cx = x + size * 0.40
     glass_cy = y + size * 0.40
-    _circle(c, glass_cx, glass_cy, glass_r, color, 1.6)
+    _circle(c, glass_cx, glass_cy, glass_r, color, 2.4)
     # Handle
     h1x = glass_cx + glass_r * math.cos(math.pi / 4)
     h1y = glass_cy + glass_r * math.sin(math.pi / 4)
     h2x = x + size - size * 0.16
     h2y = y + size - size * 0.16
-    _line(c, h1x, h1y, h2x, h2y, color, 2.0)
+    _line(c, h1x, h1y, h2x, h2y, color, 2.4)
 
 
 def draw_alert(c: tk.Canvas, x: float, y: float, size: float,
@@ -241,11 +241,11 @@ def draw_alert(c: tk.Canvas, x: float, y: float, size: float,
         (x + pad,        y + size - pad),
     ]
     c.create_polygon(*[v for p in pts for v in p],
-                     outline=color, fill="", width=1.8,
+                     outline=color, fill="", width=2.2,
                      joinstyle=tk.ROUND)
     # !
     cx = x + size / 2
-    _line(c, cx, y + size * 0.36, cx, y + size * 0.60, color, 1.8)
+    _line(c, cx, y + size * 0.36, cx, y + size * 0.60, color, 2.2)
     _circle(c, cx, y + size * 0.74, size * 0.05, color, 1.4, fill=color)
 
 
@@ -319,8 +319,11 @@ class IconButton(tk.Canvas):
             new_color = self._hover_color if active else self._color
         self.configure(bg=new_bg)
         self.delete("icon")
-        # Inset the icon slightly so it doesn't touch the button edge
-        inset = self._size * 0.20
+        # Inset the icon slightly so it doesn't touch the button edge.
+        # Keep this small — the glyphs already include their own internal
+        # padding via per-shape coefficients, so a tight outer inset just
+        # means a more readable icon at typical button sizes (24-44 px).
+        inset = max(2.0, self._size * 0.08)
         x = inset
         y = inset
         s = self._size - 2 * inset

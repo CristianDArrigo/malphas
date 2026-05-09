@@ -3,6 +3,27 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.10.5] — 2026-05-09
+
+### GUI — icon legibility
+
+User reported the new vector icons looked tiny. Two-part fix:
+
+- `IconButton` inset reduced from 20% → 8% of the button edge,
+  so the glyph now fills ~84% of the canvas (up from ~60%).
+- Stroke widths in `gui_icons.py` bumped ~25% (1.6→2.0, 1.8→2.2,
+  1.4→1.8, 2.0→2.4) so the lines read crisply at the new size.
+- Button sizes bumped at every call site:
+  - Tor lock indicator: 24 → 30 px
+  - Sidebar action toolbar (share / plus / users): 32 → 40 px
+  - Conversation header (user-plus / door-out): 32 → 38 px
+  - Input row (paperclip / send): 36 → 44 px
+  - Mnemonic dialog copy button: 36 → 42 px
+  - Sidebar search-row icon: 16 → 20 px
+
+No layout reflow — the larger icons fit inside the existing
+toolbar / header heights.
+
 ## [0.10.4] — 2026-05-09
 
 ### GUI — chat-app-grade redesign
