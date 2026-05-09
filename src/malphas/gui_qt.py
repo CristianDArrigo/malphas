@@ -272,13 +272,14 @@ def _qss() -> str:
         background-color: {T.BG_HOVER};
     }}
     /* Sidebar action toolbar (Share/Add/Group, Backup/Panic):
-       compact, ghost-style, hint at the underlying bg. */
+       compact ghost style with per-button tone tints. */
     QPushButton#SideAction {{
         background-color: transparent;
         border: 1px solid {T.BG_DIVIDER};
         border-radius: 8px;
         padding: 6px 12px;
         font-size: 9pt;
+        font-weight: 600;
         color: {T.FG_MUTED};
     }}
     QPushButton#SideAction:hover {{
@@ -288,6 +289,45 @@ def _qss() -> str:
     }}
     QPushButton#SideAction:pressed {{
         background-color: {T.BG_HOVER};
+    }}
+    /* Tone variants — set via setProperty("tone", "<name>") and
+       re-polished. Borders are tinted at half-opacity-ish so the
+       buttons feel coloured but never shouty against the dark bg. */
+    QPushButton#SideAction[tone="info"] {{
+        color: {T.INFO_CYAN};
+        border-color: #2f4d6e;
+    }}
+    QPushButton#SideAction[tone="info"]:hover {{
+        background-color: #213040;
+        border-color: {T.INFO_CYAN};
+        color: #b3d3ee;
+    }}
+    QPushButton#SideAction[tone="success"] {{
+        color: {T.OK_GREEN};
+        border-color: #2f5a32;
+    }}
+    QPushButton#SideAction[tone="success"]:hover {{
+        background-color: #1f3324;
+        border-color: {T.OK_GREEN};
+        color: #b1dab1;
+    }}
+    QPushButton#SideAction[tone="warning"] {{
+        color: {T.WARN_AMBER};
+        border-color: #5e4720;
+    }}
+    QPushButton#SideAction[tone="warning"]:hover {{
+        background-color: #3a2d18;
+        border-color: {T.WARN_AMBER};
+        color: #f0d090;
+    }}
+    QPushButton#SideAction[tone="danger"] {{
+        color: #e07473;
+        border-color: #5a2c2c;
+    }}
+    QPushButton#SideAction[tone="danger"]:hover {{
+        background-color: #3b1f1f;
+        border-color: {T.ACCENT};
+        color: #ff8a88;
     }}
 
     QStatusBar {{
@@ -581,13 +621,17 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
 
         actions = QtWidgets.QHBoxLayout()
         actions.setSpacing(T.PAD_SM)
-        for label, tip, slot in [
-            ("Share", "Generate invite (clipboard)", self._action_export),
-            ("Add",   "Import invite from clipboard", self._action_import),
-            ("Group", "Create new group",            self._action_group_new),
+        for label, tip, slot, tone in [
+            ("Share", "Generate invite (clipboard)",
+                self._action_export, "info"),
+            ("Add",   "Import invite from clipboard",
+                self._action_import, "success"),
+            ("Group", "Create new group",
+                self._action_group_new, "info"),
         ]:
             b = QtWidgets.QPushButton(label)
             b.setObjectName("SideAction")
+            b.setProperty("tone", tone)
             b.setToolTip(tip)
             b.clicked.connect(slot)
             actions.addWidget(b)
@@ -602,12 +646,15 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         # Bottom action row
         bottom = QtWidgets.QHBoxLayout()
         bottom.setSpacing(T.PAD_SM)
-        for label, tip, slot in [
-            ("Backup", "Show recovery mnemonic", self._action_backup),
-            ("Panic",  "Wipe in-memory state and exit", self._action_panic),
+        for label, tip, slot, tone in [
+            ("Backup", "Show recovery mnemonic",
+                self._action_backup, "warning"),
+            ("Panic",  "Wipe in-memory state and exit",
+                self._action_panic, "danger"),
         ]:
             b = QtWidgets.QPushButton(label)
             b.setObjectName("SideAction")
+            b.setProperty("tone", tone)
             b.setToolTip(tip)
             b.clicked.connect(slot)
             bottom.addWidget(b)
@@ -1320,14 +1367,30 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
 
-        # Grid of words
+        # Grid of words. Use an explicit QFont and minimal inline
+        # stylesheet (QDialog QLabel rules in the global QSS were
+        # competing with the cell-level color/bg, leaving the words
+        # invisible in some configurations).
+        mono = QtGui.QFont()
+        mono.setFamilies(["JetBrains Mono", "SF Mono", "Cascadia Mono",
+                            "Ubuntu Mono", "DejaVu Sans Mono", "monospace"])
+        mono.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+        mono.setPointSize(11)
+
         grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(T.PAD_SM)
+        grid.setVerticalSpacing(T.PAD_SM)
+        cell_qss = (
+            "QLabel { background-color: "
+            f"{T.BG_RAISED}; color: {T.FG_PRIMARY}; "
+            "padding: 10px 14px; border-radius: 6px; }"
+        )
         for i, w in enumerate(words):
             cell = QtWidgets.QLabel(f"{i+1:>2}.  {w}")
-            cell.setStyleSheet(
-                f"background:{T.BG_RAISED}; color:{T.FG_PRIMARY}; "
-                f"padding:8px 12px; border-radius:6px; "
-                "font-family:'JetBrains Mono', monospace;")
+            cell.setFont(mono)
+            cell.setStyleSheet(cell_qss)
+            cell.setAlignment(QtCore.Qt.AlignmentFlag.AlignVCenter
+                                | QtCore.Qt.AlignmentFlag.AlignLeft)
             grid.addWidget(cell, i // 3, i % 3)
         v.addLayout(grid)
 

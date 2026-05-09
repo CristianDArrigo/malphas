@@ -3,6 +3,47 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.6] — 2026-05-09
+
+### Sidebar action buttons — colored tones
+
+User feedback: "fai i bottoni nella sidebar più parlanti o
+leggermente colorati (panic rosso tenue)".
+
+Each `QPushButton#SideAction` now carries a `tone` property
+that QSS attribute selectors style:
+
+  Share   → info     (cyan)
+  Add     → success  (green)
+  Group   → info     (cyan)
+  Backup  → warning  (amber)
+  Panic   → danger   (red, exactly as requested)
+
+Borders are tinted ~30 % saturation so the buttons feel
+coloured but never shouty. On hover the bg fills with a
+darker tint of the same hue and the border + label brighten
+to full saturation. Affordance reads at a glance: green for
+"add a thing", red for "destroy state", amber for the
+recovery flow.
+
+### Fixed — mnemonic dialog showed empty word slots
+
+The 12-word recovery grid was rendering as empty rounded
+rectangles. Two QSS issues stacked:
+
+- Inline stylesheet had a stray `}}` (literal two chars from a
+  non-f-string concat) instead of the single `}` Qt expected.
+  Qt's "Could not parse stylesheet" warning fired silently.
+- Without a parsable rule, the cells fell back to the global
+  `QDialog QLabel` color which kept text invisible against
+  the BG_BASE fallback.
+
+Fix: build the cell stylesheet as a flat string (no f-string
+brace escaping pitfalls) and set an explicit `QFont` with a
+proper monospace fallback chain so the lookup doesn't go to
+the system serif. Words now render: `1.  abandon`,
+`2.  ability`, … in a 4 × 3 grid.
+
 ## [0.11.5] — 2026-05-09
 
 ### Added — Qt GUI smoke tests
