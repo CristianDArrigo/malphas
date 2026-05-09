@@ -72,6 +72,7 @@ C_BORDER = "grey30"
 COMMANDS = [
     "/id", "/peers", "/book", "/add", "/chat", "/history",
     "/export", "/import", "/trust", "/wipe", "/panic", "/help", "/github", "/quit", "/exit",
+    "/sendfile", "/accept", "/reject", "/savefile", "/files",
 ]
 
 GITHUB_URL = "https://github.com/CristianDArrigo/malphas"
@@ -123,6 +124,11 @@ class MalphasCLI:
         self.active_peer: str | None = None
         self._running = True
         self._console = _make_console()
+        # File transfer UI state — keyed by file_id.
+        # _pending_offers: offers received and awaiting /accept or /reject.
+        # _completed_files: payloads ready for /savefile to flush to disk.
+        self._pending_offers: dict[str, tuple[str, dict]] = {}
+        self._completed_files: dict[str, tuple[str, str, bytes]] = {}
 
     # ── Output helpers ───────────────────────────────────────────────────
 
@@ -274,6 +280,11 @@ class MalphasCLI:
             ("/github", "open the project page in the browser"),
             ("/wipe", "wipe all messages from memory"),
             ("/panic", "EMERGENCY: wipe everything and exit"),
+            ("/sendfile <peer> <path>", "send a file to a peer (32 KB chunks, 100 MB cap)"),
+            ("/accept <file_id>", "accept a pending incoming file"),
+            ("/reject <file_id>", "reject a pending incoming file"),
+            ("/savefile <file_id> <path>", "write a completed file to disk"),
+            ("/files", "list pending and completed file transfers"),
             ("/quit", "shutdown"),
             ("<text>", "send message to active conversation"),
         ]
@@ -573,6 +584,161 @@ class MalphasCLI:
         else:
             self._err("send failed: peer unreachable or no circuit")
 
+    # ── File transfer commands ──────────────────────────────────────────────
+
+    def _resolve_target(self, target: str) -> str | None:
+        """Resolve a label or full peer_id to a peer_id, or None if unknown."""
+        target = target.strip()
+        contact = self.book.get(target)
+        if contact:
+            return contact.peer_id
+        if PEER_ID_RE.match(target.lower()):
+            pid = target.lower()
+            if self.node.discovery.get_peer(pid):
+                return pid
+            # Allow sending if peer exists in routing even without book entry
+            return pid if self.node.discovery.get_peer(pid) else None
+        return None
+
+    async def _cmd_sendfile(self, args: list) -> None:
+        if len(args) < 2:
+            self._err("usage: /sendfile <peer_id|label> <path>")
+            return
+        target, path = args[0], " ".join(args[1:])
+
+        peer_id = self._resolve_target(target)
+        if not peer_id:
+            self._err(f"unknown peer or label: {target}")
+            return
+
+        import os as _os
+        if not _os.path.exists(path):
+            self._err(f"file not found: {path}")
+            return
+        if not _os.path.isfile(path):
+            self._err(f"not a regular file: {path}")
+            return
+
+        self._info(f"sending {_os.path.basename(path)} to {target}...", tag="...")
+        file_id = await self.node.send_file(peer_id, path)
+        if file_id is None:
+            self._err("send_file failed (peer offline, file too large, or no circuit)")
+            return
+        self._ok(f"file_id  {file_id}")
+
+    async def _cmd_accept(self, args: list) -> None:
+        if not args:
+            self._err("usage: /accept <file_id>")
+            return
+        fid = args[0]
+        pending = self._pending_offers.get(fid)
+        if not pending:
+            self._err(f"no pending offer with file_id {fid}")
+            return
+        from_id, offer = pending
+        ok = self.node.accept_file_offer(offer)
+        if ok:
+            self._ok(f"accepted {offer.get('name', '?')} from {from_id[:8]}")
+            del self._pending_offers[fid]
+        else:
+            self._err("accept failed (malformed offer)")
+
+    async def _cmd_reject(self, args: list) -> None:
+        if not args:
+            self._err("usage: /reject <file_id>")
+            return
+        fid = args[0]
+        if fid not in self._pending_offers:
+            self._err(f"no pending offer with file_id {fid}")
+            return
+        del self._pending_offers[fid]
+        self._ok(f"rejected {fid}")
+
+    async def _cmd_savefile(self, args: list) -> None:
+        if len(args) < 2:
+            self._err("usage: /savefile <file_id> <path>")
+            return
+        fid, out_path = args[0], " ".join(args[1:])
+        entry = self._completed_files.get(fid)
+        if not entry:
+            self._err(f"no completed file with id {fid}")
+            return
+        from_id, name, payload = entry
+        try:
+            with open(out_path, "wb") as f:
+                f.write(payload)
+        except OSError as e:
+            self._err(f"write failed: {e}")
+            return
+        self._ok(f"saved {len(payload)} bytes to {out_path}")
+        # After saving, we drop the in-memory copy to honor zero-disk policy
+        # for the in-process buffer.
+        del self._completed_files[fid]
+
+    async def _cmd_files(self, args: list) -> None:
+        if not self._pending_offers and not self._completed_files:
+            self._info("no file transfers", tag="files")
+            return
+        t = Table(show_header=True, box=None, padding=(0, 2))
+        t.add_column("status", style=C_DIM, width=10)
+        t.add_column("file_id", width=20)
+        t.add_column("from")
+        t.add_column("name")
+        t.add_column("size", style=C_DIM)
+        for fid, (from_id, offer) in self._pending_offers.items():
+            t.add_row(
+                "pending",
+                fid[:16] + "...",
+                from_id[:8],
+                offer.get("name", "?"),
+                str(offer.get("size", "?")),
+            )
+        for fid, (from_id, name, data) in self._completed_files.items():
+            t.add_row(
+                "ready",
+                fid[:16] + "...",
+                from_id[:8],
+                name,
+                str(len(data)),
+            )
+        self._print(Panel(t, border_style=C_BORDER, title="[dim]files[/dim]", title_align="left"))
+
+    async def _on_file_offer(self, from_id: str, offer: dict) -> None:
+        """Hook fired by the node when a new file offer arrives."""
+        fid = offer.get("file_id", "")
+        if not fid:
+            return
+        contact = self.book.get_by_peer_id(from_id)
+        from_label = contact.label if contact else from_id[:8]
+        self._pending_offers[fid] = (from_id, offer)
+        name = offer.get("name", "?")
+        size = offer.get("size", 0)
+        self._plain(
+            f"  \033[33m*** offer from {from_label}: {name} ({size} bytes)\033[0m"
+        )
+        self._plain(
+            f"  \033[33m*** /accept {fid[:16]}  or  /reject {fid[:16]} ***\033[0m"
+        )
+
+    async def _on_file_complete(self, file_id: str, data: bytes) -> None:
+        """Hook fired by the node when a transfer is fully assembled."""
+        # Move from pending to completed using the offer info we recorded.
+        offer_entry = self._pending_offers.pop(file_id, None)
+        if offer_entry is not None:
+            from_id, offer = offer_entry
+            name = offer.get("name", "file.bin")
+        else:
+            from_id, name = "?", "file.bin"
+        self._completed_files[file_id] = (from_id, name, data)
+        contact = self.book.get_by_peer_id(from_id)
+        label = contact.label if contact else from_id[:8]
+        self._plain(
+            f"  \033[32m*** received {name} ({len(data)} bytes) from {label}\033[0m"
+        )
+        self._plain(
+            f"  \033[32m*** /savefile {file_id[:16]} <path>  to write to disk ***\033[0m"
+        )
+
     async def _auto_connect(self) -> None:
         contacts = self.book.all()
         if not contacts:
@@ -605,6 +771,8 @@ class MalphasCLI:
         self.node.on_message(self._on_message)
         self.node.on_receipt(self._on_receipt)
         self.node.on_pin_violation(self._on_pin_violation)
+        self.node.on_file_offer(self._on_file_offer)
+        self.node.on_file_complete(self._on_file_complete)
         self.node.set_reconnect_book(self.book)
 
         # Banner
@@ -681,6 +849,16 @@ class MalphasCLI:
                         await self._cmd_wipe()
                     elif cmd == "panic":
                         await self._cmd_panic()
+                    elif cmd == "sendfile":
+                        await self._cmd_sendfile(args)
+                    elif cmd == "accept":
+                        await self._cmd_accept(args)
+                    elif cmd == "reject":
+                        await self._cmd_reject(args)
+                    elif cmd == "savefile":
+                        await self._cmd_savefile(args)
+                    elif cmd == "files":
+                        await self._cmd_files(args)
                     elif cmd == "help":
                         self._print_help()
                     else:

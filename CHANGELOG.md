@@ -3,6 +3,34 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.3.1] — 2026-05-09
+
+### Features
+
+- **CLI for file transfer**: five new commands integrate `malphas.files`
+  with the interactive CLI:
+  - `/sendfile <peer|label> <path>` — send a file to a peer.
+  - `/accept <file_id>` — accept a pending incoming offer.
+  - `/reject <file_id>` — drop a pending incoming offer.
+  - `/savefile <file_id> <path>` — write a completed file to disk.
+  - `/files` — list pending and completed transfers.
+- Tab completion includes the new commands.
+- The CLI shows inline notifications when an offer arrives ("offer from
+  alice: photo.jpg (1234 bytes) — /accept abc...") and when a transfer
+  completes ("received photo.jpg (1234 bytes) from alice — /savefile
+  abc... <path>").
+
+### Internal
+
+- `MalphasCLI._pending_offers` and `_completed_files` track UI state
+  per file_id. `_on_file_offer` and `_on_file_complete` are wired to
+  the node callbacks.
+- 12 new unit tests in `tests/test_cli_files.py`.
+
+### Wire format
+
+Unchanged.
+
 ## [0.3.0] — 2026-05-09
 
 ### Features
