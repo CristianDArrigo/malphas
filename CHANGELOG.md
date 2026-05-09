@@ -3,6 +3,30 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.11.3] — 2026-05-09
+
+### Qt GUI — visual polish round 2
+
+- Bubbles now have a subtle 1-px border tinted to their bg
+  (BG_DIVIDER for incoming, slightly lighter than ACCENT for
+  outgoing). Adds depth without the cost of QGraphicsEffects
+  on every row.
+- Message entry shaped as a pill (border-radius 22) and gets a
+  faint accent border on focus. Send button matched: 96x44 with
+  the same pill radius — reads as the primary CTA.
+- Search entry on the sidebar lifts its border-radius to 10 and
+  also picks up the accent focus ring, so both inputs feel like
+  one family.
+- Sidebar action buttons (Share / Add / Group / Backup / Panic)
+  use a new ghost variant via `QPushButton#SideAction`:
+  transparent bg + 1-px divider border + muted label, fills
+  with BG_RAISED + brighter label on hover. Less visually
+  loud than the default raised buttons, makes the chat the
+  hero of the screen.
+- Font fallback chain extended for Linux distros that don't
+  ship Inter / SF Pro / Segoe UI: Cantarell, Noto Sans, Ubuntu,
+  DejaVu Sans now precede Helvetica Neue.
+
 ## [0.11.2] — 2026-05-09
 
 ### Qt GUI — visual polish round 1

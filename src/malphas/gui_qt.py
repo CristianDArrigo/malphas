@@ -104,7 +104,9 @@ def _qss() -> str:
     QMainWindow, QWidget {{
         background-color: {T.BG_BASE};
         color: {T.FG_PRIMARY};
-        font-family: "Inter", "Segoe UI", "SF Pro Text", "Helvetica Neue", sans-serif;
+        font-family: "Inter", "Inter Display", "SF Pro Text", "Segoe UI",
+                      "Cantarell", "Noto Sans", "Ubuntu", "DejaVu Sans",
+                      "Helvetica Neue", sans-serif;
         font-size: 10pt;
     }}
     QFrame#Header {{
@@ -140,17 +142,28 @@ def _qss() -> str:
         background-color: {T.BG_SURFACE};
         border-right: 1px solid {T.BG_DIVIDER};
     }}
-    QLineEdit#SearchEntry, QLineEdit#MessageEntry {{
+    QLineEdit#SearchEntry {{
         background-color: {T.BG_RAISED};
         color: {T.FG_PRIMARY};
-        border: none;
-        border-radius: 8px;
+        border: 1px solid transparent;
+        border-radius: 10px;
         padding: 8px 12px;
         selection-background-color: {T.ACCENT};
     }}
+    QLineEdit#SearchEntry:focus {{
+        border: 1px solid {T.ACCENT_DIM};
+    }}
     QLineEdit#MessageEntry {{
-        padding: 12px 16px;
+        background-color: {T.BG_RAISED};
+        color: {T.FG_PRIMARY};
+        border: 1px solid transparent;
+        border-radius: 22px;
+        padding: 12px 18px;
         font-size: 11pt;
+        selection-background-color: {T.ACCENT};
+    }}
+    QLineEdit#MessageEntry:focus {{
+        border: 1px solid {T.ACCENT_DIM};
     }}
 
     QListWidget#PeerList {{
@@ -194,6 +207,7 @@ def _qss() -> str:
         padding: 10px 15px;
         border-radius: 16px;
         border-bottom-left-radius: 4px;
+        border: 1px solid {T.BG_DIVIDER};
     }}
     QLabel#BubbleYou {{
         background-color: {T.BUBBLE_YOU};
@@ -201,6 +215,7 @@ def _qss() -> str:
         padding: 10px 15px;
         border-radius: 16px;
         border-bottom-right-radius: 4px;
+        border: 1px solid #8a3232;
     }}
     QLabel#BubbleSys {{
         background-color: {T.BUBBLE_SYS};
@@ -209,6 +224,7 @@ def _qss() -> str:
         border-radius: 12px;
         font-style: italic;
         font-size: 9pt;
+        border: 1px solid {T.BG_DIVIDER};
     }}
     QLabel#BubbleTimestamp {{
         color: {T.FG_FAINT};
@@ -241,6 +257,8 @@ def _qss() -> str:
         background-color: {T.ACCENT};
         color: {T.FG_PRIMARY};
         font-weight: 600;
+        border-radius: 22px;
+        padding: 10px 22px;
     }}
     QPushButton#AccentButton:hover {{
         background-color: {T.ACCENT_GLOW};
@@ -248,9 +266,27 @@ def _qss() -> str:
     QPushButton#GhostIcon {{
         background-color: transparent;
         padding: 6px;
-        border-radius: 8px;
+        border-radius: 22px;
     }}
     QPushButton#GhostIcon:hover {{
+        background-color: {T.BG_HOVER};
+    }}
+    /* Sidebar action toolbar (Share/Add/Group, Backup/Panic):
+       compact, ghost-style, hint at the underlying bg. */
+    QPushButton#SideAction {{
+        background-color: transparent;
+        border: 1px solid {T.BG_DIVIDER};
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 9pt;
+        color: {T.FG_MUTED};
+    }}
+    QPushButton#SideAction:hover {{
+        background-color: {T.BG_RAISED};
+        color: {T.FG_PRIMARY};
+        border-color: {T.BG_HOVER};
+    }}
+    QPushButton#SideAction:pressed {{
         background-color: {T.BG_HOVER};
     }}
 
@@ -551,6 +587,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             ("Group", "Create new group",            self._action_group_new),
         ]:
             b = QtWidgets.QPushButton(label)
+            b.setObjectName("SideAction")
             b.setToolTip(tip)
             b.clicked.connect(slot)
             actions.addWidget(b)
@@ -570,6 +607,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             ("Panic",  "Wipe in-memory state and exit", self._action_panic),
         ]:
             b = QtWidgets.QPushButton(label)
+            b.setObjectName("SideAction")
             b.setToolTip(tip)
             b.clicked.connect(slot)
             bottom.addWidget(b)
@@ -686,7 +724,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
 
         send = QtWidgets.QPushButton("Send")
         send.setObjectName("AccentButton")
-        send.setFixedHeight(44)
+        send.setFixedSize(96, 44)
         send.clicked.connect(self._on_send)
         h.addWidget(send)
 
