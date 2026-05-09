@@ -72,3 +72,6 @@ Repository: malphas (privacy-first P2P messenger).
 | 040 | iter-040-green-dependabot-precommit.md | Green: dependabot + pre-commit | done |
 | 042 | iter-042-green-version-pytype.md | Green: __version__ + --version + py.typed | done |
 | 044 | iter-044-green-contributor-templates.md | Green: CONTRIBUTING + PR template + issue templates | done |
+| 045 | iter-045-roadmap.md | Roadmap: 6 phase user-driven (post hand-off) | done |
+| 046a | iter-046-plan-sealed-sender.md | Plan: sealed sender (v0.6.0 WIRE-BREAKING) | done |
+| 046b | iter-046-green-sealed-sender.md | Green: sealed sender (v0.6.0 WIRE-BREAKING) | done |

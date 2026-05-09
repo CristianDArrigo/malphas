@@ -42,6 +42,8 @@ from .pinstore import PinStore
 from .ratchet import MessageHeader, RatchetState
 from .receipts import ReceiptTracker, sign_receipt
 from .replay import ReplayCache
+from .sealed_sender import seal as seal_from
+from .sealed_sender import unseal as unseal_from
 from .transport import BaseTransport, DirectTransport
 
 # Wire message types
@@ -87,6 +89,27 @@ def _unpack_header(data: bytes):
         return None, None
     msg_type, length = struct.unpack(">BI", data[:HEADER_LEN])
     return msg_type, length
+
+
+def _resolve_sealed_from(data: dict, my_x25519_priv: object) -> str:
+    """
+    Recover the sender peer_id from a sealed envelope embedded in
+    `data` (`from_eph` + `from_sealed`). Returns the empty string on
+    any failure — the caller treats that as a "drop silently" signal.
+    Also injects `data["from"] = <real_from>` on success so the rest
+    of the dispatch pipeline can read it as before.
+    """
+    eph_hex = data.get("from_eph")
+    sealed_b64 = data.get("from_sealed")
+    if not eph_hex or not sealed_b64 or not isinstance(eph_hex, str) \
+            or not isinstance(sealed_b64, str):
+        return ""
+    try:
+        from_id = unseal_from(eph_hex, sealed_b64, my_x25519_priv)
+    except ValueError:
+        return ""
+    data["from"] = from_id
+    return from_id
 
 
 def _wrap_authenticated(
@@ -393,9 +416,17 @@ class MalphasNode:
 
         nonce = secrets.token_bytes(16)
 
+        # Sealed sender: encrypt the `from` field with the recipient's
+        # static X25519 pubkey so post-compromise observers can't read it.
+        dest_peer = self.discovery.get_peer(dest_peer_id)
+        if dest_peer is None:
+            return False
+        from_eph, from_sealed = seal_from(self.identity.peer_id, dest_peer.x25519_pub)
+
         payload_dict = {
             "kind": KIND_MESSAGE,
-            "from": self.identity.peer_id,
+            "from_eph": from_eph,
+            "from_sealed": from_sealed,
             "content": content,
             "msg_id": msg_id,
             "nonce": nonce.hex(),
@@ -459,9 +490,17 @@ class MalphasNode:
         """Send a read receipt back to the sender."""
         sig = sign_receipt(msg_id, nonce, self.identity.ed25519_priv)
 
+        # Sealed sender on the receipt too — the original sender (the
+        # destination of this receipt) decrypts the sealed `from`.
+        dest_peer = self.discovery.get_peer(from_id)
+        if dest_peer is None:
+            return
+        from_eph, from_sealed = seal_from(self.identity.peer_id, dest_peer.x25519_pub)
+
         payload_dict = {
             "kind": KIND_RECEIPT,
-            "from": self.identity.peer_id,
+            "from_eph": from_eph,
+            "from_sealed": from_sealed,
             "msg_id": msg_id,
             "sig": sig.hex(),
         }
@@ -607,7 +646,7 @@ class MalphasNode:
                     _restore_ratchet(ratchet, snap)
                     continue
 
-                from_id = data.get("from", "")
+                from_id = _resolve_sealed_from(data, self.identity.x25519_priv)
                 kind = data.get("kind")
                 if not from_id or not kind:
                     _restore_ratchet(ratchet, snap)
@@ -642,7 +681,7 @@ class MalphasNode:
             return
 
         kind = data.get("kind")
-        from_id = data.get("from", "")
+        from_id = _resolve_sealed_from(data, self.identity.x25519_priv)
         if not kind or not from_id:
             return
 
@@ -852,11 +891,17 @@ class MalphasNode:
         except ValueError:
             return False
 
+        dest_peer = self.discovery.get_peer(dest_peer_id)
+        if dest_peer is None:
+            return False
+        from_eph, from_sealed = seal_from(self.identity.peer_id, dest_peer.x25519_pub)
+
         msg_id = secrets.token_hex(16)
         nonce = secrets.token_bytes(16)
         payload_dict = {
             "kind": kind,
-            "from": self.identity.peer_id,
+            "from_eph": from_eph,
+            "from_sealed": from_sealed,
             "msg_id": msg_id,
             "nonce": nonce.hex(),
             "ts": time.time(),

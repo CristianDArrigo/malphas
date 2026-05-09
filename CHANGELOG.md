@@ -3,6 +3,52 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.6.0] — 2026-05-09 — WIRE-BREAKING
+
+### Security
+
+- **Sealed sender**: the `from` field in the inner JSON payload is now
+  encrypted against the recipient's static X25519 pubkey instead of
+  being shipped plaintext. Wire format change:
+
+  ```
+  prev (≤0.5.x):  {"from": "<peer_id>", ...}
+  now  (0.6.0):   {"from_eph": "<32-byte hex>",
+                   "from_sealed": "<base64 ChaCha20-Poly1305>",
+                   ...}
+  ```
+
+  Threat addressed: post-compromise observation. If an attacker
+  recovers the session key of any hop along an onion circuit (or of
+  the first hop's TCP session) and replays a captured packet through
+  the peeling, today the inner JSON would leak `from`. With sealed
+  sender, only the recipient's X25519 private key (still derived from
+  the recipient's passphrase, never on the wire) can recover the
+  sender's peer_id. The HMAC/Ed25519 outer auth tag still covers the
+  whole JSON, so an attacker cannot swap the sealed envelope.
+
+  Approach modeled after Signal's sealed sender, simplified to
+  malphas's no-server architecture.
+
+### Internal
+
+- New `malphas.sealed_sender` module with `seal()` and `unseal()`.
+  HKDF context `malphas-sealed-sender-v1`, info `from`. Mypy strict
+  bucket extended to 15 modules.
+- New `tests/test_sealed_sender.py`: 9 unit tests (roundtrip, fresh
+  ephemeral per call, fresh nonce per call, wrong recipient, tampered
+  eph_pub, tampered ciphertext, malformed inputs).
+- `node.py` now seals on every send site (`_try_send`,
+  `_send_receipt`, `_try_send_payload`) and unseals via
+  `_resolve_sealed_from()` on the receive paths.
+- Smoke test: serialized payload bytes no longer contain the sender's
+  peer_id.
+
+### Wire format
+
+WIRE-BREAKING. A 0.6.0 client cannot decode a ≤0.5.x message and vice
+versa. Upgrade both peers before the cut-over.
+
 ## [0.5.8] — 2026-05-09
 
 ### Community / repo hygiene

@@ -136,6 +136,7 @@ malphas is designed to protect against the following adversaries:
 - Proof of authorship — deniable authentication (HMAC) prevents cryptographic attribution of messages to a specific sender
 - Replay attacks on the application layer — every successfully delivered message records `(from_peer_id, msg_id)` in a bounded sliding window; a re-injected onion packet is dropped silently, with no second user-visible delivery, no second store entry, and no second receipt
 - Argon2 seed in swap — the derived seed is wrapped in a `SecureBytes` buffer that is `mlock`'d (best-effort) and zeroized as soon as the keypairs are extracted
+- Post-compromise sender disclosure — since v0.6.0, the `from` field in the inner JSON payload is sealed against the recipient's X25519 pubkey. An attacker who later recovers a hop's session key sees only opaque bytes where the sender's peer_id used to be
 
 **Partially protected against:**
 
