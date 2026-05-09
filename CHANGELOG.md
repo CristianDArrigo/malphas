@@ -3,6 +3,63 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.9.0] — 2026-05-09
+
+### Features
+
+- **Group chat (N-way pairwise)**: send a message to a group of up to
+  50 peers. The sender encrypts a separate copy per member and ships
+  it over the existing 1-to-1 pipeline (sealed sender, replay cache,
+  Double Ratchet where available, HMAC/Ed25519 outer auth, onion
+  routing). No shared group key, no membership consensus, no add/
+  remove ratchet.
+- New `MalphasNode` API:
+  - `create_group(name, members) -> group_id`
+  - `add_group_member(group_id, peer_id) -> bool`
+  - `send_group_message(group_id, content) -> bool`
+  - `leave_group(group_id) -> bool`
+  - Callbacks: `on_group_invite(cb)`, `on_group_message(cb)`.
+- New CLI commands:
+  - `/group new <name>`
+  - `/group add <name> <peer|label|peer_id>`
+  - `/group list`
+  - `/group members <name>`
+  - `/group leave <name>`
+- `/chat <group_id|group_name>` switches the active conversation to a
+  group; subsequent text is fanned out via `send_group_message`.
+
+### Wire format
+
+Two new JSON payload kinds (backward-compatible — older clients drop
+unknown kinds via the existing fail-closed dispatch):
+
+  `group_invite {kind, from_eph+from_sealed, msg_id, nonce, ts,
+                 group_id, group_name, members}`
+  `group_msg    {kind, from_eph+from_sealed, msg_id, nonce, ts,
+                 group_id, group_name, content}`
+
+Each `group_msg` has a unique `msg_id` per pairwise copy so the
+replay cache covers them without collisions.
+
+### Implementation
+
+- New `malphas.groups` module (`Group`, `GroupRegistry`,
+  `MAX_MEMBERS = 50`). In-memory only; `panic()` wipes.
+- `MalphasNode._handle_group_invite` registers the group locally and
+  notifies; `_handle_group_msg` notifies and stores in the message
+  log with a `[group X]` prefix.
+- `tests/test_groups.py`: 7 unit + 4 E2E (3-node fanout trio with
+  full mesh).
+- Mypy strict bucket extended to 18 modules.
+
+### Out of scope
+
+- Group state persistence cross-process-restart.
+- Notifying existing members of a new add (only the invited member
+  is notified).
+- Forward secrecy at the group level — each pairwise copy gets it
+  individually via the existing 1-to-1 ratchet.
+
 ## [0.8.0] — 2026-05-09
 
 ### Features

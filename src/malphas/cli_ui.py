@@ -75,6 +75,7 @@ COMMANDS = [
     "/export", "/import", "/trust", "/wipe", "/panic", "/help", "/github", "/quit", "/exit",
     "/sendfile", "/accept", "/reject", "/savefile", "/files",
     "/backup",
+    "/group",
 ]
 
 GITHUB_URL = "https://github.com/CristianDArrigo/malphas"
@@ -394,9 +395,19 @@ class MalphasCLI:
 
     async def _cmd_chat(self, args: list) -> None:
         if not args:
-            self._err("usage: /chat <peer_id|label>")
+            self._err("usage: /chat <peer_id|label|group_id|group_name>")
             return
         target = " ".join(args).strip()
+
+        # Group lookup first — group names should win over similarly-
+        # named address book labels (groups are typically more
+        # distinctive).
+        group = self.node._groups.lookup(target)
+        if group is not None:
+            self.active_peer = group.group_id
+            self._ok(f"chatting in group {group.name} "
+                     f"({group.member_count()} members)")
+            return
 
         contact = self.book.get(target)
         if contact:
@@ -585,6 +596,21 @@ class MalphasCLI:
         if not self.active_peer:
             self._err("no active conversation — use /chat <peer_id|label>")
             return
+        # Group dispatch: if active_peer matches a group_id (or name we
+        # have aliased to a group_id in our local state), do a fanout
+        # via send_group_message.
+        group = self.node._groups.lookup(self.active_peer)
+        if group is not None:
+            ok = await self.node.send_group_message(group.group_id, text)
+            if ok:
+                ts = time.strftime("%H:%M")
+                self._plain(
+                    f"  \033[90m{ts}\033[0m  \033[36m[{group.name}]\033[0m  "
+                    f"\033[90myou\033[0m  {text}"
+                )
+            else:
+                self._err("group send failed")
+            return
         ok = await self.node.send_message(self.active_peer, text)
         if ok:
             ts = time.strftime("%H:%M")
@@ -711,6 +737,126 @@ class MalphasCLI:
             )
         self._print(Panel(t, border_style=C_BORDER, title="[dim]files[/dim]", title_align="left"))
 
+    # ── Group chat (v0.9.0) ──────────────────────────────────────────────────
+
+    async def _cmd_group(self, args: list) -> None:
+        """Subcommand dispatcher for /group new|list|add|members|leave."""
+        if not args:
+            self._err(
+                "usage: /group new <name> | list | add <name> <peer> | "
+                "members <name> | leave <name>"
+            )
+            return
+        sub = args[0].lower()
+
+        if sub == "new":
+            if len(args) < 2:
+                self._err("usage: /group new <name>")
+                return
+            name = args[1]
+            gid = await self.node.create_group(name, [])
+            if gid is None:
+                self._err(f"could not create group '{name}' (name taken?)")
+                return
+            self._ok(f"group {name} created  (group_id {gid})")
+            self._info("add members with: /group add <name> <peer|label|peer_id>")
+            return
+
+        if sub == "list":
+            groups = self.node._groups.all_groups()
+            if not groups:
+                self._info("no groups", tag="group")
+                return
+            t = Table(show_header=True, box=None, padding=(0, 2))
+            t.add_column("name")
+            t.add_column("group_id", style=C_DIM)
+            t.add_column("members", style=C_DIM)
+            for g in groups:
+                t.add_row(g.name, g.group_id[:16] + "...", str(g.member_count()))
+            self._print(Panel(t, border_style=C_BORDER,
+                              title="[dim]groups[/dim]", title_align="left"))
+            return
+
+        if sub == "add":
+            if len(args) < 3:
+                self._err("usage: /group add <name> <peer|label|peer_id>")
+                return
+            group = self.node._groups.lookup(args[1])
+            if group is None:
+                self._err(f"unknown group: {args[1]}")
+                return
+            target = args[2]
+            peer_id = self._resolve_target(target)
+            if not peer_id:
+                self._err(f"unknown peer or label: {target}")
+                return
+            ok = await self.node.add_group_member(group.group_id, peer_id)
+            if ok:
+                self._ok(f"added {target} to {group.name} "
+                         f"({group.member_count()} members)")
+            else:
+                self._err("add failed (cap reached or peer offline)")
+            return
+
+        if sub == "members":
+            if len(args) < 2:
+                self._err("usage: /group members <name>")
+                return
+            group = self.node._groups.lookup(args[1])
+            if group is None:
+                self._err(f"unknown group: {args[1]}")
+                return
+            for m in group.members:
+                contact = self.book.get_by_peer_id(m)
+                label = contact.label if contact else m[:16]
+                marker = "(you)" if m == self.node.identity.peer_id else ""
+                self._info(f"{label:<24} {m[:16]}...  {marker}", tag="m")
+            return
+
+        if sub == "leave":
+            if len(args) < 2:
+                self._err("usage: /group leave <name>")
+                return
+            group = self.node._groups.lookup(args[1])
+            if group is None:
+                self._err(f"unknown group: {args[1]}")
+                return
+            self.node.leave_group(group.group_id)
+            self._ok(f"left {group.name}")
+            if self.active_peer == group.group_id:
+                self.active_peer = None
+            return
+
+        self._err(f"unknown subcommand: /group {sub}")
+
+    async def _on_group_invite(self, from_id: str, group_id: str,
+                               group_name: str, members: list) -> None:
+        contact = self.book.get_by_peer_id(from_id)
+        from_label = contact.label if contact else from_id[:8]
+        self._plain(
+            f"  \033[36m*** {from_label} added you to group '{group_name}' "
+            f"({len(members)} members) ***\033[0m"
+        )
+        self._plain(
+            f"  \033[36m*** /chat {group_name}  to start writing ***\033[0m"
+        )
+
+    async def _on_group_message(self, from_id: str, group_id: str,
+                                group_name: str, content: str) -> None:
+        contact = self.book.get_by_peer_id(from_id)
+        from_label = contact.label if contact else from_id[:8]
+        ts = time.strftime("%H:%M")
+        if self.active_peer == group_id or self.active_peer == group_name:
+            self._plain(
+                f"  \033[90m{ts}\033[0m  \033[36m[{group_name}]\033[0m  "
+                f"\033[31m{from_label}\033[0m  {content}"
+            )
+        else:
+            self._plain(
+                f"  \033[33m<\033[0m \033[36m[{group_name}]\033[0m "
+                f"{from_label}: {content}"
+            )
+
     async def _cmd_backup(self, args: list) -> None:
         """Print the 12-word BIP39 mnemonic of the per-user salt.
 
@@ -813,6 +959,8 @@ class MalphasCLI:
         self.node.on_pin_violation(self._on_pin_violation)
         self.node.on_file_offer(self._on_file_offer)
         self.node.on_file_complete(self._on_file_complete)
+        self.node.on_group_invite(self._on_group_invite)
+        self.node.on_group_message(self._on_group_message)
         self.node.set_reconnect_book(self.book)
 
         # Banner
@@ -901,6 +1049,8 @@ class MalphasCLI:
                         await self._cmd_files(args)
                     elif cmd == "backup":
                         await self._cmd_backup(args)
+                    elif cmd == "group":
+                        await self._cmd_group(args)
                     elif cmd == "help":
                         self._print_help()
                     else:

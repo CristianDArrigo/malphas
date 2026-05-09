@@ -81,3 +81,5 @@ Repository: malphas (privacy-first P2P messenger).
 | 048b | iter-048-green-mnemonic.md | Green: BIP39 12-word mnemonic (v0.7.1) | done |
 | 049a | iter-049-plan-file-resume.md | Plan: file transfer resume (v0.8.0) | done |
 | 049b | iter-049-green-file-resume.md | Green: file transfer resume (v0.8.0) | done |
+| 050a | iter-050-plan-group-chat.md | Plan: group chat N-way pairwise (v0.9.0) | done |
+| 050b | iter-050-green-group-chat.md | Green: group chat N-way pairwise (v0.9.0) | done |

@@ -28,6 +28,7 @@ from .crypto import (
 )
 from .discovery import PeerDiscovery, PeerInfo
 from .files import FileOffer, FileTransferManager, OutgoingFile
+from .groups import MAX_MEMBERS, Group, GroupRegistry
 from .identity import Identity
 from .memory import MessageStore
 from .obfuscation import (
@@ -77,6 +78,8 @@ KIND_FILE_OFFER  = "file_offer"
 KIND_FILE_CHUNK  = "file_chunk"
 KIND_FILE_ACK    = "file_ack"
 KIND_FILE_RESUME = "file_resume"
+KIND_GROUP_INVITE = "group_invite"
+KIND_GROUP_MSG    = "group_msg"
 
 
 def _pack_msg(msg_type: int, payload: bytes) -> bytes:
@@ -242,6 +245,8 @@ class MalphasNode:
         # Keyed by file_id. The Event is set when a file_resume arrives.
         self._resume_signals: dict[str, set[int]] = {}
         self._resume_events: dict[str, asyncio.Event] = {}
+        # Group chat (v0.9.0): in-memory registry of groups we're in.
+        self._groups = GroupRegistry()
         self.auto_accept_files = False
         self._connections: dict[str, PeerConnection] = {}
         self._server: asyncio.AbstractServer | None = None
@@ -250,6 +255,8 @@ class MalphasNode:
         self._pin_callbacks: set[Callable] = set()
         self._file_offer_callbacks: set[Callable] = set()
         self._file_complete_callbacks: set[Callable] = set()
+        self._group_invite_callbacks: set[Callable] = set()
+        self._group_message_callbacks: set[Callable] = set()
         self._running = False
         self._reconnect_book = None  # set by CLI to enable auto-reconnect
         self._reconnect_tasks: dict[str, asyncio.Task] = {}
@@ -323,6 +330,36 @@ class MalphasNode:
     def on_file_complete(self, callback: Callable) -> None:
         """callback(file_id, payload_bytes) when a file is fully assembled."""
         self._file_complete_callbacks.add(callback)
+
+    def on_group_invite(self, callback: Callable) -> None:
+        """callback(from_peer_id, group_id, group_name, members) on group_invite."""
+        self._group_invite_callbacks.add(callback)
+
+    def on_group_message(self, callback: Callable) -> None:
+        """callback(from_peer_id, group_id, group_name, content) on group_msg."""
+        self._group_message_callbacks.add(callback)
+
+    def _notify_group_invite(self, from_id: str, group_id: str,
+                             group_name: str, members: list) -> None:
+        for cb in self._group_invite_callbacks:
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    asyncio.create_task(cb(from_id, group_id, group_name, members))
+                else:
+                    cb(from_id, group_id, group_name, members)
+            except Exception:
+                pass
+
+    def _notify_group_message(self, from_id: str, group_id: str,
+                              group_name: str, content: str) -> None:
+        for cb in self._group_message_callbacks:
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    asyncio.create_task(cb(from_id, group_id, group_name, content))
+                else:
+                    cb(from_id, group_id, group_name, content)
+            except Exception:
+                pass
 
     def _notify_file_offer(self, from_id: str, offer_dict: dict) -> None:
         for cb in self._file_offer_callbacks:
@@ -739,6 +776,10 @@ class MalphasNode:
             await self._handle_file_ack(data, from_id)
         elif kind == KIND_FILE_RESUME:
             await self._handle_file_resume(data, from_id)
+        elif kind == KIND_GROUP_INVITE:
+            await self._handle_group_invite(data, from_id)
+        elif kind == KIND_GROUP_MSG:
+            await self._handle_group_msg(data, from_id)
         elif kind == KIND_COVER:
             pass  # drop silently
 
@@ -888,6 +929,145 @@ class MalphasNode:
         ev = self._resume_events.get(file_id)
         if ev is not None:
             ev.set()
+
+    # ── Group chat (v0.9.0) ───────────────────────────────────────────────────
+
+    async def _handle_group_invite(self, data: dict, from_id: str) -> None:
+        """Receive a group invite. Register the group locally and notify
+        the application. The user does not have an explicit accept step
+        for groups — being added is symmetric to receiving a 1-to-1
+        message from a known contact (and if the sender isn't known,
+        the dispatch chain has already rejected upstream)."""
+        group_id = data.get("group_id")
+        group_name = data.get("group_name")
+        members = data.get("members")
+        if not isinstance(group_id, str) or not isinstance(group_name, str) \
+                or not isinstance(members, list):
+            return
+        try:
+            members_list = [str(m) for m in members]
+        except Exception:
+            return
+        if len(members_list) > MAX_MEMBERS:
+            return
+        # Build and register the group locally.
+        group = Group(
+            group_id=group_id,
+            name=group_name,
+            creator=from_id,
+            members=members_list,
+        )
+        self._groups.register(group)
+        self._notify_group_invite(from_id, group_id, group.name, members_list)
+
+    async def _handle_group_msg(self, data: dict, from_id: str) -> None:
+        """Receive a single pairwise copy of a group message."""
+        group_id = data.get("group_id")
+        group_name = data.get("group_name", "")
+        content = data.get("content")
+        if not isinstance(group_id, str) or not isinstance(content, str):
+            return
+        # The application does not require us to be in the local group
+        # registry — we can also display a message from a group we
+        # haven't been formally invited to, which mirrors how a peer-to-
+        # peer message from a known contact is delivered without prior
+        # registration. But we do require the sender to be known
+        # (already enforced by _dispatch_kind / _resolve_sealed_from
+        # upstream).
+        self._notify_group_message(from_id, group_id, str(group_name), content)
+        # Optionally store in the conversation log.
+        msg_id = data.get("msg_id")
+        if isinstance(msg_id, str) and msg_id:
+            self.store.store(from_id, self.identity.peer_id,
+                             f"[group {group_name or group_id[:8]}] {content}", msg_id)
+
+    async def create_group(self, name: str, members: list[str]) -> str | None:
+        """Create a group and broadcast a group_invite to every member.
+
+        Returns the group_id, or None if creation failed (name
+        collision or a member that's not in the routing table).
+        """
+        for m in members:
+            if not self.discovery.get_peer(m):
+                return None
+        try:
+            group = self._groups.create(name, self.identity.peer_id, members)
+        except ValueError:
+            return None
+
+        invite_extras = {
+            "group_id": group.group_id,
+            "group_name": group.name,
+            "members": list(group.members),
+        }
+        for m in members:
+            await self._try_send_payload(m, KIND_GROUP_INVITE, invite_extras)
+
+        return group.group_id
+
+    async def add_group_member(self, group_id: str, peer_id: str) -> bool:
+        """Add a peer to an existing group and notify them with a
+        group_invite. Existing members are NOT proactively notified —
+        out of scope for v0.9.0.
+        """
+        group = self._groups.get_by_id(group_id)
+        if group is None:
+            return False
+        if peer_id in group.members:
+            return True  # idempotent
+        if not self.discovery.get_peer(peer_id):
+            return False
+        try:
+            group.add_member(peer_id)
+        except ValueError:
+            return False
+        invite_extras = {
+            "group_id": group.group_id,
+            "group_name": group.name,
+            "members": list(group.members),
+        }
+        await self._try_send_payload(peer_id, KIND_GROUP_INVITE, invite_extras)
+        return True
+
+    async def send_group_message(self, group_id: str, content: str) -> bool:
+        """Pairwise fanout of `content` to every other member of the group.
+
+        Returns True if at least one copy was successfully shipped.
+        """
+        group = self._groups.get_by_id(group_id)
+        if group is None:
+            return False
+        any_ok = False
+        for m in group.members:
+            if m == self.identity.peer_id:
+                continue
+            extras = {
+                "group_id": group.group_id,
+                "group_name": group.name,
+                "content": content,
+            }
+            ok = await self._try_send_payload(m, KIND_GROUP_MSG, extras)
+            if ok:
+                any_ok = True
+        # Echo to local store so /history shows our outgoing.
+        if any_ok:
+            self.store.store(
+                self.identity.peer_id,
+                f"group:{group.group_id}",
+                f"[group {group.name}] {content}",
+                secrets.token_hex(16),
+            )
+        return any_ok
+
+    def leave_group(self, group_id: str) -> bool:
+        """Remove ourselves from the local group registry. The other
+        members are not notified — they'll continue to send us
+        messages until they figure it out by other means."""
+        group = self._groups.get_by_id(group_id)
+        if group is None:
+            return False
+        self._groups.remove(group_id)
+        return True
 
     async def resume_file(self, dest_peer_id: str, file_id: str) -> str | None:
         """Re-send a previously-started file using its existing OutgoingFile.
@@ -1200,6 +1380,7 @@ class MalphasNode:
         for ev in self._resume_events.values():
             ev.set()  # unblock any waiting send_file()
         self._resume_events.clear()
+        self._groups.wipe()
 
         # Wipe message queue
         self._message_queue.clear()
