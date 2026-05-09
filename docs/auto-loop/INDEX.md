@@ -56,3 +56,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 028 | iter-028-green-blake2s-peerid.md | Green: BLAKE2s peer_id (v0.5.0, wire-breaking) | done |
 | 029 | iter-029-next-target.md | Next-target (mypy strict bucket extension) | done |
 | 030 | iter-030-green-mypy-bucket.md | Green: mypy strict — discovery/receipts/ratchet | done |
+| 031 | iter-031-next-target.md | Next-target (mypy strict — identity/onion/addressbook) | done |
