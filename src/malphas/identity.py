@@ -103,10 +103,10 @@ class Identity:
 
     @property
     def ed25519_pub_bytes(self) -> bytes:
-        return self.ed25519_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        return bytes(self.ed25519_pub.public_bytes(Encoding.Raw, PublicFormat.Raw))
 
     def sign(self, data: bytes) -> bytes:
-        return self.ed25519_priv.sign(data)
+        return bytes(self.ed25519_priv.sign(data))
 
     def verify(self, signature: bytes, data: bytes) -> bool:
         try:

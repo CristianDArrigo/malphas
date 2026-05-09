@@ -37,7 +37,7 @@ def salt_to_mnemonic(salt: bytes) -> str:
             f"salt must be exactly {_SALT_LEN} bytes for a {_WORD_COUNT}-word "
             f"mnemonic, got {len(salt)} bytes"
         )
-    return Mnemonic(_LANG).to_mnemonic(salt)
+    return str(Mnemonic(_LANG).to_mnemonic(salt))
 
 
 def mnemonic_to_salt(words: str) -> bytes:

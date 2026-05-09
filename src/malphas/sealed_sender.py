@@ -31,6 +31,7 @@ without invalidating it.
 from __future__ import annotations
 
 import base64
+import binascii
 
 from .crypto import (
     decrypt,
@@ -82,7 +83,7 @@ def unseal(
 
     try:
         sealed = base64.b64decode(sealed_b64, validate=True)
-    except (ValueError, base64.binascii.Error) as e:  # type: ignore[attr-defined]
+    except (ValueError, binascii.Error) as e:
         raise ValueError(f"invalid sealed b64: {e}") from e
 
     shared = ecdh_shared_secret(my_x25519_priv, eph_pub)  # type: ignore[arg-type]

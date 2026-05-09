@@ -25,7 +25,10 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 def hkdf_derive(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> bytes:
     """HKDF-SHA256 key derivation."""
     hkdf = HKDF(algorithm=SHA256(), length=length, salt=salt, info=info)
-    return hkdf.derive(ikm)
+    # PyCA's hkdf.derive() is typed as Any in some stub versions; the
+    # explicit bytes(...) cast is a no-op at runtime but pins the
+    # return type for mypy on Python 3.10's older stub baseline.
+    return bytes(hkdf.derive(ikm))
 
 
 def ecdh_shared_secret(
@@ -34,7 +37,7 @@ def ecdh_shared_secret(
 ) -> bytes:
     """X25519 ECDH. Returns 32-byte raw shared secret."""
     their_pub = X25519PublicKey.from_public_bytes(their_pub_bytes)
-    return my_priv.exchange(their_pub)
+    return bytes(my_priv.exchange(their_pub))
 
 
 # --- Symmetric encryption ----------------------------------------------------
@@ -48,7 +51,7 @@ def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> bytes:
         raise ValueError("Key must be 32 bytes")
     nonce = os.urandom(12)
     aead = ChaCha20Poly1305(key)
-    ct = aead.encrypt(nonce, plaintext, aad or None)
+    ct = bytes(aead.encrypt(nonce, plaintext, aad or None))
     return nonce + ct
 
 
@@ -65,7 +68,7 @@ def decrypt(key: bytes, data: bytes, aad: bytes = b"") -> bytes:
     nonce, ct = data[:12], data[12:]
     aead = ChaCha20Poly1305(key)
     try:
-        return aead.decrypt(nonce, ct, aad or None)
+        return bytes(aead.decrypt(nonce, ct, aad or None))
     except Exception as e:
         raise ValueError("Decryption failed: authentication tag mismatch") from e
 

@@ -60,6 +60,15 @@ omit = [
     "*/tests/*",
     "*/__main__.py",      # CLI entrypoint, exercised by integration only
     "*/cli_ui.py",         # interactive surface, partially exercised
+    # GUI surfaces — both Tk and Qt require a display/optional deps
+    # to drive coverage. They have their own smoke suites
+    # (test_gui.py, test_gui_qt.py) which auto-skip in headless CI
+    # without the toolkit installed. The crypto/protocol layer is
+    # the audited target; the GUI coverage gate is misleading here.
+    "*/gui.py",
+    "*/gui_icons.py",
+    "*/gui_qt.py",
+    "*/splash.py",        # boot-time stdout banner only
 ]
 
 [tool.coverage.report]
@@ -155,7 +164,8 @@ disable_error_code = [
     "call-arg",      # tkinter typestub gaps (e.g. Misc.configure(bg=...))
     "name-defined",  # ditto for Tk runtime-only attrs
     "misc",
-    "call-overload", # Tk typestubs over-narrow Toplevel(master=Misc)
+    "call-overload",     # Tk typestubs over-narrow Toplevel(master=Misc)
+    "untyped-decorator", # FastAPI's @app.post / @app.get aren't typed in older mypy stubs (api.py)
 ]
 
 [tool.ruff]
