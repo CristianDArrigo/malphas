@@ -1,0 +1,80 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly.
+title: "bug: <one line>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Security issue?** Do **not** file it here. See
+        > [SECURITY.md](../SECURITY.md) for private reporting.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: A short description of the bug.
+      placeholder: When I run `/sendfile bob ./photo.jpg` …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Numbered steps. Include the exact commands.
+      placeholder: |
+        1. malphas --port 7777
+        2. /import malphas://...
+        3. /sendfile bob ./file.bin
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: malphas version
+      description: Output of `malphas --version`.
+      placeholder: malphas 0.5.7
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.7"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Ubuntu 24.04 / macOS 14 / …"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options:
+        - Direct (LAN/public IP)
+        - Tor hidden service
+        - Both
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Logs, screenshots, hypotheses. Strip secrets.

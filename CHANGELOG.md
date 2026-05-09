@@ -3,6 +3,29 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.8] — 2026-05-09
+
+### Community / repo hygiene
+
+- `CONTRIBUTING.md` — onboarding, local setup, gate stack, style,
+  wire-breaking change policy, threat-model-relevant checklist,
+  in/out scope notes.
+- `.github/PULL_REQUEST_TEMPLATE.md` — type of change, threat-model
+  impact, local-checks checklist (incl. CHANGELOG + strict bucket
+  bookkeeping).
+- `.github/ISSUE_TEMPLATE/bug_report.yml` — structured bug form with
+  version/python/OS/transport fields and a "do NOT file security
+  issues here" header.
+- `.github/ISSUE_TEMPLATE/feature_request.yml` — proposal form that
+  routes proposers to `docs/auto-loop/SUMMARY.md` first.
+- `.github/ISSUE_TEMPLATE/config.yml` — blank issues disabled;
+  routes security to GitHub Security advisories and "how do I …"
+  questions to Discussions.
+
+### Wire format
+
+Unchanged.
+
 ## [0.5.7] — 2026-05-09
 
 ### User-facing

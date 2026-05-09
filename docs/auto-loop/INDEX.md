@@ -71,3 +71,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 038 | iter-038-green-summary.md | Green: cumulative SUMMARY.md | done |
 | 040 | iter-040-green-dependabot-precommit.md | Green: dependabot + pre-commit | done |
 | 042 | iter-042-green-version-pytype.md | Green: __version__ + --version + py.typed | done |
+| 044 | iter-044-green-contributor-templates.md | Green: CONTRIBUTING + PR template + issue templates | done |

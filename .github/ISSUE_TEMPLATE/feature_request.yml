@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose a new feature or design change.
+title: "feat: <one line>"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening: check `docs/auto-loop/SUMMARY.md` —
+        the "What was NOT touched" section lists items that have
+        already been considered and parked.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is broken or missing?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: How would you solve it? Be specific.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Bug fix / small UX
+        - New CLI command or API endpoint
+        - New module
+        - Wire-format change (would bump minor)
+        - Security hardening
+        - Threat model expansion
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Why not X, Y, or doing nothing?
+
+  - type: textarea
+    id: threat-model
+    attributes:
+      label: Threat-model impact
+      description: How does this change the README "Threat Model" table?
+
+  - type: checkboxes
+    id: agree
+    attributes:
+      label: Confirmation
+      options:
+        - label: I checked CHANGELOG.md and docs/auto-loop/SUMMARY.md
+            for prior work on this topic.
+          required: true
