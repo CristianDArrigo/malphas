@@ -70,7 +70,7 @@ Standard-primitive trust.
 
 | Property                                         | Why not                                                                                       |
 |--------------------------------------------------|-----------------------------------------------------------------------------------------------|
-| Group forward secrecy                            | Groups use N-way pairwise fanout (no MLS). A removed member who keeps the connection open will continue to receive messages until the sender stops including them. |
+| Cryptographic group forward secrecy at membership boundary | Groups use N-way pairwise fanout (no MLS). A `group_member_change` (1.0.0-rc3) propagates membership eventually-consistently so a removed peer is dropped from every active member's fanout, but the underlying pairwise ratchets are not rotated at the boundary — that's the TBD half of TM-01. |
 | Post-compromise security on groups               | Same. Compromising one member's key gives the attacker access to that member's pairwise channels until each peer rotates. |
 | Plausible deniability of conversation            | Ed25519 signatures on the outer envelope are non-deniable. A leak of a signed message proves origin. (Discussion: future OTR-style MAC instead of signature.) |
 | Metadata at the IP / Tor circuit level           | We use Tor's circuit pool. A global passive adversary observing both ends can correlate.      |
@@ -138,7 +138,7 @@ release.
 
 | ID    | Severity | Item                                                                     | Tracked in   |
 |-------|:--------:|--------------------------------------------------------------------------|--------------|
-| TM-01 | High     | Group chat has no MLS / no key rotation on member removal.               | iter-053+    |
+| TM-01 | Medium (was High) | Operational consensus on group membership added in iter-055 via additive `group_member_change` kind: add/remove/leave fan a notification to all remaining members so their fanouts converge to the new list. **Cryptographic** PCS at the membership boundary (MLS-style `member_ratchet`) is still TBD. | iter-055 ⚠️ partial |
 | TM-02 | High     | No external cryptographic protocol review.                               | REVIEW_REQUEST.md |
 | TM-03 | High     | Wire format has been broken 4× in two months. Not stable yet.            | PROTOCOL.md, frozen at `1.0.0-rc1`. |
 | TM-04 | Medium   | TOFU window: first connect to a new peer trusts the public key on faith. | by design; documented in invite flow. |

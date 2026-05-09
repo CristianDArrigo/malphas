@@ -3,6 +3,60 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [1.0.0-rc3] — 2026-05-09
+
+### Partial — TM-01 group membership consensus
+
+The full fix (MLS-style cryptographic PCS at membership boundary)
+is multi-week and stays TBD. This iter ships the operational
+half: when group membership changes, every active member's local
+view converges to the new list, so a removed peer falls out of
+every sender's fanout naturally — no more silent local-only
+changes that left removed peers receiving messages from any
+sender who hadn't independently noticed.
+
+### Added — wire-additive `group_member_change`
+
+New optional `kind` in §8.1 of `PROTOCOL.md`. Fields:
+`group_id`, `group_name`, `action` (`"add"` / `"remove"`),
+`target` (peer_id), `members` (full new list). 1.0 receivers
+that don't implement it drop it silently per §10.2.
+`WIRE_VERSION` stays 1.
+
+### Added — code
+
+- `node.add_group_member`: now also fans `member_change` to
+  remaining members after inviting the new peer.
+- `node.remove_group_member` (new, async): removes locally and
+  notifies remaining members.
+- `node.leave_group_async` (new): notifies remaining members
+  before dropping the group locally. Synchronous `leave_group`
+  retained for backwards compatibility.
+- `node.on_group_member_change` callback registration.
+- Outsider authorization check: a non-member who guessed the
+  `group_id` cannot rewrite our local view; the handler
+  validates `from_id` against the current member set or
+  creator before applying.
+
+### Added — tests
+
+`tests/test_groups.py` +4 integration tests:
+- `test_add_member_notifies_existing_members`
+- `test_remove_member_excludes_them_from_future_fanouts`
+- `test_leave_async_notifies_remaining_members`
+- `test_member_change_from_outsider_is_rejected`
+
+15 / 15 group tests pass.
+
+### Updated docs
+
+- `PROTOCOL.md` §8.1 lists `group_member_change`. §13 separates
+  the operational fix (shipped) from the cryptographic
+  `member_ratchet` (TBD).
+- `THREAT_MODEL.md` TM-01 downgraded High → Medium partial.
+  Non-guarantees row about group forward secrecy reworded to
+  "membership consensus yes; cryptographic PCS no".
+
 ## [1.0.0-rc2] — 2026-05-09
 
 ### Resolved — TM-05 constant-time compare audit

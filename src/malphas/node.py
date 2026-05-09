@@ -86,6 +86,7 @@ KIND_FILE_ACK    = "file_ack"
 KIND_FILE_RESUME = "file_resume"
 KIND_GROUP_INVITE = "group_invite"
 KIND_GROUP_MSG    = "group_msg"
+KIND_GROUP_MEMBER_CHANGE = "group_member_change"   # added in 1.0.0-rc3
 
 
 def _pack_msg(msg_type: int, payload: bytes) -> bytes:
@@ -263,6 +264,7 @@ class MalphasNode:
         self._file_complete_callbacks: set[Callable] = set()
         self._group_invite_callbacks: set[Callable] = set()
         self._group_message_callbacks: set[Callable] = set()
+        self._group_member_change_callbacks: set[Callable] = set()
         self._running = False
         self._reconnect_book = None  # set by CLI to enable auto-reconnect
         self._reconnect_tasks: dict[str, asyncio.Task] = {}
@@ -345,6 +347,13 @@ class MalphasNode:
         """callback(from_peer_id, group_id, group_name, content) on group_msg."""
         self._group_message_callbacks.add(callback)
 
+    def on_group_member_change(self, callback: Callable) -> None:
+        """callback(from_peer_id, group_id, action, target_peer_id, members)
+        when membership changes. `action` is "add" or "remove";
+        `target_peer_id` is the peer being added/removed; `members`
+        is the new full list."""
+        self._group_member_change_callbacks.add(callback)
+
     def _notify_group_invite(self, from_id: str, group_id: str,
                              group_name: str, members: list) -> None:
         for cb in self._group_invite_callbacks:
@@ -364,6 +373,19 @@ class MalphasNode:
                     asyncio.create_task(cb(from_id, group_id, group_name, content))
                 else:
                     cb(from_id, group_id, group_name, content)
+            except Exception:
+                pass
+
+    def _notify_group_member_change(self, from_id: str, group_id: str,
+                                     action: str, target: str,
+                                     members: list) -> None:
+        for cb in self._group_member_change_callbacks:
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    asyncio.create_task(cb(from_id, group_id, action,
+                                             target, members))
+                else:
+                    cb(from_id, group_id, action, target, members)
             except Exception:
                 pass
 
@@ -786,6 +808,8 @@ class MalphasNode:
             await self._handle_group_invite(data, from_id)
         elif kind == KIND_GROUP_MSG:
             await self._handle_group_msg(data, from_id)
+        elif kind == KIND_GROUP_MEMBER_CHANGE:
+            await self._handle_group_member_change(data, from_id)
         elif kind == KIND_COVER:
             pass  # drop silently
 
@@ -966,6 +990,90 @@ class MalphasNode:
         self._groups.register(group)
         self._notify_group_invite(from_id, group_id, group.name, members_list)
 
+    async def _handle_group_member_change(
+            self, data: dict, from_id: str) -> None:
+        """Receive a notification that a group's membership changed.
+
+        Validates that `from_id` is the creator of the group OR an
+        existing member (otherwise we'd accept arbitrary remote
+        rewrites). Reconciles local membership with the new list.
+        Surfaces an event to the application layer.
+
+        See PROTOCOL.md §13 (planned 1.1.0). Wire-additive in the
+        meantime: 1.0 receivers that don't implement this kind drop
+        the payload silently per §10.2.
+        """
+        group_id = data.get("group_id")
+        action = data.get("action")
+        target = data.get("target")
+        members = data.get("members")
+        if not isinstance(group_id, str) or not isinstance(action, str) \
+                or not isinstance(target, str) \
+                or not isinstance(members, list):
+            return
+        if action not in ("add", "remove"):
+            return
+        try:
+            members_list = [str(m) for m in members]
+        except Exception:
+            return
+        if len(members_list) > MAX_MEMBERS:
+            return
+
+        group = self._groups.get_by_id(group_id)
+        if group is None:
+            # We were never invited; ignore (we'd see no messages
+            # anyway, since the sender's not fanning to us either).
+            return
+
+        # Authorization: only accept membership rewrites from a
+        # member of the group as we currently see it. Creator is
+        # implicitly a member. This stops a random peer who guessed
+        # a group_id from rewriting our local view.
+        if from_id not in group.members and from_id != group.creator:
+            return
+
+        # Apply the change locally (idempotent).
+        if action == "add" and target not in group.members:
+            try:
+                group.add_member(target)
+            except ValueError:
+                return
+        elif action == "remove" and target in group.members:
+            group.remove_member(target)
+
+        # Reconcile against the sender's authoritative list.
+        # Trust the sender's list as the new ground truth (eventual
+        # consistency: last writer wins). We've already authorized
+        # the sender above.
+        group.members = list(members_list)
+
+        self._notify_group_member_change(
+            from_id, group_id, action, target, list(group.members))
+
+    async def _fanout_group_member_change(
+            self, group: "Group", action: str, target: str,
+            exclude: set[str] | None = None) -> None:
+        """Send a `group_member_change` to every member of `group`
+        except ourselves and any peers in `exclude` (typically the
+        target itself for a removal: we don't tell the removed
+        member they're being removed via the group's own channel —
+        they have their own pairwise relationship)."""
+        ex = exclude or set()
+        for m in group.members:
+            if m == self.identity.peer_id:
+                continue
+            if m in ex:
+                continue
+            extras = {
+                "group_id": group.group_id,
+                "group_name": group.name,
+                "action": action,
+                "target": target,
+                "members": list(group.members),
+            }
+            await self._try_send_payload(m, KIND_GROUP_MEMBER_CHANGE, extras)
+
     async def _handle_group_msg(self, data: dict, from_id: str) -> None:
         """Receive a single pairwise copy of a group message."""
         group_id = data.get("group_id")
@@ -1012,9 +1120,16 @@ class MalphasNode:
         return group.group_id
 
     async def add_group_member(self, group_id: str, peer_id: str) -> bool:
-        """Add a peer to an existing group and notify them with a
-        group_invite. Existing members are NOT proactively notified —
-        out of scope for v0.9.0.
+        """Add a peer to an existing group, send them a `group_invite`,
+        and notify all existing members via `group_member_change` so
+        their fanouts pick up the new peer.
+
+        Eventual-consistency model: the receiver of the
+        `member_change` last-writer-wins reconciles its local
+        membership against the sender's claimed list (PROTOCOL.md
+        §10.2 + §13). We are explicitly NOT doing MLS-style
+        cryptographic membership consensus (TM-01); see
+        THREAT_MODEL.md.
         """
         group = self._groups.get_by_id(group_id)
         if group is None:
@@ -1033,6 +1148,31 @@ class MalphasNode:
             "members": list(group.members),
         }
         await self._try_send_payload(peer_id, KIND_GROUP_INVITE, invite_extras)
+        # Tell the rest so they include the new peer in fanouts.
+        await self._fanout_group_member_change(
+            group, action="add", target=peer_id,
+            exclude={peer_id},   # the new joiner already got an invite
+        )
+        return True
+
+    async def remove_group_member(self, group_id: str, peer_id: str) -> bool:
+        """Remove `peer_id` from a group and notify the remaining
+        members. The removed peer is NOT notified through the group
+        channel (their own send pipeline doesn't get a hint either —
+        deliberate: see THREAT_MODEL.md TM-01)."""
+        group = self._groups.get_by_id(group_id)
+        if group is None:
+            return False
+        if peer_id not in group.members:
+            return True   # idempotent
+        if peer_id == self.identity.peer_id:
+            # Use leave_group for "remove yourself".
+            return False
+        group.remove_member(peer_id)
+        await self._fanout_group_member_change(
+            group, action="remove", target=peer_id,
+            exclude={peer_id},
+        )
         return True
 
     async def send_group_message(self, group_id: str, content: str) -> bool:
@@ -1066,12 +1206,31 @@ class MalphasNode:
         return any_ok
 
     def leave_group(self, group_id: str) -> bool:
-        """Remove ourselves from the local group registry. The other
-        members are not notified — they'll continue to send us
-        messages until they figure it out by other means."""
+        """Synchronous local-only departure (kept for backwards
+        compatibility with existing callers and tests). Other
+        members are NOT notified — use `leave_group_async` for the
+        polite version that fans out a `group_member_change`."""
         group = self._groups.get_by_id(group_id)
         if group is None:
             return False
+        self._groups.remove(group_id)
+        return True
+
+    async def leave_group_async(self, group_id: str) -> bool:
+        """Leave a group and notify the remaining members so their
+        future fanouts skip us. After the notification, we drop the
+        group from our local registry."""
+        group = self._groups.get_by_id(group_id)
+        if group is None:
+            return False
+        # Update our view first so the fanout doesn't include us in
+        # `members`. The remaining peers will see action=remove,
+        # target=<self>, and adjust accordingly.
+        if self.identity.peer_id in group.members:
+            group.remove_member(self.identity.peer_id)
+        await self._fanout_group_member_change(
+            group, action="remove", target=self.identity.peer_id,
+        )
         self._groups.remove(group_id)
         return True
 

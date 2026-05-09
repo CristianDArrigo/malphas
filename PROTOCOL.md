@@ -243,6 +243,7 @@ X25519 key (§3) to recover the real peer_id. See §9.
 | `file_resume`    | Receiver tells sender which indices it already has                     | `file_id`, `received` (list[int])                                                                                      |
 | `group_invite`   | Add recipient to a group                                               | `group_id`, `group_name`, `members` (list[peer_id])                                                                    |
 | `group_msg`      | Group message (one per member, fanout)                                 | `group_id`, `group_name`, `content`, `nonce`                                                                           |
+| `group_member_change` | Membership update (added / removed) — additive in `1.0.0-rc3`     | `group_id`, `group_name`, `action` (`"add"`/`"remove"`), `target` (peer_id), `members` (full new list)                  |
 
 ### 8.2 · Sealed-sender envelope
 
@@ -390,8 +391,11 @@ compatibility but tighten the spec for future readers:
   `b"malphas-pin-key"` instead of reusing the book key.
   (Does not require migration: the same pinstore can be
   re-encrypted on first 1.0.0 run.)
-- §8.1: add `member_ratchet` kind for group key rotation
-  (planned for 1.1.0; receivers in 1.0 ignore it = no break).
+- §8.1: add `member_ratchet` kind for cryptographic group key
+  rotation (MLS-style PCS at membership-change boundary).
+  Operational membership consensus already shipped in
+  `group_member_change` (§8.1, additive in 1.0.0-rc3); the
+  cryptographic rotation is the harder, deferred half of TM-01.
 
 ---
 

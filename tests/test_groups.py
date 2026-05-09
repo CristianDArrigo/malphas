@@ -194,3 +194,113 @@ class TestGroupChatIntegration:
         assert gid is not None
         a.panic()
         assert a._groups.get_by_id(gid) is None
+
+    # ── TM-01 partial: membership change propagation (1.0.0-rc3) ────────────
+
+    async def test_add_member_notifies_existing_members(self, trio):
+        a, b, c, id_a, id_b, id_c = trio
+        gid = await a.create_group("squad", [id_b.peer_id])
+        assert gid is not None
+        await asyncio.sleep(0.4)
+
+        # B should see a membership-change event when C is added.
+        events_b: list[tuple] = []
+        b.on_group_member_change(
+            lambda f, g, action, target, ms:
+                events_b.append((f, g, action, target, tuple(ms)))
+        )
+        ok = await a.add_group_member(gid, id_c.peer_id)
+        assert ok is True
+        await asyncio.sleep(0.5)
+
+        assert any(
+            ev[0] == id_a.peer_id and ev[1] == gid and ev[2] == "add"
+            and ev[3] == id_c.peer_id and id_c.peer_id in ev[4]
+            for ev in events_b
+        ), f"B did not receive a member_change for the add: {events_b}"
+        # B's local view now includes C.
+        b_group = b._groups.get_by_id(gid)
+        assert b_group is not None
+        assert id_c.peer_id in b_group.members
+
+    async def test_remove_member_excludes_them_from_future_fanouts(self, trio):
+        a, b, c, id_a, id_b, id_c = trio
+        gid = await a.create_group(
+            "trio-grp", [id_b.peer_id, id_c.peer_id])
+        assert gid is not None
+        await asyncio.sleep(0.4)
+
+        events_c: list[tuple] = []
+        c.on_group_member_change(
+            lambda f, g, action, target, ms:
+                events_c.append((f, g, action, target, tuple(ms)))
+        )
+        # A removes B.
+        ok = await a.remove_group_member(gid, id_b.peer_id)
+        assert ok is True
+        await asyncio.sleep(0.5)
+
+        # C learned about it.
+        assert any(
+            ev[2] == "remove" and ev[3] == id_b.peer_id
+            for ev in events_c
+        ), f"C did not receive a member_change for the remove: {events_c}"
+        # C's local view now excludes B.
+        c_group = c._groups.get_by_id(gid)
+        assert c_group is not None
+        assert id_b.peer_id not in c_group.members
+
+    async def test_leave_async_notifies_remaining_members(self, trio):
+        a, b, c, id_a, id_b, id_c = trio
+        gid = await a.create_group(
+            "exit-grp", [id_b.peer_id, id_c.peer_id])
+        assert gid is not None
+        await asyncio.sleep(0.4)
+
+        events_a: list[tuple] = []
+        events_c: list[tuple] = []
+        a.on_group_member_change(
+            lambda f, g, action, target, ms:
+                events_a.append((f, g, action, target, tuple(ms)))
+        )
+        c.on_group_member_change(
+            lambda f, g, action, target, ms:
+                events_c.append((f, g, action, target, tuple(ms)))
+        )
+
+        ok = await b.leave_group_async(gid)
+        assert ok is True
+        await asyncio.sleep(0.5)
+
+        # A and C learned that B left.
+        for events, who in [(events_a, "A"), (events_c, "C")]:
+            assert any(
+                ev[2] == "remove" and ev[3] == id_b.peer_id
+                for ev in events
+            ), f"{who} did not see B's leave: {events}"
+
+    async def test_member_change_from_outsider_is_rejected(self, trio):
+        """Authorization check: a non-member can't rewrite our local
+        view by sending a forged group_member_change."""
+        a, b, c, id_a, id_b, id_c = trio
+        gid = await a.create_group("closed", [id_b.peer_id])
+        assert gid is not None
+        await asyncio.sleep(0.4)
+
+        # C was never invited. C shouldn't be able to rewrite A's
+        # membership by sending a member_change.
+        forged = {
+            "group_id": gid,
+            "group_name": "closed",
+            "action": "add",
+            "target": id_c.peer_id,
+            "members": [id_a.peer_id, id_b.peer_id, id_c.peer_id],
+        }
+        # Drive the handler directly with `from_id = c` to simulate
+        # the dispatch arriving over the wire from C.
+        await a._handle_group_member_change(forged, id_c.peer_id)
+
+        # A's view of the group is unchanged.
+        a_group = a._groups.get_by_id(gid)
+        assert a_group is not None
+        assert id_c.peer_id not in a_group.members
