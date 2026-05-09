@@ -62,3 +62,4 @@ Repository: malphas (privacy-first P2P messenger).
 | 034 | iter-034-green-check-script.md | Green: scripts/check.sh local CI mirror | done |
 | 035 | iter-035-next-target.md | Next-target (single SoT for strict bucket) | done |
 | 036 | iter-036-green-mypy-sot.md | Green: single source of truth — mypy strict bucket | done |
+| 037 | iter-037-next-target.md | Next-target (cumulative SUMMARY.md) | done |
