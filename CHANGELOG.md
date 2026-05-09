@@ -3,6 +3,31 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.5.4] — 2026-05-09
+
+### Engineering
+
+- **Single source of truth for the mypy strict bucket.**
+  - The strict bucket lives in one place: `pyproject.toml`
+    `[[tool.mypy.overrides]] strict = true`.
+  - The lenient bucket (node, transport, api, cli_ui, __main__,
+    splash) gets its own override that disables the mypy 2.x
+    strict-by-default error codes (`no-untyped-def`,
+    `no-untyped-call`, `type-arg`, etc.) ONLY for those modules.
+  - The CI workflow and `scripts/check.sh` now invoke a single
+    `mypy src/malphas/` instead of listing 14 files. The two no
+    longer drift when the bucket is extended — the list moves once,
+    in `pyproject.toml`.
+  - Verified the strict gating still bites: an untyped function added
+    to a strict-bucket module still triggers `no-untyped-def`; the
+    same change in a lenient-bucket module does not.
+- 21 source files type-check cleanly (14 strict + 6 lenient + 1
+  package init) under the consolidated invocation.
+
+### Wire format
+
+Unchanged.
+
 ## [0.5.3] — 2026-05-09
 
 ### Dev tooling

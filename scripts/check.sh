@@ -60,36 +60,24 @@ stage() { printf '\n%s===> %s%s\n' "$C_HEAD" "$1" "$C_END"; }
 ok()    { printf '%s✓ %s%s\n' "$C_OK" "$1" "$C_END"; }
 fail()  { printf '%s✗ %s%s\n' "$C_ERR" "$1" "$C_END" >&2; exit 1; }
 
-# ── Strict bucket (kept in sync with .github/workflows/ci.yml) ───────────────
-
-STRICT_BUCKET=(
-  src/malphas/replay.py
-  src/malphas/crypto.py
-  src/malphas/memory.py
-  src/malphas/obfuscation.py
-  src/malphas/pinstore.py
-  src/malphas/invite.py
-  src/malphas/files.py
-  src/malphas/secure_buffer.py
-  src/malphas/discovery.py
-  src/malphas/receipts.py
-  src/malphas/ratchet.py
-  src/malphas/identity.py
-  src/malphas/onion.py
-  src/malphas/addressbook.py
-)
-
 # ── 1. ruff ──────────────────────────────────────────────────────────────────
 
 stage "ruff check src/ tests/"
 "$PYTHON" -m ruff check src/ tests/ || fail "ruff failed"
 ok "ruff clean"
 
-# ── 2. mypy --strict ─────────────────────────────────────────────────────────
+# ── 2. mypy (strict bucket via pyproject overrides) ──────────────────────────
+#
+# The strict bucket lives in pyproject.toml under
+# [[tool.mypy.overrides]] modules = [...] strict = true. The lenient
+# modules in the same project disable the strict-default error codes
+# via the [tool.mypy] disable_error_code list. So a single
+# `mypy src/malphas/` covers both: strict for the bucket, lenient
+# elsewhere.
 
-stage "mypy --strict (${#STRICT_BUCKET[@]} modules)"
-"$PYTHON" -m mypy --strict "${STRICT_BUCKET[@]}" || fail "mypy failed"
-ok "mypy strict bucket clean"
+stage "mypy src/malphas/  (strict bucket via pyproject overrides)"
+"$PYTHON" -m mypy src/malphas/ || fail "mypy failed"
+ok "mypy clean"
 
 # ── 3. bandit ────────────────────────────────────────────────────────────────
 

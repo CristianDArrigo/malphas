@@ -25,23 +25,8 @@ jobs:
       - name: Ruff check
         run: ruff check src/ tests/
 
-      - name: Mypy strict bucket
-        run: |
-          mypy \
-            src/malphas/replay.py \
-            src/malphas/crypto.py \
-            src/malphas/memory.py \
-            src/malphas/obfuscation.py \
-            src/malphas/pinstore.py \
-            src/malphas/invite.py \
-            src/malphas/files.py \
-            src/malphas/secure_buffer.py \
-            src/malphas/discovery.py \
-            src/malphas/receipts.py \
-            src/malphas/ratchet.py \
-            src/malphas/identity.py \
-            src/malphas/onion.py \
-            src/malphas/addressbook.py
+      - name: Mypy (strict bucket via pyproject overrides)
+        run: mypy src/malphas/
 
       - name: Bandit static security scan
         run: bandit -r src/malphas/ -c pyproject.toml -l
