@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-09
 **Trigger:** scheduled. Closes the last two autonomous-doable
-items before only TM-02 (external review) blocks `1.0.0` final.
+items in the threat model.
 
 ## TM-11 — closed
 
@@ -58,7 +58,7 @@ reviewer can grep the file and see them.
 | ID    | Status                | Closed in  |
 |-------|-----------------------|------------|
 | TM-01 | Medium partial        | iter-055   |
-| TM-02 | Open                  | external review needed |
+| TM-02 | Parked                | external review deferred at user request |
 | TM-03 | Resolved              | rc1        |
 | TM-04 | By design             | TOFU window |
 | TM-05 | Resolved              | iter-054   |
@@ -69,10 +69,9 @@ reviewer can grep the file and see them.
 | TM-10 | Low                   | padding granularity |
 | TM-11 | Resolved              | iter-057 (this iter) |
 
-After this iter, only **TM-02** (external review) and the two
-"low priority" / "by design" items block `1.0.0` final. The
-auto-loop has done what an autonomous agent can do; the rest is
-a human review cycle.
+After this iter the only blockers for `1.0.0` final are
+"low priority" / "by design" items (TM-06, TM-07, TM-09,
+TM-10) and the operator's own call on when to tag.
 
 ## Version
 

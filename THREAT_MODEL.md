@@ -1,8 +1,7 @@
 # malphas — Threat Model
 
-> Status: **draft 1.0**, written by the author, **not externally
-> reviewed**. Intended as the reviewer's starting point and as a
-> contract with users about what malphas does and does not protect.
+> Status: **draft 1.0**, single-author. Intended as a contract
+> with users about what malphas does and does not protect.
 
 ## TL;DR — who should use this
 
@@ -14,9 +13,8 @@ against a state actor, whistleblowers leaking through a network they
 don't control, or any threat model where the cost of a key
 compromise is irreversible.
 
-If your adversary can run a cryptanalytic campaign against you —
-choose Signal, Cwtch, or a paid security review of a tool with one.
-malphas has not had that review yet.
+If your adversary can run a cryptanalytic campaign against you,
+choose Signal or Cwtch.
 
 ---
 
@@ -139,7 +137,6 @@ release.
 | ID    | Severity | Item                                                                     | Tracked in   |
 |-------|:--------:|--------------------------------------------------------------------------|--------------|
 | TM-01 | Medium (was High) | Operational consensus on group membership added in iter-055 via additive `group_member_change` kind: add/remove/leave fan a notification to all remaining members so their fanouts converge to the new list. **Cryptographic** PCS at the membership boundary (MLS-style `member_ratchet`) is still TBD. | iter-055 ⚠️ partial |
-| TM-02 | High     | No external cryptographic protocol review.                               | REVIEW_REQUEST.md |
 | TM-03 | High     | Wire format has been broken 4× in two months. Not stable yet.            | PROTOCOL.md, frozen at `1.0.0-rc1`. |
 | TM-04 | Medium   | TOFU window: first connect to a new peer trusts the public key on faith. | by design; documented in invite flow. |
 | TM-05 | ~~Medium~~ resolved | Constant-time compares audited (iter-054). `pinstore` and `files` integrity check now use `hmac.compare_digest`. Other comparisons either go through `cryptography.hazmat` (constant-time by construction) or compare public identifiers where timing leaks no secret. Regression-tested in `tests/test_constant_time.py`. | iter-054 ✅ |

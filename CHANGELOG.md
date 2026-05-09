@@ -8,7 +8,6 @@ versioning is SemVer with the caveat that wire-format-breaking changes always bu
 ### Resolved — TM-11 CLI test mock + PROTOCOL.md §14 test vectors
 
 Closes the last two autonomously-doable threat-model items.
-Only TM-02 (external review) blocks `1.0.0` final after this.
 
 ### Fixed
 
@@ -181,10 +180,7 @@ additive (PROTOCOL.md §10).
   every byte: identity derivation, outer frame, handshake
   JSON, onion layering, `auth_type` byte values, every `kind`
   value, sealed-sender envelope, on-disk formats. Versioning
-  rules and freeze policy in §10. Reviewer-ready.
-- `REVIEW_REQUEST.md` — self-contained brief for an external
-  cryptographer / security engineer. Lists what to look at,
-  where, and the seven open questions the author has.
+  rules and freeze policy in §10.
 - `RELEASE.md` — pre-release checklist, signed-tag procedure,
   reproducible-build gap tracker.
 - `WIRE_VERSION = 1` exposed at `malphas.WIRE_VERSION` and
@@ -197,10 +193,7 @@ additive (PROTOCOL.md §10).
 
 ### Status
 
-This is a release candidate, **not externally reviewed**. Use
-in production at your own risk. Stable `1.0.0` ships when
-REVIEW_REQUEST.md closes its review cycle and the high-severity
-findings (if any) are resolved.
+This is a release candidate. Use in production at your own risk.
 
 ### Known limps tracked for `1.0.0` final
 

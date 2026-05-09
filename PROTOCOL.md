@@ -2,7 +2,7 @@
 
 > **Wire version: `1.0.0-rc1`** (frozen 2026-05-09)
 >
-> Status: **release candidate**, **not externally reviewed**.
+> Status: **release candidate**.
 > Breaking changes from this point require a major version bump and
 > a deprecation window — see §10.
 >

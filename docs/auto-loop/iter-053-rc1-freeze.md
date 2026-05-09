@@ -29,10 +29,8 @@ into iter-054+.
   values (§7), every `kind` value (§8), sealed-sender
   envelope (§8.2), versioning rules (§10) including the
   freeze policy from `1.0.0-rc1`.
-- `REVIEW_REQUEST.md` — self-contained brief for a reviewer:
-  what to look at, where, the seven specific questions the
-  author has open. Disclosure window 30 days from first
-  reply.
+  *(originally also added a reviewer brief; later removed at user
+  request — the audit topic is parked.)*
 - `RELEASE.md` — pre-release checklist, signed-tag procedure,
   reproducible-build gap tracker.
 

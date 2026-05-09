@@ -54,7 +54,7 @@ Same hashes on the second run. ✓
 | ID    | Status                | Notes                                                  |
 |-------|-----------------------|--------------------------------------------------------|
 | TM-01 | Medium partial        | Operational consensus shipped; cryptographic PCS TBD.  |
-| TM-02 | Open                  | External review (REVIEW_REQUEST.md) — needs a human.   |
+| TM-02 | Parked                | External review deferred at user request.              |
 | TM-03 | Resolved              | Wire frozen at 1.0.0-rc1.                              |
 | TM-04 | By design             | TOFU window — documented.                              |
 | TM-05 | Resolved              | iter-054.                                              |
@@ -67,7 +67,7 @@ Same hashes on the second run. ✓
 
 Two open items I can autonomously close in the next iter: TM-11
 (trivial mock fix) and PROTOCOL.md §14 test vectors. After that,
-only TM-02 (external review) blocks `1.0.0` final.
+TM-02 was deferred at user request after this iter.
 
 ## Next iter
 

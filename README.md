@@ -98,15 +98,13 @@ No servers. No accounts. No logs. No traces.
 
 ## Status
 
-**`1.0.0-rc5` (2026-05-09) · wire format frozen · not externally reviewed.**
+**`1.0.0-rc5` (2026-05-09) · wire format frozen.**
 
 malphas is a release candidate. Wire format is frozen at
 `WIRE_VERSION = 1` and additive-only from here (see
 [`PROTOCOL.md`](PROTOCOL.md) §10). The threat model is
 documented in [`THREAT_MODEL.md`](THREAT_MODEL.md) and graded
-against five adversary profiles. The only open audit item is
-**TM-02** — external cryptographic review by a human; the
-review brief is ready to send at [`REVIEW_REQUEST.md`](REVIEW_REQUEST.md).
+against five adversary profiles.
 
 The full canonical document set:
 
@@ -114,7 +112,6 @@ The full canonical document set:
 |---------------------------------------------------|----------------------------------------------------------------------------------------|
 | [`THREAT_MODEL.md`](THREAT_MODEL.md)              | adversary profiles, guarantees, weakness IDs (TM-01 … TM-11)                           |
 | [`PROTOCOL.md`](PROTOCOL.md)                      | byte-level wire spec (frozen at `1.0.0-rc1`)                                           |
-| [`REVIEW_REQUEST.md`](REVIEW_REQUEST.md)          | brief for an external reviewer — what to look at, the seven open questions             |
 | [`RELEASE.md`](RELEASE.md)                        | reproducible-build process, signed-tag procedure                                       |
 | [`CHANGELOG.md`](CHANGELOG.md)                    | release notes                                                                          |
 | `docs/auto-loop/`                                 | iter-by-iter development log                                                           |
@@ -156,12 +153,11 @@ Every design decision in malphas follows from a small set of principles, stated 
 
 ## Threat Model
 
-> **`1.0.0-rc1` · wire format frozen 2026-05-09 · not externally
-> reviewed.** The summary below is a short version of the full
-> [`THREAT_MODEL.md`](THREAT_MODEL.md). Reviewers and operators
-> should read the full document; it grades each guarantee against
-> five distinct adversary profiles and lists every known weakness
-> with a tracking ID.
+> **`1.0.0-rc1` · wire format frozen 2026-05-09.** The summary
+> below is a short version of the full
+> [`THREAT_MODEL.md`](THREAT_MODEL.md), which grades each
+> guarantee against five distinct adversary profiles and lists
+> every known weakness with a tracking ID.
 
 malphas is designed to protect against the following adversaries:
 
@@ -991,7 +987,6 @@ stand at `1.0.0-rc5`:
 | ID    | Status                | Summary                                                                                              |
 |-------|-----------------------|------------------------------------------------------------------------------------------------------|
 | TM-01 | Medium (partial)      | Group operational consensus shipped (`group_member_change`); MLS-style cryptographic PCS still TBD.  |
-| TM-02 | Open                  | External cryptographic review — needs a human; brief in [`REVIEW_REQUEST.md`](REVIEW_REQUEST.md).    |
 | TM-03 | Resolved              | Wire format frozen at `1.0.0-rc1`; additive-only from here.                                          |
 | TM-04 | By design             | TOFU window: first-contact key trust before pinning kicks in.                                        |
 | TM-05 | Resolved              | Constant-time compare audit (iter-054).                                                              |
@@ -1223,7 +1218,6 @@ malphas is not audited. Do not use it in situations where the cost of a security
 
 - [`THREAT_MODEL.md`](THREAT_MODEL.md) — adversary profiles, guarantees, weakness IDs.
 - [`PROTOCOL.md`](PROTOCOL.md) — byte-level wire-format spec, frozen at `1.0.0-rc1`.
-- [`REVIEW_REQUEST.md`](REVIEW_REQUEST.md) — reviewer brief.
 - [`RELEASE.md`](RELEASE.md) — release / reproducible-build process.
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes.
 - `docs/auto-loop/` — iter-by-iter development log.

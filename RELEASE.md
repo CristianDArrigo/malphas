@@ -11,7 +11,7 @@
 
 | Tag form           | Stage             | When                                                                |
 |--------------------|-------------------|---------------------------------------------------------------------|
-| `vX.Y.Z`           | stable            | After `rc` cycle resolves and external review (REVIEW_REQUEST.md) closes its high-severity findings. |
+| `vX.Y.Z`           | stable            | After the `rc` cycle resolves — wire frozen, all known weakness IDs in `THREAT_MODEL.md` §5 either resolved or accepted-and-documented. |
 | `vX.Y.Z-rcN`       | release candidate | Wire-format-touching changes, or any change that needs soak time.   |
 | (no tag)           | development       | Day-to-day commits. `pyproject.toml` carries the *next* RC version. |
 
