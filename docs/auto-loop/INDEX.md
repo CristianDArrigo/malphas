@@ -79,3 +79,5 @@ Repository: malphas (privacy-first P2P messenger).
 | 047b | iter-047-green-per-user-salt.md | Green: per-user Argon2 salt (v0.7.0 WIRE-BREAKING) | done |
 | 048a | iter-048-plan-mnemonic.md | Plan: BIP39 12-word mnemonic (v0.7.1) | done |
 | 048b | iter-048-green-mnemonic.md | Green: BIP39 12-word mnemonic (v0.7.1) | done |
+| 049a | iter-049-plan-file-resume.md | Plan: file transfer resume (v0.8.0) | done |
+| 049b | iter-049-green-file-resume.md | Green: file transfer resume (v0.8.0) | done |

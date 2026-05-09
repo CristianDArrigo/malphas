@@ -3,6 +3,50 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [0.8.0] — 2026-05-09
+
+### Features
+
+- **File transfer resume**: a re-sent `file_offer` for a file_id of
+  which the receiver already holds a partial buffer triggers a new
+  `file_resume` payload back to the sender. The sender skips the
+  chunks already received and ships only the missing ones. For a
+  100 MB file dropped at 80%, that's ~20 MB instead of 100 MB on
+  the retry.
+- New `MalphasNode.resume_file(dest_peer_id, file_id)` API: re-send
+  using the existing `OutgoingFile` registered locally, without
+  re-reading the source path. Returns the file_id, or None if the
+  file_id is not in the outgoing registry (already cancelled or
+  never sent from this process).
+
+### Wire format
+
+- New JSON kind `file_resume` with shape:
+  `{kind: "file_resume", file_id: <hex>, received_idx: [int, ...]}`.
+- Backward-compatible: a 0.7.x receiver doesn't emit `file_resume`,
+  so a 0.8.0 sender waits 300 ms then proceeds with a full send.
+  A 0.7.x sender never asks for resume, so a 0.8.0 receiver does
+  the standard offer/chunk dance.
+
+### Implementation
+
+- `IncomingFile.received_indices() -> list[int]` exposed on the
+  files module — used by the receiver to populate the resume signal.
+- `MalphasNode._handle_file_offer` now checks `_files._incoming` for
+  the offered `file_id`. If a partial buffer exists, it fires off
+  a `file_resume` and skips re-registration.
+- `MalphasNode._handle_file_resume` records the skip set in
+  `_resume_signals[file_id]` and unblocks the corresponding
+  `_resume_events[file_id]`.
+- `send_file` waits up to 300 ms on the resume Event before
+  streaming chunks; honors the skip set during chunkify iteration.
+- `panic()` clears `_resume_signals` and unblocks every waiting
+  Event so in-flight `send_file()` coroutines complete promptly.
+
+### Tests
+
+- 5 new tests in `tests/test_file_resume.py` (2 unit + 3 E2E).
+
 ## [0.7.1] — 2026-05-09
 
 ### Features

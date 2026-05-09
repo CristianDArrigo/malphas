@@ -76,6 +76,7 @@ KIND_COVER       = "cover"
 KIND_FILE_OFFER  = "file_offer"
 KIND_FILE_CHUNK  = "file_chunk"
 KIND_FILE_ACK    = "file_ack"
+KIND_FILE_RESUME = "file_resume"
 
 
 def _pack_msg(msg_type: int, payload: bytes) -> bytes:
@@ -236,6 +237,11 @@ class MalphasNode:
         self.pins = pin_store or PinStore()
         self._replay = ReplayCache(ttl=message_ttl)
         self._files = FileTransferManager()
+        # Resume protocol (v0.8.0): when we send a file, we wait briefly
+        # for the receiver to tell us which chunk indices it already has.
+        # Keyed by file_id. The Event is set when a file_resume arrives.
+        self._resume_signals: dict[str, set[int]] = {}
+        self._resume_events: dict[str, asyncio.Event] = {}
         self.auto_accept_files = False
         self._connections: dict[str, PeerConnection] = {}
         self._server: asyncio.AbstractServer | None = None
@@ -731,6 +737,8 @@ class MalphasNode:
             await self._handle_file_chunk(data, from_id)
         elif kind == KIND_FILE_ACK:
             await self._handle_file_ack(data, from_id)
+        elif kind == KIND_FILE_RESUME:
+            await self._handle_file_resume(data, from_id)
         elif kind == KIND_COVER:
             pass  # drop silently
 
@@ -778,11 +786,27 @@ class MalphasNode:
         """Receive an offer. Auto-accept if `auto_accept_files`; otherwise
         notify the application via `on_file_offer` callback. The application
         can then call `accept_file_offer(file_id)` to register reception.
+
+        v0.8.0 resume: if the offer's file_id is already in the incoming
+        registry (we have a partial buffer), we send back a `file_resume`
+        listing the chunk indices we already hold and SKIP re-registration.
         """
         try:
             offer = FileOffer.from_dict(data)
         except (KeyError, ValueError):
             return
+
+        # Resume path: we already have a partial incoming for this file_id.
+        existing = self._files.get_incoming(offer.file_id)
+        if existing is not None and not existing.is_complete():
+            received = existing.received_indices()
+            await self._try_send_payload(
+                from_id,
+                KIND_FILE_RESUME,
+                {"file_id": offer.file_id, "received_idx": received},
+            )
+            return
+
         # Cap enforcement on the receiver side too — drop oversize offers
         # without registering anything.
         try:
@@ -842,29 +866,112 @@ class MalphasNode:
         if status in ("rejected", "checksum_mismatch"):
             self._files.cancel(file_id)
 
-    async def send_file(self, dest_peer_id: str, path: str) -> str | None:
-        """Send a file to dest_peer_id. Returns file_id if started, None otherwise."""
+    async def _handle_file_resume(self, data: dict, from_id: str) -> None:
+        """Receiver tells us which chunks they already hold.
+
+        We record the set in `_resume_signals[file_id]` and wake any
+        `send_file()` coroutine waiting on `_resume_events[file_id]`
+        so it can skip those indices.
+        """
+        file_id = data.get("file_id")
+        received = data.get("received_idx")
+        if not isinstance(file_id, str) or not isinstance(received, list):
+            return
         try:
-            of = OutgoingFile(path)
-        except (FileNotFoundError, ValueError, OSError):
+            idx_set = {int(i) for i in received}
+        except (TypeError, ValueError):
+            return
+        # Only honor resume signals for files we are actively sending.
+        if self._files.get_outgoing(file_id) is None:
+            return
+        self._resume_signals[file_id] = idx_set
+        ev = self._resume_events.get(file_id)
+        if ev is not None:
+            ev.set()
+
+    async def resume_file(self, dest_peer_id: str, file_id: str) -> str | None:
+        """Re-send a previously-started file using its existing OutgoingFile.
+
+        The receiver, if still holding a partial buffer for this
+        `file_id`, will reply with a `file_resume` listing the chunk
+        indices it already has, and the sender skips those.
+
+        Returns the file_id on success, None if the OutgoingFile is
+        not in the local registry (already cancelled or never sent
+        from this process).
+        """
+        of = self._files.get_outgoing(file_id)
+        if of is None:
             return None
+        # The path is captured inside OutgoingFile, so send_file with
+        # file_id=file_id will reuse it.
+        return await self.send_file(dest_peer_id, path="", file_id=file_id)
+
+    async def send_file(
+        self,
+        dest_peer_id: str,
+        path: str,
+        file_id: str | None = None,
+    ) -> str | None:
+        """Send a file to dest_peer_id. Returns file_id if started, None otherwise.
+
+        If `file_id` is provided AND already exists in our outgoing
+        registry, this is a resume: we re-use that OutgoingFile and
+        let the receiver tell us via `file_resume` which chunks to
+        skip. If `file_id` is provided but unknown, we fall back to
+        treating it as a fresh send.
+        """
+        if file_id is not None:
+            existing = self._files.get_outgoing(file_id)
+            if existing is not None:
+                of = existing
+            else:
+                try:
+                    of = OutgoingFile(path)
+                except (FileNotFoundError, ValueError, OSError):
+                    return None
+                self._files.register_outgoing(of)
+                file_id = of.file_id
+        else:
+            try:
+                of = OutgoingFile(path)
+            except (FileNotFoundError, ValueError, OSError):
+                return None
+            file_id = self._files.register_outgoing(of)
+
         if not self.discovery.get_peer(dest_peer_id):
             return None
-        file_id = self._files.register_outgoing(of)
         offer = of.offer()
+
+        # Resume protocol: arm an Event to receive the skip set, if any.
+        resume_event = asyncio.Event()
+        self._resume_events[file_id] = resume_event
+        self._resume_signals.pop(file_id, None)
 
         # Phase 1: send offer
         ok = await self._try_send_payload(dest_peer_id, KIND_FILE_OFFER, offer.to_dict())
         if not ok:
             self._files.cancel(file_id)
+            self._resume_events.pop(file_id, None)
             return None
 
-        # Brief pause so the receiver can register before chunks arrive
-        await asyncio.sleep(0.1)
+        # Wait briefly for a file_resume from the receiver. If none
+        # arrives within the window, the receiver had no partial
+        # buffer for this file_id (or is a 0.7.x peer): proceed with
+        # a full send.
+        try:
+            await asyncio.wait_for(resume_event.wait(), timeout=0.3)
+        except asyncio.TimeoutError:
+            pass
+        skip = self._resume_signals.get(file_id, set())
+        self._resume_events.pop(file_id, None)
+        # Keep _resume_signals around in case the user retries again.
 
-        # Phase 2: stream chunks
+        # Phase 2: stream chunks (skipping resumed ones)
         import base64
         for idx, blob in of.chunkify():
+            if idx in skip:
+                continue
             extras = {
                 "file_id": file_id,
                 "chunk_idx": idx,
@@ -1089,6 +1196,10 @@ class MalphasNode:
 
         # Wipe in-flight file transfers
         self._files.wipe()
+        self._resume_signals.clear()
+        for ev in self._resume_events.values():
+            ev.set()  # unblock any waiting send_file()
+        self._resume_events.clear()
 
         # Wipe message queue
         self._message_queue.clear()

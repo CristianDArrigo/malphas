@@ -152,6 +152,15 @@ class IncomingFile:
             and len(self._chunks) == self._offer.chunk_count
         )
 
+    def received_indices(self) -> list[int]:
+        """Return the list of chunk indices the receiver already holds.
+
+        Used by the v0.8.0 resume protocol: the receiver sends this
+        list back to the sender so the sender can skip already-
+        delivered chunks.
+        """
+        return sorted(self._chunks.keys())
+
     def progress(self) -> float:
         if self._offer.chunk_count == 0:
             return 1.0
