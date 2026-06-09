@@ -2,7 +2,7 @@
 # Pinned to a specific minor for reproducibility (TM-08).
 # When you bump this, run `scripts/verify-reproducibility.sh`
 # and update the "expected hashes" line in RELEASE.md.
-requires = ["hatchling>=1.29,<1.30"]
+requires = ["hatchling>=1.29,<1.31"]
 build-backend = "hatchling.build"
 
 [project]
