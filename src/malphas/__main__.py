@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import getpass
 import os
+import secrets
 import signal
 import sys
 from pathlib import Path
@@ -20,7 +21,7 @@ from .addressbook import AddressBook
 from .identity import create_identity_with_book_key
 from .mnemonic import mnemonic_to_salt, salt_to_mnemonic
 from .node import MalphasNode
-from .pinstore import PinStore
+from .pinstore import PinStore, PinStoreCorruptError
 from .salt_store import SALT_LEN, load_or_create_salt
 from .splash import print_splash
 from .transport import DirectTransport, TorTransport, tor_is_available
@@ -201,7 +202,13 @@ async def _run_cli(args) -> None:
     # Pin store — same directory as address book, encrypted with same key
     pin_path = str(book_path.parent / "pins")
     pins = PinStore(pin_path, book_key)
-    pins.load()
+    try:
+        pins.load()
+    except PinStoreCorruptError as e:
+        print(f"\n  FATAL: {e}")
+        print("  If you legitimately changed your passphrase/salt, remove the")
+        print(f"  pin file ({pin_path}) deliberately and restart.\n")
+        raise SystemExit(1)
 
     node = MalphasNode(
         identity=identity,
@@ -288,7 +295,11 @@ async def _run_web(args) -> None:
             bytes.fromhex(c.ed25519_pub),
         )
 
-    app = create_app(node, STATIC_DIR)
+    api_token = secrets.token_urlsafe(32)
+    app = create_app(node, STATIC_DIR, token=api_token)
+    print(f"  api token {api_token}")
+    print("  (the local UI must send this as 'Authorization: Bearer <token>'")
+    print("   on /api requests and as ?token=<token> on /ws)")
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
@@ -338,7 +349,12 @@ def _run_gui(args) -> None:
 
     pin_path = str(book_path.parent / "pins")
     pins = PinStore(pin_path, book_key)
-    pins.load()
+    try:
+        pins.load()
+    except PinStoreCorruptError as e:
+        print(f"\n  FATAL: {e}")
+        print(f"  Remove the pin file ({pin_path}) deliberately to reset.\n")
+        raise SystemExit(1)
 
     transport = DirectTransport()
     if args.tor:
@@ -444,7 +460,12 @@ def _run_gui_qt(args) -> None:
 
     pin_path = str(book_path.parent / "pins")
     pins = PinStore(pin_path, book_key)
-    pins.load()
+    try:
+        pins.load()
+    except PinStoreCorruptError as e:
+        print(f"\n  FATAL: {e}")
+        print(f"  Remove the pin file ({pin_path}) deliberately to reset.\n")
+        raise SystemExit(1)
 
     transport = DirectTransport()
     if args.tor:

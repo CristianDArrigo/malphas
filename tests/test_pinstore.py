@@ -14,6 +14,8 @@ Verifies:
 import os
 import tempfile
 
+import pytest
+
 from malphas.identity import create_identity_with_book_key
 from malphas.pinstore import PinStore
 
@@ -115,7 +117,11 @@ class TestPinPersistence:
             if os.path.exists(path):
                 os.unlink(path)
 
-    def test_wrong_key_fails_gracefully(self, identity_a):
+    def test_wrong_key_raises_not_silent_reset(self, identity_a):
+        # Security: a pin file that exists but won't decrypt (wrong key /
+        # tampering) must NOT silently start fresh — that would wipe the
+        # TOFU trust anchor and re-open a MITM window. It must raise.
+        from malphas.pinstore import PinStoreCorruptError
         _, key1 = create_identity_with_book_key("pin-key-1")
         _, key2 = create_identity_with_book_key("pin-key-2")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pins") as f:
@@ -127,9 +133,9 @@ class TestPinPersistence:
             ps1.check_and_pin(identity_a.peer_id, identity_a.ed25519_pub_bytes)
 
             ps2 = PinStore(path, key2)
-            loaded = ps2.load()
-            assert loaded is False  # wrong key — starts fresh
-            assert ps2.all_pins() == {}
+            with pytest.raises(PinStoreCorruptError):
+                ps2.load()
+            assert ps2.all_pins() == {}  # nothing trusted from a bad file
         finally:
             if os.path.exists(path):
                 os.unlink(path)

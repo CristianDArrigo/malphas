@@ -15,9 +15,25 @@ The pin store is:
 """
 
 import json
+import os
 from pathlib import Path
 
 from .crypto import decrypt, encrypt
+
+# AEAD associated data — domain separation from the address book, which
+# shares the same book_key. See addressbook._BOOK_AAD. Legacy files used
+# empty AAD; load() falls back and re-saves to upgrade.
+_PIN_AAD = b"malphas-pinstore-v1"
+
+
+class PinStoreCorruptError(Exception):
+    """Raised when the pin file exists but cannot be decrypted/parsed.
+
+    This is a security-relevant condition: silently starting with an empty
+    pin set turns an integrity failure (tampering, the very MITM signal TOFU
+    exists to detect) into a silent trust reset where every peer is re-pinned
+    on next contact. Callers MUST treat this as fatal, not "start fresh".
+    """
 
 
 class PinStore:
@@ -75,32 +91,76 @@ class PinStore:
     # ── Persistence ──────────────────────────────────────────────────────
 
     def load(self) -> bool:
-        """Load pins from encrypted file. Returns True if loaded."""
+        """Load pins from the encrypted file.
+
+        Returns True if pins were loaded, False if there is simply no file
+        yet (legitimate first run). Raises PinStoreCorruptError if the file
+        EXISTS but won't decrypt/parse — never silently start with empty
+        pins, which would wipe the TOFU trust anchor.
+        """
         if not self._path or not self._key:
             return False
         if not self._path.exists() or self._path.stat().st_size == 0:
             return False
+        upgrade = False
         try:
             raw = self._path.read_bytes()
-            plaintext = decrypt(self._key, raw)
-            self._pins = json.loads(plaintext.decode())
+            try:
+                plaintext = decrypt(self._key, raw, aad=_PIN_AAD)
+            except ValueError:
+                # Legacy file written with empty AAD — accept and upgrade.
+                plaintext = decrypt(self._key, raw)
+                upgrade = True
+            pins = json.loads(plaintext.decode())
+            if not isinstance(pins, dict):
+                raise ValueError("pin file did not contain a JSON object")
+            self._pins = pins
+            if upgrade:
+                self._save()
             return True
-        except Exception:
-            # Corrupted or wrong key — start fresh
-            return False
+        except Exception as e:
+            raise PinStoreCorruptError(
+                f"pin file at {self._path} exists but could not be "
+                f"decrypted/parsed ({e}). Refusing to start with empty "
+                f"pins — this could be tampering (MITM)."
+            ) from e
 
     def _save(self) -> None:
-        """Encrypt and save pins to disk."""
+        """Encrypt and durably save pins to disk.
+
+        Raises on failure: a security store must not silently lose a newly
+        pinned key (which would re-open a MITM window on next contact).
+        """
         if not self._path or not self._key:
             return
         plaintext = json.dumps(self._pins).encode()
-        ciphertext = encrypt(self._key, plaintext)
+        ciphertext = encrypt(self._key, plaintext, aad=_PIN_AAD)
         tmp = self._path.with_suffix(".pintmp")
         try:
-            tmp.write_bytes(ciphertext)
-            tmp.replace(self._path)
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(ciphertext)
+                    f.flush()
+                    os.fsync(f.fileno())
+            finally:
+                pass
+            os.replace(str(tmp), str(self._path))
+            # fsync the directory so the rename is durable too.
+            try:
+                dir_fd = os.open(str(self._path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
         except Exception:
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     def wipe(self) -> None:
         """Clear all pins from memory."""

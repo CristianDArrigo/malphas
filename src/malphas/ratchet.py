@@ -25,7 +25,12 @@ from .crypto import (
     kdf_chain,
 )
 
-MAX_SKIP = 100
+# Max messages a single header may ask us to skip in one chain. Bounds both
+# the skipped-key cache size and (critically) the number of KDF iterations
+# per inbound frame — see _skip_messages. 1000 matches the Signal reference
+# default: generous enough for real message loss, cheap enough (≈1000 HKDF
+# steps, sub-millisecond) that it cannot be used for CPU exhaustion.
+MAX_SKIP = 1000
 
 
 @dataclass
@@ -157,6 +162,18 @@ class RatchetState:
     def _skip_messages(self, until: int) -> None:
         if self._recv_chain_key is None:
             return
+        # Hard bound on how many messages a single header may ask us to
+        # skip. `until` comes straight off the wire (header.prev_count /
+        # header.msg_num, both attacker-controlled uint32). Without this
+        # check the loop below would run up to ~4.29e9 HKDF iterations for
+        # one crafted frame, pinning the (single-threaded) event loop —
+        # the classic Double Ratchet skip-DoS. The Signal spec mandates
+        # raising here rather than only bounding the cache size.
+        if until - self._recv_msg_num > MAX_SKIP:
+            raise ValueError(
+                f"too many skipped messages: "
+                f"{until - self._recv_msg_num} > MAX_SKIP={MAX_SKIP}"
+            )
         # The receive chain is always paired with a known remote DH pub.
         assert self._remote_dh_pub is not None
         remote_pub = self._remote_dh_pub

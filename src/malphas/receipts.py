@@ -121,14 +121,31 @@ class ReceiptTracker:
         self._pending[msg_id] = pr
         return pr
 
-    def resolve(self, msg_id: str, signature: bytes, sender_pub: Ed25519PublicKey) -> bool:
+    def resolve(
+        self,
+        msg_id: str,
+        signature: bytes,
+        sender_pub: Ed25519PublicKey,
+        from_peer_id: str | None = None,
+    ) -> bool:
         """
         Called when a receipt arrives.
         Verifies the signature, marks as received.
         Returns True if valid.
+
+        `from_peer_id` is the peer the receipt was actually received from.
+        It MUST equal the message's original destination — otherwise any
+        other contact who learns/guesses a msg_id could sign the challenge
+        with their own key and forge a "read" confirmation. Callers should
+        always pass it (and pass `sender_pub` = the pinned key of that
+        destination); it is optional only for backward compatibility.
         """
         pr = self._pending.get(msg_id)
         if not pr or pr.resolved:
+            return False
+
+        # Bind the receipt signer to the original recipient.
+        if from_peer_id is not None and from_peer_id != pr.dest_peer_id:
             return False
 
         valid = verify_receipt(msg_id, pr.nonce, signature, sender_pub)
@@ -173,13 +190,17 @@ class ReceiptTracker:
                 if not pr.resolved and (now - pr.sent_at) > self._timeout
             ]
             for pr in expired:
+                # pop(...) defensively: the dict can be mutated (wipe/
+                # stop/track) across the awaits below, so a plain
+                # `del self._pending[pr.msg_id]` could raise KeyError and
+                # kill the timeout loop permanently.
+                self._pending.pop(pr.msg_id, None)
                 pr.resolved = True
                 pr.received = False
                 if self._on_timeout:
                     await self._maybe_call(
                         self._on_timeout, pr.msg_id, pr.dest_peer_id
                     )
-                del self._pending[pr.msg_id]
 
     def pending_count(self) -> int:
         return sum(1 for p in self._pending.values() if not p.resolved)

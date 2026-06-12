@@ -98,9 +98,18 @@ def app(api_node, static_dir):
 
 @pytest.fixture
 async def client(app):
-    """Async httpx client bound to the ASGI app."""
+    """Async httpx client bound to the ASGI app.
+
+    Uses a loopback Host (the API pins Host to 127.0.0.1/localhost as a
+    DNS-rebinding defense) and sends the per-app bearer token (the API now
+    requires auth on every /api route).
+    """
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {app.state.api_token}"},
+    ) as c:
         yield c
 
 
@@ -453,8 +462,9 @@ class TestWebSocket:
         """Client can open a WebSocket connection to /ws."""
         from starlette.testclient import TestClient
 
-        with TestClient(app) as tc:
-            with tc.websocket_connect("/ws") as ws:
+        tok = app.state.api_token
+        with TestClient(app, base_url="http://127.0.0.1") as tc:  # loopback host
+            with tc.websocket_connect(f"/ws?token={tok}", headers={"host": "127.0.0.1"}) as ws:
                 # Connection accepted -- no exception means success
                 pass
 
@@ -474,8 +484,9 @@ class TestWebSocket:
 
         from starlette.testclient import TestClient
 
-        with TestClient(app) as tc:
-            with tc.websocket_connect("/ws") as ws:
+        tok = app.state.api_token
+        with TestClient(app, base_url="http://127.0.0.1") as tc:  # loopback host
+            with tc.websocket_connect(f"/ws?token={tok}", headers={"host": "127.0.0.1"}) as ws:
                 # Access the internal WebSocket set via the app's route handler.
                 # The _push_message callback has a closure bug (augmented
                 # assignment on ws_clients), so we send directly to the ws
@@ -495,8 +506,9 @@ class TestWebSocket:
         """Disconnecting from the WebSocket does not raise errors."""
         from starlette.testclient import TestClient
 
-        with TestClient(app) as tc:
-            with tc.websocket_connect("/ws") as ws:
+        tok = app.state.api_token
+        with TestClient(app, base_url="http://127.0.0.1") as tc:  # loopback host
+            with tc.websocket_connect(f"/ws?token={tok}", headers={"host": "127.0.0.1"}) as ws:
                 ws.send_text("keep-alive")
             # Context manager exit sends WebSocketDisconnect -- no crash
 

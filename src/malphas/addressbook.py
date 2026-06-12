@@ -25,6 +25,14 @@ from .crypto import decrypt, encrypt, hkdf_derive
 # Pad plaintext to nearest multiple of this to obscure contact count
 BLOCK_SIZE = 4096  # bytes
 
+# AEAD associated data — domain separation. The address book and the pin
+# store are encrypted under the SAME book_key; with empty AAD a file from
+# one decrypts cleanly as the other, so an on-disk file swap could be used
+# to confuse them. Binding a distinct context string makes each file fail
+# authentication outside its own component. Files written before this was
+# introduced used empty AAD; load() falls back and re-saves to upgrade.
+_BOOK_AAD = b"malphas-addressbook-v1"
+
 
 @dataclass
 class Contact:
@@ -118,17 +126,27 @@ class AddressBook:
             return False
 
         raw = self._path.read_bytes()
+        upgrade = False
         try:
-            padded = decrypt(self._key, raw)
+            try:
+                padded = decrypt(self._key, raw, aad=_BOOK_AAD)
+            except ValueError:
+                # Backward compatibility: files written before AAD domain
+                # separation used empty AAD. Accept them, then re-save with
+                # the new AAD so the upgrade is one-way.
+                padded = decrypt(self._key, raw)
+                upgrade = True
             plaintext = _unpad(padded)
             data = json.loads(plaintext.decode("utf-8"))
             self._contacts = [Contact.from_dict(c) for c in data]
             self._loaded = True
-            return True
         except Exception as e:
             raise ValueError(
                 "Address book decryption failed — wrong passphrase or corrupted file"
             ) from e
+        if upgrade:
+            self._save()
+        return True
 
     def _save(self) -> None:
         """Encrypt and write contacts to disk atomically."""
@@ -141,7 +159,7 @@ class AddressBook:
         ).encode("utf-8")
 
         padded = _pad(plaintext, BLOCK_SIZE)
-        ciphertext = encrypt(self._key, padded)
+        ciphertext = encrypt(self._key, padded, aad=_BOOK_AAD)
 
         # Atomic write: write to temp file, then rename
         tmp = self._path.with_suffix(".tmp")

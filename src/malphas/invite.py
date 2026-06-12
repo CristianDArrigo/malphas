@@ -13,6 +13,7 @@ It does NOT prove identity to a third party — only integrity.
 
 import base64
 import json
+import time
 from typing import TYPE_CHECKING, Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -24,18 +25,29 @@ if TYPE_CHECKING:
 
 PREFIX = "malphas://"
 
+# Default invite lifetime. An invite is a bearer credential (it embeds the
+# routing info and is self-signed); without an expiry a leaked invite is
+# replayable forever with no way to revoke it. 30 days is generous for the
+# share-and-add workflow while bounding the exposure window.
+DEFAULT_INVITE_TTL = 30 * 24 * 3600
+
 
 def generate_invite(
     identity: "Identity",
     host: str,
     port: int,
     onion: str | None = None,
+    ttl_seconds: int | None = DEFAULT_INVITE_TTL,
 ) -> str:
     """
     Generate a malphas:// invite URL.
     Returns the full URL string ready to share.
+
+    `ttl_seconds` sets an expiry baked into the signed payload. Pass None
+    to mint a non-expiring invite (not recommended).
     """
-    payload = {
+    now = int(time.time())
+    payload: dict[str, Any] = {
         "type": "invite",
         "v": 1,
         "peer_id": identity.peer_id,
@@ -43,7 +55,10 @@ def generate_invite(
         "ed25519_pub": identity.ed25519_pub_bytes.hex(),
         "host": host,
         "port": port,
+        "iat": now,
     }
+    if ttl_seconds is not None:
+        payload["exp"] = now + int(ttl_seconds)
     if onion:
         payload["onion"] = onion
 
@@ -100,5 +115,17 @@ def parse_invite(url: str) -> dict[str, Any]:
         pub.verify(sig, json_bytes)
     except Exception as e:
         raise ValueError(f"Signature verification failed: {e}") from e
+
+    # Reject expired invites. `exp` is optional for backward compatibility
+    # with pre-expiry invites, but when present it is signed, so it cannot
+    # be stripped or extended without invalidating the signature above.
+    exp = payload.get("exp")
+    if exp is not None:
+        try:
+            expired = int(exp) < int(time.time())
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Invalid exp field: {e}") from e
+        if expired:
+            raise ValueError("Invite has expired")
 
     return payload
