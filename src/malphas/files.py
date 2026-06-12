@@ -29,6 +29,31 @@ from typing import Any
 
 CHUNK_SIZE = 32 * 1024              # 32 KB
 MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
+# Upper bound on a single offered chunk size. The sender uses CHUNK_SIZE;
+# a receiver must refuse an offer (or chunk) that claims a wildly larger
+# per-chunk size, otherwise `chunk_count` small + `chunk_size` huge slips
+# past the MAX_FILE_BYTES check while still buffering gigabytes.
+MAX_CHUNK_SIZE = 1 * 1024 * 1024    # 1 MB
+MAX_NAME_LEN = 255
+
+
+def _sanitize_name(name: object) -> str:
+    """Reduce an attacker-supplied file name to a safe basename.
+
+    The name in a remote offer is untrusted: it can contain path
+    separators (traversal), control / bidi-override characters (UI
+    spoofing, log injection), or be absurdly long. We strip it to a bare
+    basename of printable, separator-free characters. The result is only a
+    display/suggestion hint — consumers must still choose their own save
+    path — but this removes the sharpest edges at ingestion.
+    """
+    raw = str(name).replace("\\", "/").split("/")[-1]
+    cleaned = "".join(
+        ch for ch in raw
+        if ch.isprintable() and ch not in '\\/' and ord(ch) >= 0x20
+    )
+    cleaned = cleaned.strip().lstrip(".")
+    return cleaned[:MAX_NAME_LEN] or "file.bin"
 
 
 @dataclass(frozen=True)
@@ -54,7 +79,7 @@ class FileOffer:
     def from_dict(d: dict[str, Any]) -> FileOffer:
         return FileOffer(
             file_id=d["file_id"],
-            name=d["name"],
+            name=_sanitize_name(d["name"]),
             size=int(d["size"]),
             sha256=d["sha256"],
             chunk_size=int(d["chunk_size"]),
@@ -123,12 +148,29 @@ class IncomingFile:
     """Receiver-side buffer. Accepts chunks; assembles + verifies on demand."""
 
     def __init__(self, offer: FileOffer) -> None:
-        if offer.size > MAX_FILE_BYTES:
+        if offer.size <= 0 or offer.size > MAX_FILE_BYTES:
             raise ValueError(
-                f"Offered file too large: {offer.size} bytes > {MAX_FILE_BYTES} cap"
+                f"Offered file size out of range: {offer.size} "
+                f"(must be 1..{MAX_FILE_BYTES})"
+            )
+        if offer.chunk_size <= 0 or offer.chunk_size > MAX_CHUNK_SIZE:
+            raise ValueError(
+                f"Offered chunk_size out of range: {offer.chunk_size} "
+                f"(must be 1..{MAX_CHUNK_SIZE})"
+            )
+        # chunk_count must be exactly what `size`/`chunk_size` implies.
+        # This makes total buffered bytes provably <= size <= cap and
+        # rejects the "small size, huge chunk_count" amplification offer.
+        expected = (offer.size + offer.chunk_size - 1) // offer.chunk_size
+        if offer.chunk_count != expected:
+            raise ValueError(
+                f"Inconsistent chunk_count {offer.chunk_count} "
+                f"(expected {expected} for size={offer.size}, "
+                f"chunk_size={offer.chunk_size})"
             )
         self._offer = offer
         self._chunks: dict[int, bytes] = {}
+        self._bytes = 0
         self._cancelled = False
 
     @property
@@ -141,9 +183,20 @@ class IncomingFile:
             return False
         if idx < 0 or idx >= self._offer.chunk_count:
             return False
+        # Per-chunk size bound: no chunk may exceed the offered chunk_size.
+        if len(data) > self._offer.chunk_size:
+            return False
+        # Running-total bound: never buffer more than the offered (and
+        # already cap-checked) total size. Accounts for idempotent
+        # re-inserts of the same index.
+        prev = self._chunks.get(idx)
+        new_total = self._bytes - (len(prev) if prev is not None else 0) + len(data)
+        if new_total > self._offer.size:
+            return False
         # Idempotent: reject re-insert with different bytes silently — the
         # sender re-sent the same chunk, no harm done.
         self._chunks[idx] = data
+        self._bytes = new_total
         return self.is_complete()
 
     def is_complete(self) -> bool:

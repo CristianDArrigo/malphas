@@ -68,6 +68,18 @@ MSG_PONG          = 0x06
 MSG_PEER_ANNOUNCE = 0x07
 
 HEADER_LEN = 5   # type(1) + length(4)
+# Hard ceiling on a single wire frame body. The length field is an
+# unsigned 32-bit int (max ~4 GiB); without a cap a peer can send a 5-byte
+# header announcing a 4 GiB body and force the reader to buffer it, OOM-
+# killing the process pre-authentication. PROTOCOL.md §4 already specifies
+# this 16 MiB limit — it just wasn't enforced.
+MAX_FRAME_BYTES = 16 * 1024 * 1024
+# Freshness window for the per-payload `ts` field (seconds). A message may
+# arrive up to _TS_FUTURE_SKEW in the "future" (peer clock ahead) and up to
+# _TS_PAST_WINDOW in the past (peer clock behind / brief queueing) before we
+# treat it as a replayed capture and drop it.
+_TS_FUTURE_SKEW = 300
+_TS_PAST_WINDOW = 3600
 
 # Authentication-type prefix on the inner authenticated payload
 # (post-onion-peel, post-padding-strip). Exactly one byte; the receiver
@@ -223,6 +235,10 @@ class PeerConnection:
     async def recv_raw(self) -> tuple:
         header = await self.reader.readexactly(HEADER_LEN)
         msg_type, length = _unpack_header(header)
+        if length is None or length > MAX_FRAME_BYTES:
+            raise ConnectionError(
+                f"frame length {length} exceeds {MAX_FRAME_BYTES} cap"
+            )
         payload = await self.reader.readexactly(length)
         return msg_type, payload
 
@@ -314,9 +330,18 @@ class MalphasNode:
         if self._cover:
             await self._cover.stop()
         await self.receipts.stop()
-        await self.transport.stop()
+        # Close peer connections FIRST, then the transport. transport.stop()
+        # awaits the listening server's wait_closed(), which blocks until
+        # every in-flight inbound connection handler (_handle_incoming →
+        # _read_loop) returns. Those handlers only return once their socket
+        # sees EOF — i.e. once we close our side here. Doing it in the old
+        # order (transport.stop() before conn.close()) deadlocked shutdown
+        # for ~30s whenever a peer was connected.
         for conn in list(self._connections.values()):
             conn.close()
+        self._connections.clear()
+        await self.transport.stop()
+        await self.discovery.stop_mdns()
         self.store.wipe()
         self.discovery.wipe()
 
@@ -730,6 +755,18 @@ class MalphasNode:
                     _restore_ratchet(ratchet, snap)
                     continue
 
+                # Bind the sender identity to the authenticated session.
+                # The ratchet only proves "the peer on THIS connection sent
+                # this"; the sealed `from_id` is sealed to OUR public key and
+                # is therefore attacker-chosen. Without this check, any peer
+                # with a ratchet session could impersonate any other peer by
+                # sealing their id. `_peer_id` is the handshake-authenticated
+                # identity of the connection (peer_id == BLAKE2s(ed25519_pub),
+                # enforced in _perform_handshake).
+                if from_id != _peer_id:
+                    _restore_ratchet(ratchet, snap)
+                    return
+
                 peer = self.discovery.get_peer(from_id)
                 if not peer:
                     _restore_ratchet(ratchet, snap)
@@ -792,6 +829,18 @@ class MalphasNode:
         """Single dispatch site for all message kinds, with replay guard."""
         kind = data.get("kind")
         msg_id = data.get("msg_id", "")
+
+        # Freshness window. Every real transmission stamps `ts` = time.time()
+        # at send (re-stamped on each retry), so a legitimate message — even
+        # a delayed/offline one — is always near-current. A stale `ts` means
+        # a captured packet replayed by a relay/recorder; reject it. This
+        # complements the replay cache (which only remembers ~1h / 10k ids).
+        # `ts` is optional for backward compat; clock skew is tolerated.
+        ts = data.get("ts")
+        if isinstance(ts, (int, float)):
+            now = time.time()
+            if ts > now + _TS_FUTURE_SKEW or ts < now - _TS_PAST_WINDOW:
+                return
 
         # Replay protection across every kind (msg, receipt, file_*).
         # Cover packets carry no msg_id and are dropped before reaching here.
@@ -856,7 +905,11 @@ class MalphasNode:
 
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
         pub = Ed25519PublicKey.from_public_bytes(peer.ed25519_pub)
-        self.receipts.resolve(msg_id, sig, pub)
+        # Pass from_id so the tracker can verify the receipt actually came
+        # from the message's destination (peer is get_peer(from_id), so its
+        # key is the destination's pinned key). Stops forged receipts from
+        # any other contact who learns the msg_id.
+        self.receipts.resolve(msg_id, sig, pub, from_peer_id=from_id)
 
     # ── File transfer ─────────────────────────────────────────────────────────
 
@@ -1033,14 +1086,23 @@ class MalphasNode:
             # anyway, since the sender's not fanning to us either).
             return
 
-        # Authorization: only accept membership rewrites from a
-        # member of the group as we currently see it. Creator is
-        # implicitly a member. This stops a random peer who guessed
-        # a group_id from rewriting our local view.
-        if from_id not in group.members and from_id != group.creator:
+        # Authorization. Previously any current member could authorize a
+        # change AND the sender's full member list was trusted as ground
+        # truth ("last writer wins"), so one malicious member could rewrite
+        # the entire roster — add themselves anywhere, remove the creator.
+        # Now: only the group CREATOR may add/remove others, and any peer
+        # may remove ITSELF (a legitimate "leave"). Until a real
+        # cryptographic membership scheme exists (PROTOCOL.md §13 / TM-01),
+        # this is the defensible minimum.
+        is_creator = (from_id == group.creator)
+        is_self_leave = (action == "remove" and target == from_id)
+        if not is_creator and not is_self_leave:
             return
 
-        # Apply the change locally (idempotent).
+        # Apply ONLY the single authorized delta. Do not replace the
+        # roster with the sender-supplied `members` list (that was the
+        # takeover vector). `members_list` is still validated above purely
+        # to reject malformed payloads.
         if action == "add" and target not in group.members:
             try:
                 group.add_member(target)
@@ -1048,12 +1110,6 @@ class MalphasNode:
                 return
         elif action == "remove" and target in group.members:
             group.remove_member(target)
-
-        # Reconcile against the sender's authoritative list.
-        # Trust the sender's list as the new ground truth (eventual
-        # consistency: last writer wins). We've already authorized
-        # the sender above.
-        group.members = list(members_list)
 
         self._notify_group_member_change(
             from_id, group_id, action, target, list(group.members))
@@ -1088,13 +1144,15 @@ class MalphasNode:
         content = data.get("content")
         if not isinstance(group_id, str) or not isinstance(content, str):
             return
-        # The application does not require us to be in the local group
-        # registry — we can also display a message from a group we
-        # haven't been formally invited to, which mirrors how a peer-to-
-        # peer message from a known contact is delivered without prior
-        # registration. But we do require the sender to be known
-        # (already enforced by _dispatch_kind / _resolve_sealed_from
-        # upstream).
+        # Require the group to be locally known AND the sender to be a
+        # current member. Previously any known contact could inject a
+        # message into any group_id (or invent one), spoofing group
+        # context. The legitimate flow always delivers a group_invite
+        # first, so a real member's message arrives with the group
+        # already registered and the sender in its member list.
+        group = self._groups.get_by_id(group_id)
+        if group is None or from_id not in group.members:
+            return
         self._notify_group_message(from_id, group_id, str(group_name), content)
         # Optionally store in the conversation log.
         msg_id = data.get("msg_id")
@@ -1384,15 +1442,14 @@ class MalphasNode:
         return False
 
     async def _handle_peer_announce(self, payload: bytes) -> None:
-        try:
-            data = json.loads(payload.decode())
-            self.discovery.add_peer(
-                data["peer_id"], data["host"], data["port"],
-                bytes.fromhex(data["x25519_pub"]),
-                bytes.fromhex(data["ed25519_pub"]),
-            )
-        except Exception:
-            pass
+        # DEPRECATED + DROPPED. This gossip message let an authenticated
+        # peer inject arbitrary (peer_id, host, port, keys) tuples into our
+        # routing table with no proof that peer_id == BLAKE2s(ed25519_pub).
+        # That poisons relay selection and the peer_id->key map every auth
+        # path trusts. Nothing in this codebase sends MSG_PEER_ANNOUNCE, so
+        # we simply drop it. Peers are learned only via the authenticated
+        # handshake (which binds peer_id to the key) or explicit invites.
+        return
 
     # ── Handshake ─────────────────────────────────────────────────────────────
 
@@ -1442,6 +1499,15 @@ class MalphasNode:
             their_ed25519 = bytes.fromhex(their_data["ed25519_pub"])
             their_peer_id = their_data["peer_id"]
             their_port = their_data.get("port", self.port)
+
+            # peer_id MUST be the BLAKE2s digest of the presented Ed25519 key
+            # (PROTOCOL.md §5). Without this, peer_id is just an attacker-
+            # chosen label: a peer could present a validly-signed key under
+            # any peer_id, squatting identities and poisoning the
+            # peer_id->key mapping that every auth path trusts.
+            from .identity import peer_id_from_pubkey
+            if their_peer_id != peer_id_from_pubkey(their_ed25519):
+                return False
 
             # Verify the peer's Ed25519 signature over their ephemeral key.
             # Without this, a MITM could present their own ephemeral key

@@ -4,8 +4,10 @@ Bound to 127.0.0.1 only. Never exposed externally.
 WebSocket for real-time message push.
 """
 
+import hmac
 import os
 import re
+import secrets
 import tempfile
 
 from fastapi import (
@@ -14,32 +16,88 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     Response,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
+from .files import MAX_FILE_BYTES
 from .node import MalphasNode
 
+# Hosts accepted in the Host header. Binding to 127.0.0.1 is not enough on
+# its own: a malicious web page can use DNS rebinding to make the browser
+# resolve an attacker domain to 127.0.0.1 and reach this API. Pinning the
+# Host header to loopback names closes that.
+_ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
-def create_app(node: MalphasNode, static_dir: str) -> FastAPI:
+
+def create_app(
+    node: MalphasNode,
+    static_dir: str,
+    *,
+    token: str | None = None,
+) -> FastAPI:
+    """Build the local control API.
+
+    `token` is a bearer secret required on every /api request and the /ws
+    socket. If None, a fresh one is generated. It is returned via
+    `app.state.api_token` so the launcher can hand it to the local UI
+    out-of-band. Localhost binding alone is NOT an authorization boundary:
+    any other local user/process, or any web page in the user's browser,
+    can otherwise drive the node (read history, send as the user, exfil
+    keys). The token also defeats CSRF: a cross-site "simple request"
+    cannot set the Authorization header, and any request that does set it
+    triggers a CORS preflight that non-localhost origins fail.
+    """
+    api_token = token or secrets.token_urlsafe(32)
+
     app = FastAPI(
         title="Malphas",
         docs_url=None,   # disable swagger — no need to expose
         redoc_url=None,
     )
+    app.state.api_token = api_token
 
-    # Only allow localhost origins
+    # Only allow localhost origins; pin the header allowlist (no "*") so a
+    # foreign origin cannot get a token-bearing preflight approved.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost", "http://127.0.0.1"],
         allow_methods=["GET", "POST"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "X-Malphas-Token", "Content-Type"],
     )
+
+    def _token_ok(provided: str | None) -> bool:
+        if not provided:
+            return False
+        return hmac.compare_digest(provided, api_token)
+
+    def _extract_token(headers) -> str | None:
+        auth = headers.get("authorization")
+        if auth and auth.lower().startswith("bearer "):
+            return auth[7:]
+        return headers.get("x-malphas-token")
+
+    @app.middleware("http")
+    async def _guard(request: Request, call_next):
+        # DNS-rebinding defense: Host must be a loopback name.
+        host = (request.headers.get("host") or "").rsplit(":", 1)[0]
+        if host and host not in _ALLOWED_HOSTS:
+            return JSONResponse({"detail": "bad host"}, status_code=400)
+        # Auth: every /api route requires the bearer token. Static assets
+        # under "/" stay public (showcase only). OPTIONS is exempt so the
+        # CORS preflight (which browsers send without Authorization) can be
+        # answered by the CORS middleware.
+        if request.method != "OPTIONS" and request.url.path.startswith("/api"):
+            if not _token_ok(_extract_token(request.headers)):
+                return JSONResponse({"detail": "unauthorized"}, status_code=401)
+        return await call_next(request)
 
     ws_clients: set[WebSocket] = set()
 
@@ -118,6 +176,20 @@ def create_app(node: MalphasNode, static_dir: str) -> FastAPI:
         def validate_port(cls, v):
             if not 1 <= v <= 65535:
                 raise ValueError("Invalid port")
+            return v
+
+        @field_validator("host")
+        @classmethod
+        def validate_host(cls, v):
+            # Constrain to a hostname / IPv4 / .onion grammar. The local API
+            # is authenticated (token), but validating the host still blocks
+            # control characters, embedded credentials, and obvious
+            # injection from reaching asyncio.open_connection / the SOCKS
+            # layer, and keeps the SSRF surface to plain TCP connects.
+            if not v or len(v) > 253:
+                raise ValueError("invalid host")
+            if not re.fullmatch(r"[A-Za-z0-9._\-]+", v):
+                raise ValueError("host has invalid characters")
             return v
 
     class SendRequest(BaseModel):
@@ -205,14 +277,23 @@ def create_app(node: MalphasNode, static_dir: str) -> FastAPI:
             raise HTTPException(status_code=404, detail="peer not in routing table")
 
         # Save the upload to a temp file so we can hand a path to OutgoingFile.
-        # Bounded memory: chunked write.
+        # Bounded memory: chunked write. Bounded DISK: abort once the upload
+        # exceeds MAX_FILE_BYTES instead of writing it all out and only
+        # checking the cap afterwards (disk-fill DoS).
         fd, tmp_path = tempfile.mkstemp(prefix="malphas-api-")
         try:
+            written = 0
             with os.fdopen(fd, "wb") as f:
                 while True:
                     block = await file.read(64 * 1024)
                     if not block:
                         break
+                    written += len(block)
+                    if written > MAX_FILE_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"file exceeds {MAX_FILE_BYTES} byte cap",
+                        )
                     f.write(block)
 
             file_id = await node.send_file(peer_id, tmp_path)
@@ -281,6 +362,16 @@ def create_app(node: MalphasNode, static_dir: str) -> FastAPI:
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
+        # Host + token check before accepting. Browsers cannot set custom
+        # headers on a WebSocket, so the token travels as a query param
+        # (?token=...); it is constant-time compared.
+        host = (ws.headers.get("host") or "").rsplit(":", 1)[0]
+        if host and host not in _ALLOWED_HOSTS:
+            await ws.close(code=1008)
+            return
+        if not _token_ok(ws.query_params.get("token")):
+            await ws.close(code=1008)
+            return
         await ws.accept()
         ws_clients.add(ws)
         try:

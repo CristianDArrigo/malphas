@@ -62,7 +62,11 @@ def app(api_node, static_dir):
 @pytest.fixture
 async def client(app):
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {app.state.api_token}"},
+    ) as c:
         yield c
 
 

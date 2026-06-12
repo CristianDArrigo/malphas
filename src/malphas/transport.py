@@ -55,6 +55,12 @@ def onion_to_ed25519_pub(onion_address: str) -> bytes:
     pub_bytes = raw[:32]
     checksum_stored = raw[32:34]
     version = raw[34:35]
+    # v3 onion addresses are version byte 0x03. Enforce it: the checksum
+    # below is computed over the version, so an attacker could craft a
+    # self-consistent address with a different version byte; rejecting
+    # non-3 versions keeps this aligned with the v3 derivation spec.
+    if version != b"\x03":
+        raise ValueError(f"Unsupported onion version byte: {version!r}")
     # Verify checksum
     checksum_input = b".onion checksum" + pub_bytes + version
     checksum_expected = hashlib.sha3_256(checksum_input).digest()[:2]
@@ -130,6 +136,11 @@ async def socks5_connect(
             await reader.readexactly(length + 2)
         elif atyp == 0x04:  # IPv6
             await reader.readexactly(16 + 2)
+        else:
+            # Unknown ATYP: we cannot know how many BND bytes follow, so the
+            # stream is now unframable. Fail instead of returning a stream
+            # with leftover proxy bytes that would corrupt the first read.
+            raise ConnectionError(f"SOCKS5 unknown address type in reply: {atyp}")
 
         return reader, writer
 
@@ -187,7 +198,14 @@ class DirectTransport(BaseTransport):
     async def stop(self):
         if self._server:
             self._server.close()
-            await self._server.wait_closed()
+            # Bound the wait: wait_closed() blocks on in-flight connection
+            # handlers, so a misbehaving/lingering peer must never be able
+            # to stall shutdown indefinitely. Callers should close peer
+            # connections before calling this.
+            try:
+                await asyncio.wait_for(self._server.wait_closed(), timeout=5.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
 
 
 # ── Tor transport ─────────────────────────────────────────────────────────────
@@ -386,7 +404,10 @@ class TorTransport(BaseTransport):
     async def stop(self) -> None:
         if self._server:
             self._server.close()
-            await self._server.wait_closed()
+            try:
+                await asyncio.wait_for(self._server.wait_closed(), timeout=5.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
         # Persistent HS stays registered in Tor — no cleanup needed.
         # The HS directory on disk persists across restarts (by design).
 

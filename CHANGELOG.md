@@ -3,6 +3,67 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [Unreleased] — security review hardening
+
+A focused security/bug pass. New regression tests live in
+`tests/test_security_review_fixes.py`. No wire-format break; on-disk
+address-book and pin files auto-upgrade in place (AAD added with a
+one-time legacy fallback).
+
+### Fixed — Critical
+
+- **Double Ratchet skip-message DoS** (`ratchet.py`): `_skip_messages`
+  now raises once a header asks to skip more than `MAX_SKIP` (raised to
+  1000, the Signal default). Previously the loop ran up to the
+  attacker-controlled uint32 `msg_num` (~4.29e9) HKDF iterations from a
+  single frame, pinning the event loop.
+- **Unbounded frame length → pre-auth OOM** (`node.py`): `recv_raw`
+  enforces the 16 MiB `MAX_FRAME_BYTES` cap that `PROTOCOL.md §4`
+  already documented.
+- **Sender spoofing on the ratchet auth path** (`node.py`): the
+  unsealed `from_id` must now equal the handshake-authenticated peer of
+  the connection that decrypted the message. The sealed sender field is
+  sealed to our public key (attacker-chosen), so without this any peer
+  with a ratchet session could impersonate any other.
+- **Unauthenticated local control API** (`api.py`): every `/api` route
+  and the `/ws` socket now require a per-session bearer token; the
+  `Host` header is pinned to loopback (DNS-rebinding/CSRF defense). The
+  launcher prints the token.
+
+### Fixed — High
+
+- Handshake now verifies `peer_id == BLAKE2s(ed25519_pub)` (`node.py`),
+  binding identity to key.
+- File-chunk receive buffer is bounded: per-chunk size, running total,
+  and `chunk_count == ceil(size/chunk_size)` consistency (`files.py`).
+- Read receipts bind the signer to the message's original destination
+  (`receipts.py` / `node.py`) — no more forged "read" confirmations.
+- Group messages require a locally-known group with the sender as a
+  member; group membership changes are creator-authorised (self-leave
+  allowed) and apply only the delta instead of trusting the sender's
+  whole roster (`node.py`).
+- Pin store no longer silently empties on a corrupt/wrong-key file (it
+  raises `PinStoreCorruptError` and the launcher refuses to start);
+  saves are now durable (`fsync` + atomic rename) (`pinstore.py`).
+- Invites carry a signed expiry and are rejected once expired
+  (`invite.py`).
+- `MSG_PEER_ANNOUNCE` (unsent, untrusted routing-table-poisoning path)
+  is dropped; routing table validates peer_id format (`node.py`,
+  `discovery.py`).
+
+### Fixed — Medium / Low
+
+- `node.stop()` closes peer connections before awaiting the server's
+  `wait_closed()`, fixing a ~30s shutdown hang when a peer was
+  connected; `transport.stop()` bounds the wait.
+- Address book and pin store use distinct AEAD associated data so a file
+  from one cannot be authenticated as the other (legacy files upgrade on
+  load).
+- Per-payload `ts` freshness window; API upload size cap before disk;
+  `host` validation on `/api/peers/connect`; mDNS no longer leaks the
+  stable `peer_id` on the LAN and cleans up its zeroconf handle; onion
+  address version byte enforced; SOCKS5 unknown ATYP rejected.
+
 ## [1.0.0-rc5] — 2026-05-09
 
 ### Resolved — TM-11 CLI test mock + PROTOCOL.md §14 test vectors

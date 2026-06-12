@@ -68,6 +68,13 @@ class RoutingTable:
     def add(self, peer: PeerInfo) -> None:
         if peer.peer_id == self._my_id:
             return
+        # peer_id must be a 40-char hex string. Anything else (e.g. a
+        # malformed value off an untrusted gossip/announce path) would make
+        # xor_distance's int(peer_id, 16) raise, or an over-long value would
+        # blow the bucket index past the 0..159 model. Reject silently.
+        pid = peer.peer_id
+        if len(pid) != 40 or not all(c in "0123456789abcdef" for c in pid):
+            return
         idx = bucket_index(self._my_id, peer.peer_id)
         if idx not in self._buckets:
             self._buckets[idx] = []
@@ -137,6 +144,8 @@ class PeerDiscovery:
         self.table = RoutingTable(my_id)
         self._my_id = my_id
         self._mdns_task: asyncio.Task[None] | None = None
+        self._zc: Any = None          # AsyncZeroconf handle (kept so we can close it)
+        self._mdns_info: Any = None   # registered ServiceInfo (for unregister)
 
     def add_peer(
         self,
@@ -203,20 +212,45 @@ class PeerDiscovery:
             from zeroconf import ServiceInfo
             from zeroconf.asyncio import AsyncZeroconf
 
+            # NOTE: deliberately do NOT advertise the stable peer_id as an
+            # mDNS property. Broadcasting it leaks a persistent identifier to
+            # every device on the LAN, undercutting the project's anonymity
+            # goals — and nothing in malphas reads it (identity is
+            # established by the authenticated handshake after connect).
             info = ServiceInfo(
                 "_malphas._tcp.local.",
                 f"{service_name}._malphas._tcp.local.",
                 addresses=[socket.inet_aton("127.0.0.1")],
                 port=port,
-                properties={"peer_id": self._my_id},
+                properties={},
             )
             zc = AsyncZeroconf()
             await zc.async_register_service(info)
-            self._mdns_task = asyncio.current_task()
+            # Keep references so the service can actually be unregistered and
+            # the socket closed on shutdown. The previous code stored
+            # asyncio.current_task() (which had already finished), letting `zc`
+            # get garbage-collected and leaving the registration dangling.
+            self._zc = zc
+            self._mdns_info = info
         except ImportError:
             pass
         except Exception:
             pass
+
+    async def stop_mdns(self) -> None:
+        """Unregister the mDNS service and close the zeroconf socket."""
+        zc = self._zc
+        if zc is None:
+            return
+        try:
+            if self._mdns_info is not None:
+                await zc.async_unregister_service(self._mdns_info)
+            await zc.async_close()
+        except Exception:
+            pass
+        finally:
+            self._zc = None
+            self._mdns_info = None
 
     def wipe(self) -> None:
         """Clear all peer data from memory."""
