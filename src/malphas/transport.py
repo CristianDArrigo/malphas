@@ -340,16 +340,30 @@ class TorTransport(BaseTransport):
                     _run(["chmod", "600", str(hs_path / f)])
 
             # Add HiddenService config to torrc if not already present.
-            # setup.sh pre-configures this, but if the port changed or
-            # setup.sh wasn't run, we try to add it here.
-            torrc_path = Path("/etc/tor/torrc")
-            try:
-                torrc = torrc_path.read_text()
-                hs_config = f"\nHiddenServiceDir {hs_path}\nHiddenServicePort 80 127.0.0.1:{local_port}\n"
-                if str(hs_path) not in torrc:
-                    torrc_path.write_text(torrc + hs_config)
-            except PermissionError:
-                pass  # torrc already configured by setup.sh
+            # /etc/tor/torrc is root-owned, so this MUST go through the same
+            # sudo path as the key files above. The previous code did a plain
+            # Path.write_text() which failed with PermissionError for a
+            # non-root user and was silently swallowed — leaving the HS keys
+            # on disk but no `HiddenServiceDir` directive, so Tor never
+            # published the onion (keys present, service dead).
+            torrc_path = "/etc/tor/torrc"
+            hs_config = (
+                f"\n# malphas hidden service\n"
+                f"HiddenServiceDir {hs_path}\n"
+                f"HiddenServicePort 80 127.0.0.1:{local_port}\n"
+            )
+            already = subprocess.run(
+                prefix + ["grep", "-qF", str(hs_path), torrc_path],
+                capture_output=True,
+            )
+            if already.returncode != 0:
+                # Append via `sudo tee -a` (idempotent: guarded by the grep).
+                subprocess.run(
+                    prefix + ["tee", "-a", torrc_path],
+                    input=hs_config.encode(),
+                    capture_output=True,
+                    timeout=5,
+                )  # torrc already configured by setup.sh
 
             # Reload Tor to pick up the key files.
             prefix = [] if os.getuid() == 0 else ["sudo", "-n"]
