@@ -106,9 +106,12 @@ Frame:
 | 0x03  | ONION             | both      | onion-wrapped data (§6)                    |
 | 0x05  | PING              | both      | empty                                      |
 | 0x06  | PONG              | both      | empty                                      |
-| 0x07  | PEER_ANNOUNCE     | both      | discovery JSON, deprecated                 |
+| 0x07  | PEER_ANNOUNCE     | both      | deprecated; received frames are dropped    |
 
-`length` is unsigned big-endian, max 16 MiB enforced by the reader.
+`length` is unsigned big-endian, capped at 16 MiB (`MAX_FRAME_BYTES`)
+and enforced by the reader **before** the payload body is read: a frame
+whose declared length exceeds the cap is rejected on the header alone, so
+a single crafted length prefix cannot drive an unbounded allocation.
 
 ---
 
@@ -144,7 +147,11 @@ ratchet_root = derive_root_key(session_key, ...)   # see ratchet.py
 
 Both peers verify the signature against the claimed `ed25519_pub`,
 recompute the BLAKE2s peer_id from `ed25519_pub`, and compare with
-the claimed `peer_id`. Mismatch ⇒ disconnect.
+the claimed `peer_id`. Mismatch ⇒ disconnect. This binds the
+identity cryptographically to the Ed25519 key: a peer cannot present
+a `peer_id` it does not hold the matching key for, and the bound
+identity is what every later authentication step (HMAC, ratchet,
+sealed-sender §8.2) is checked against.
 
 If the receiver had a pinned key for this peer_id (PinStore), the
 new `ed25519_pub` and `x25519_pub` must match the pinned values
@@ -171,6 +178,14 @@ The innermost encrypted_payload at the final hop is the
 
 Padding (§8) is applied **inside** the AEAD plaintext at every
 layer so that all relays see frames of the same size class.
+
+**Relay selection.** A node only relays through peers it currently
+holds a **live, authenticated connection** to: the first hop is sent
+over an existing connection, never by dialing an unauthenticated
+relay on demand. If no connected relays are available the circuit
+degrades to a single direct hop to the destination (the onion is
+still built, but with zero intermediate relays). Hop count is
+therefore best-effort, bounded above by 3 and below by 1.
 
 ---
 
@@ -206,7 +221,12 @@ not a valid Ed25519-signed JSON, so verification fails.
 [4:  msg_num:    uint32 BE]
 ```
 
-See `ratchet.py` for the symmetric/DH ratchet rules. `MAX_SKIP=100`.
+See `ratchet.py` for the symmetric/DH ratchet rules. `MAX_SKIP=1000`:
+a header whose `msg_num`/`prev_count` would skip more than `MAX_SKIP`
+message keys is **rejected** (raises) rather than processed, per the
+Signal spec. The attacker-controlled `msg_num` is a uint32, so without
+this bound a single header could force ~2³² skipped-key KDF iterations;
+the cap keeps skipped-message work bounded.
 
 ---
 
@@ -260,6 +280,15 @@ from_sealed = b64(nonce(12) || ct)
 ```
 
 Recipient inverts using their X25519 private key.
+
+On the ratchet path (`auth_type` `R`, §7) the recovered `from`
+peer_id is **bound to the connection's authenticated peer** (§5): if
+the unsealed `from` does not equal the handshake-authenticated
+identity of the connection the frame arrived on, the message is
+dropped and the ratchet state is rolled back. The sealed-sender
+`from` is therefore an addressing aid, not an authentication claim —
+it cannot be used to impersonate another peer onto a ratchet that was
+established with someone else.
 
 ---
 
@@ -356,8 +385,18 @@ in a future version (see §13).
 
 ### 11.4 · Tor v3 hidden-service key
 
-Persisted by the `stem` controller under
-`~/.malphas/tor/hidden_service/`. Owned by the running Tor process.
+The node configures the v3 HS **file-based**, not over the Tor
+ControlPort: it writes the derived v3 key material
+(`hs_ed25519_secret_key`, `hs_ed25519_public_key`, `hostname`) into
+`/var/lib/tor/malphas_hs` (owned by the Tor user), appends a
+`HiddenServiceDir` / `HiddenServicePort` block to `/etc/tor/torrc`
+(idempotently), and **restarts** tor (`systemctl restart tor`) so the
+new key is loaded. A reload (SIGHUP) is *not* used: Tor does not
+reliably pick up changed HS keys on reload. The ControlPort is not
+used to register the service. Writing under `/var/lib/tor` and
+restarting tor requires privilege (sudo); see `THREAT_MODEL.md` §4 for
+the trust/robustness note on this path.
+
 Backed up via the BIP39 mnemonic? **No** — Tor HS keys are derived
 from Ed25519 separately. Reconstructing from passphrase + salt +
 Argon2 → Ed25519 → onion is deterministic, so the .onion address

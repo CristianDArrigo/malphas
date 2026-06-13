@@ -56,7 +56,7 @@ Standard-primitive trust.
 | Integrity / authenticity of body        | A1–A4        | Ed25519 signature on the wrapping container; AEAD tag on the payload.  |
 | Forward secrecy on direct messages      | A1–A4        | Double Ratchet. Compromise of a session key does not expose past msgs. |
 | Sender anonymity vs. relay              | A4           | Sealed sender (v0.6.0). Outer relay sees only `from_eph`, not peer_id. |
-| Pinned identity                         | A3           | TOFU on first contact, then pinned. Subsequent key change is rejected. |
+| Pinned identity                         | A3           | TOFU on first contact, then pinned. Subsequent key change is rejected. A corrupt/tampered pin file is now fatal (the node refuses to start) rather than silently resetting to empty pins, closing the prior MITM re-pin window. |
 | Replay protection                       | A3           | (`from_id`, `msg_id`) cache, sliding 1-hour window, 10k entries.       |
 | At-rest confidentiality of address book | A5           | Argon2id + ChaCha20-Poly1305 with per-user salt. Padded JSON.          |
 | At-rest confidentiality of ratchet      | —            | Not applicable: ratchet state is in-memory only.                       |
@@ -74,7 +74,7 @@ Standard-primitive trust.
 | Metadata at the IP / Tor circuit level           | We use Tor's circuit pool. A global passive adversary observing both ends can correlate.      |
 | Timing-channel resistance                        | Cover traffic is best-effort. Padding aligns to a fixed block, but message arrival timing leaks. |
 | Constant-time comparisons everywhere             | We use `hmac.compare_digest` in obvious spots, but a full audit (§5) is pending.              |
-| Resistance to denial of service                  | A peer can flood the input queue or send many connection attempts. Bounded by replay window + per-peer connection cap, but no rate limiting beyond that. |
+| Resistance to denial of service                  | A peer can flood the input queue or send many connection attempts. Bounded by replay window + per-peer connection cap, but no rate limiting beyond that. The two single-frame amplification vectors are now closed: a frame's declared length is capped at 16 MiB before the body is read (no OOM from one length prefix), and ratchet skipped-message work is bounded by `MAX_SKIP` (no CPU exhaustion from one crafted header). |
 | Recovery if you lose **both** salt + passphrase  | The address book cannot be recomputed. The mnemonic backs up the salt; the passphrase you must remember. |
 | Reproducible builds                              | Yes (iter-056). `scripts/build-reproducible.sh` + `Dockerfile.build` produce byte-identical wheels. |
 | External cryptographic audit                     | Not yet performed.                                                                            |
@@ -103,6 +103,9 @@ Each cell: ✅ defended, ⚠️ partial, ❌ not defended, — = N/A.
 | Pretend to be peer X to peer Y (key impersonation)                                                                      | ✅ | — | ✅ pin enforced | ✅ pin enforced | — |
 | Pretend to be peer X **on first contact** (TOFU window)                                                                 | ❌ | — | ❌ | ❌ | — |
 | Submit a malformed onion / sealed-sender frame to crash the daemon                                                      | ✅ hypothesis fuzz | — | ✅ | ✅ | — |
+| OOM the node with one oversized frame length prefix                                                                     | ✅ 16 MiB cap | — | ✅ | ✅ | — |
+| CPU-exhaust the node with one ratchet header forcing a huge skip                                                        | ✅ MAX_SKIP | — | ✅ | ✅ | — |
+| Impersonate another peer via the sealed-sender `from` on an established ratchet                                          | ✅ bound to authenticated peer | — | ✅ | ✅ | — |
 | Tor circuit deanonymization via end-to-end timing                                                                       | — | inherited from Tor | inherited from Tor | inherited from Tor | — |
 | Recover a wiped address book after `/panic`                                                                             | — | — | — | — | ✅ memory only |
 
@@ -117,7 +120,8 @@ Code and dependencies that, if compromised, defeat the model:
 | `cryptography` (PyCA)                  | All primitives (X25519, Ed25519, ChaCha20-Poly1305, HKDF, BLAKE2s, Argon2id is via `argon2-cffi`) | Industry-standard, audited.               |
 | `argon2-cffi`                          | Argon2id KDF                                  | Used for passphrase → seed.               |
 | `mnemonic`                             | BIP39 word list                               | Public dictionary, no secrets.            |
-| `stem`                                 | Tor controller                                | Loads the v3 HS key into our running Tor. |
+| `stem`                                 | Tor dependency gate                           | Present, but the HS is configured file-based (torrc + restart), not via the ControlPort. |
+| Privileged Tor HS setup (sudo)         | Writes v3 key into `/var/lib/tor`, edits `/etc/tor/torrc`, restarts tor | Trust/robustness concern: runs with privilege and writes key material outside `~/.malphas`. Not yet hardened or independently reviewed. See PROTOCOL.md §11.4. |
 | `cryptography` ed25519 → onion conversion | Derives `.onion` from Ed25519 pub          | Implementation matches Tor's.             |
 | The Python interpreter                 | All code runs here                            | Same-process attack surface as any app.   |
 | The OS keyring / filesystem permissions | Address-book file mode 0600                  | We rely on OS to enforce.                 |
@@ -146,6 +150,20 @@ release.
 | TM-09 | Low      | Receipts can be omitted by a malicious endpoint to spoof "not delivered".| documented   |
 | TM-10 | Low      | Address book file size leaks an upper bound on contact count via padding granularity. | low impact   |
 | TM-11 | ~~Low~~ resolved | iter-057: mock_node fixture in `tests/test_cli.py` now provides a real `GroupRegistry()` for `_groups`. Full CLI suite (132 cases) passes. | iter-057 ✅ |
+| TM-12 | ~~High~~ resolved | Unbounded frame length: one crafted 4-byte length prefix could OOM the node. Now capped at 16 MiB (`MAX_FRAME_BYTES`), checked before the body is read. | PROTOCOL.md §4 ✅ |
+| TM-13 | ~~High~~ resolved | Unbounded ratchet skip: one crafted header (uint32 `msg_num`) could drive ~2³² skipped-key KDF iterations. Now bounded by `MAX_SKIP=1000`, which raises if exceeded (Signal-spec). | PROTOCOL.md §7.1 ✅ |
+| TM-14 | ~~High~~ resolved | Sender impersonation: the sealed-sender `from` was trusted on the ratchet path. The unsealed `from` is now bound to the connection's authenticated peer; mismatch drops the frame and rolls back ratchet state. | PROTOCOL.md §8.2 ✅ |
+| TM-15 | ~~High~~ resolved | `peer_id` was not bound to the Ed25519 key at handshake. The receiver now recomputes `BLAKE2s(ed25519_pub)` and rejects on mismatch, in addition to verifying the Ed25519 signature. | PROTOCOL.md §5 ✅ |
+| TM-16 | ~~High~~ resolved | Local control API was unauthenticated. Now requires a bearer token (constant-time check) plus Host-header pinning to localhost; the WebSocket endpoint is gated the same way. | `api.py` ✅ |
+| TM-17 | ~~High~~ resolved | Pin store silently reset to empty pins on a corrupt/tampered file, opening a MITM re-pin window. The node now raises `PinStoreCorruptError` and refuses to start. | `pinstore.py` ✅ |
+| TM-18 | ~~Medium~~ resolved | Deprecated `MSG_PEER_ANNOUNCE` could poison the routing table. The handler no longer updates routing state — received frames are dropped. Peers are learned only via authenticated handshake or explicit invite. | `node.py` ✅ |
+| TM-19 | Medium   | The GUI/CLI surface (~4700 LOC) has not had a dedicated security review.  | future       |
+| TM-20 | Low      | The privileged Tor HS setup runs with sudo and writes key material into `/var/lib/tor` + `/etc/tor/torrc`, then restarts tor. Trust/robustness concern; not hardened or independently reviewed. | PROTOCOL.md §11.4 |
+
+> **Still open.** TM-01 (cryptographic group membership consensus) remains
+> unsolved: the current scheme is creator-authorized with eventually-consistent
+> operational fanout, not a cryptographic consensus. No external third-party
+> audit has been performed (see §2). TM-19/TM-20 above are also open.
 
 ---
 

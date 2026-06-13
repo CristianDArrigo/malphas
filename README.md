@@ -98,7 +98,7 @@ No servers. No accounts. No logs. No traces.
 
 ## Status
 
-**`1.0.0-rc5` (2026-05-09) · wire format frozen.**
+**`1.0.0-rc6` (2026-06-13) · wire format frozen.**
 
 malphas is a release candidate. Wire format is frozen at
 `WIRE_VERSION = 1` and additive-only from here (see
@@ -279,7 +279,7 @@ Tor hidden services do not work reliably inside Docker containers due to Tor sel
 
 ### Automated setup (Linux)
 
-The setup script installs Tor, configures ControlPort, sets permissions, and prepares the hidden service directory:
+The setup script installs Tor, configures passwordless sudo for the Tor service, sets permissions, and prepares the hidden service directory:
 
 ```bash
 git clone https://github.com/CristianDArrigo/malphas.git
@@ -317,19 +317,14 @@ The Tk GUI (`--mode gui`) needs no extra — it's stdlib only.
 ```bash
 # Linux
 sudo apt install tor
-# Enable ControlPort in /etc/tor/torrc:
-#   ControlPort 9051
-#   CookieAuthentication 1
 sudo systemctl restart tor
-sudo chmod o+r /run/tor/control.authcookie
 
 # macOS
 brew install tor
-# Enable ControlPort in /usr/local/etc/tor/torrc
 brew services restart tor
 ```
 
-**Note:** launching with `--tor` requires root or `debian-tor` group membership, because malphas writes hidden service key files to `/var/lib/tor/`. The setup script handles this automatically.
+**Note:** malphas does not use the Tor control port. Hidden services are set up by writing the v3 key files into `/var/lib/tor/malphas_hs` and appending the `HiddenServiceDir`/`HiddenServicePort` lines to `/etc/tor/torrc`, then restarting Tor. Launching with `--tor` therefore requires passwordless sudo (or root) so malphas can write those paths and restart the Tor service. The setup script handles this automatically.
 
 **Dependencies installed automatically:**
 
@@ -338,7 +333,7 @@ brew services restart tor
 - `prompt_toolkit` — CLI input with readline, tab completion, history
 - `rich` — CLI output formatting (panels, tables, colors)
 - `fastapi` + `uvicorn` — web API (optional, web mode only)
-- `stem` — Tor control protocol (optional, Tor mode only)
+- `stem` — Tor controller library (optional; imported but not required for hidden services, which use sudo + torrc directly)
 - `zeroconf` — mDNS peer discovery on LAN (optional)
 
 ---
@@ -364,6 +359,13 @@ The Qt GUI ships with the `gui-qt` extra:
 pip install -e ".[gui-qt]"
 malphas --mode gui-qt --tor
 ```
+
+The Qt GUI shows per-message delivery status on each outgoing bubble
+(🕓 pending → ✓ sent → ✓✓ read in blue → ✕ failed), lets you right-click a
+peer in the sidebar to **Hide chat** or **Delete contact** (delete disconnects
+the peer and removes it from routing, discovery, and the address book), and
+connects to peers non-blocking — a "Connecting…" spinner replaces the old
+window freeze while the handshake completes.
 
 ### Basic (LAN or public IP)
 
@@ -424,13 +426,12 @@ Step-by-step for two people on different networks who want to chat privately:
 
 ```bash
 sudo apt install tor                    # install Tor
-# Edit /etc/tor/torrc: uncomment ControlPort 9051 and CookieAuthentication 1
-sudo systemctl restart tor              # restart with control port
+sudo systemctl restart tor              # start the Tor service
 
 git clone https://github.com/CristianDArrigo/malphas.git
 cd malphas && pip install -e .
 
-malphas --tor --port 7777               # launch with Tor
+malphas --tor --port 7777               # launch with Tor (needs passwordless sudo)
 # enter a strong passphrase
 ```
 
@@ -504,11 +505,16 @@ The CLI uses prompt_toolkit for readline input (arrow keys, history, tab complet
 /sendfile <peer> <path>    send a file (32 KB chunks, 100 MB cap)
 /accept <file_id>          accept a pending incoming file
 /reject <file_id>          reject a pending incoming file
-/savefile <file_id> <path> write a completed file to disk
+/savefile <file_id> [path] write a completed file to disk; path is optional
+                           and defaults to ~/ under the original name. ~ is
+                           expanded; a directory saves under the original name
 /files                     list pending and completed file transfers
 /help                      show this list
 <text>                     send a message to the active conversation
 ```
+
+`/accept`, `/reject`, and `/savefile` accept either the full file_id or the
+truncated 16-character id shown in the offer notification.
 
 **Tab completion:**
 - First level: all commands
@@ -633,7 +639,7 @@ This means:
 
 ### Hidden service implementation
 
-malphas uses persistent hidden services (files on disk in `/var/lib/tor/malphas_hs/`) rather than ephemeral hidden services via stem's `create_ephemeral_hidden_service`.
+malphas uses persistent hidden services (files on disk in `/var/lib/tor/malphas_hs/`) rather than ephemeral hidden services via stem's `create_ephemeral_hidden_service`. It does not use the Tor control port at all: it writes the v3 key files into `/var/lib/tor/malphas_hs` and appends the `HiddenServiceDir`/`HiddenServicePort` lines to `/etc/tor/torrc` (both via sudo), then restarts Tor with `systemctl restart tor`. A reload is deliberately not used — it does not reliably pick up changed hidden-service onion keys.
 
 This is a deliberate choice driven by extensive testing. The ephemeral approach (ADD_ONION via the Tor control protocol) accepts custom Ed25519 keys without error but silently fails to publish the descriptor on multiple Tor versions (tested on 0.4.2.7, 0.4.6.10, 0.4.8.16). The hidden service appears registered locally but is never reachable from the Tor network. This failure is silent — no error is returned by stem or by Tor's control protocol.
 
@@ -650,7 +656,7 @@ The persistent approach writes the key files directly to disk in the format Tor 
 
 **Permissions.** Tor runs as user `debian-tor` (or `tor` on some distributions) and requires strict ownership: the hidden service directory must be owned by the Tor user with mode 700, and key files must be mode 600. malphas sets these permissions automatically, but launching with `--tor` requires root or membership in the `debian-tor` group.
 
-**Setup script.** The included `scripts/setup.sh` automates Tor installation, ControlPort configuration, permission setup, and malphas installation:
+**Setup script.** The included `scripts/setup.sh` automates Tor installation, passwordless-sudo configuration for the Tor service, permission setup, and malphas installation:
 
 ```bash
 sudo bash scripts/setup.sh
@@ -663,7 +669,7 @@ The Tor hidden service integration has been tested end-to-end between a local ma
 Key findings from testing:
 - Ephemeral hidden services (ADD_ONION with custom key) do not work reliably across Tor versions
 - Persistent hidden services with correctly formatted expanded keys work on the first attempt
-- The descriptor typically publishes within 30-60 seconds of Tor reload
+- The descriptor typically publishes within 30-60 seconds of the Tor restart
 - Tor self-rendezvous (connecting to your own .onion from the same machine or NAT) fails on all tested configurations — this is a Tor architectural limitation, not a malphas issue
 - Docker containers sharing the same host cannot reach each other's hidden services for the same reason
 
@@ -807,16 +813,24 @@ An attacker with a dedicated GPU farm attempting to brute force a four-word pass
 Every connection begins with a mutually authenticated handshake (described in [How the Network Works](#how-the-network-works)). The handshake combines three layers of protection:
 
 1. **Ed25519 signature** on the ephemeral key prevents MITM attacks
-2. **Key pinning (TOFU)** detects key changes after first contact
-3. **Ephemeral ECDH** provides forward secrecy — compromising identity keys does not expose past session keys
+2. **Identity binding** — the handshake verifies the presented `peer_id` equals `BLAKE2s(ed25519_pub)`, so a peer cannot claim an identity that does not match its signing key
+3. **Key pinning (TOFU)** detects key changes after first contact
+4. **Ephemeral ECDH** provides forward secrecy — compromising identity keys does not expose past session keys
 
 ### Message Sender Verification
 
-All incoming messages must be authenticated by a peer known to the recipient's routing table. Messages claiming to be from an unknown `peer_id` are silently dropped. This prevents message injection attacks.
+All incoming messages must be authenticated by a peer known to the recipient's routing table. Messages claiming to be from an unknown `peer_id` are silently dropped. This prevents message injection attacks. On the ratchet path the sender identity is bound to the connection's authenticated peer, so a peer cannot spoof another sender by forging the sealed-sender field.
 
 ### Replay Protection
 
 Each successfully delivered message is recorded in an in-memory replay cache keyed by `(from_peer_id, msg_id)`. A second packet with the same key arriving while the entry is alive is dropped silently — no second user-visible delivery, no second store write, no second receipt. The cache is bounded (10000 entries, FIFO eviction) and entries expire on the same TTL as the message store. This closes a gap on the HMAC and Ed25519 fallback delivery paths where the Double Ratchet's per-message counter is not in effect (e.g. immediately after a reconnect, before the ratchet has been re-keyed). The cache is wiped by `/panic` like every other piece of state.
+
+### Resource Bounds (DoS hardening)
+
+Several limits cap the work an untrusted peer can force the node to do:
+
+- **Inbound wire frames are capped at 16 MiB.** A frame whose length prefix exceeds the cap is rejected before the body is read, so a peer cannot exhaust memory by announcing an enormous frame.
+- **The Double Ratchet bounds skipped-message handling (`MAX_SKIP`).** An out-of-order header that would require deriving an unreasonable number of skipped message keys is rejected, preventing a CPU-exhaustion DoS.
 
 ### No-Log Policy
 
@@ -893,7 +907,7 @@ file_chunk { file_id, chunk_idx, data_b64 }
 file_ack   { file_id, status }   # accepted | rejected | completed | checksum_mismatch
 ```
 
-**Default policy on the receiver:** offers are NOT auto-accepted. The CLI surfaces every incoming offer with a yellow notification and waits for an explicit `/accept` or `/reject`. There is a `auto_accept_files` flag on the node for headless / scripted clients that need to bypass the consent step.
+**Default policy on the receiver:** offers are NOT auto-accepted. The CLI surfaces every incoming offer with a yellow notification and waits for an explicit `/accept` or `/reject`. There is a `auto_accept_files` flag on the node for headless / scripted clients that need to bypass the consent step. The sender waits for the receiver's readiness signal before streaming chunks, so a manually accepted file is never lost no matter how long the receiver takes to type `/accept`.
 
 ### Quickstart
 
@@ -972,7 +986,7 @@ Messages are encrypted at send time (after reconnection), not at queue time. Thi
 
 **Tor self-rendezvous.** A single Tor process cannot connect to its own hidden service. Two machines sharing the same public IP (e.g., Docker containers on the same host, or two processes behind the same NAT) also fail. This is a Tor architectural constraint, not a malphas issue. Testing hidden service delivery requires two machines on genuinely different networks.
 
-**Tor descriptor propagation.** After registering a hidden service, the descriptor must propagate to HSDir relay nodes before the `.onion` address becomes reachable. This typically takes 30-60 seconds but can take longer on freshly started Tor instances. Avoid reloading Tor during a session — each reload triggers descriptor re-publication and temporary unreachability.
+**Tor descriptor propagation.** After registering a hidden service, the descriptor must propagate to HSDir relay nodes before the `.onion` address becomes reachable. This typically takes 30-60 seconds but can take longer on freshly started Tor instances. Avoid restarting Tor during a session — each restart triggers descriptor re-publication and temporary unreachability.
 
 **Memory wiping in Python.** Python strings and bytes objects are immutable. Overwriting a variable only changes the reference — the original bytes may remain in the heap until garbage collection. The passphrase and seed material in RAM cannot be reliably zeroed in pure Python.
 
@@ -982,7 +996,7 @@ Messages are encrypted at send time (after reconnection), not at queue time. Thi
 
 For the formal weakness list with severity grades, see
 [`THREAT_MODEL.md`](THREAT_MODEL.md) §5. Snapshot of where things
-stand at `1.0.0-rc5`:
+stand at `1.0.0-rc6`:
 
 | ID    | Status                | Summary                                                                                              |
 |-------|-----------------------|------------------------------------------------------------------------------------------------------|
@@ -996,6 +1010,15 @@ stand at `1.0.0-rc5`:
 | TM-09 | By design             | Receipt omission: a malicious endpoint can spoof "not delivered" by silently swallowing the receipt. |
 | TM-10 | Low                   | Padding granularity leaks an upper bound on contact count.                                           |
 | TM-11 | Resolved              | Pre-existing CLI test mock fixed (iter-057).                                                         |
+| TM-12 | Resolved              | Unbounded frame length (one prefix → OOM) capped at 16 MiB (`MAX_FRAME_BYTES`).                      |
+| TM-13 | Resolved              | Unbounded ratchet skip bounded by `MAX_SKIP=1000` (raises if exceeded).                              |
+| TM-14 | Resolved              | Sealed-sender impersonation on the ratchet path: `from` bound to the authenticated peer.             |
+| TM-15 | Resolved              | `peer_id` verified against `BLAKE2s(ed25519_pub)` at handshake.                                      |
+| TM-16 | Resolved              | Local control API gated by a bearer token + loopback `Host` pinning (incl. WebSocket).               |
+| TM-17 | Resolved              | Pin store refuses to start on a corrupt/tampered file (was a silent reset → MITM window).            |
+| TM-18 | Resolved              | Deprecated `MSG_PEER_ANNOUNCE` routing-table poisoning neutralised (frames dropped).                 |
+| TM-19 | Open (medium)         | GUI/CLI surface (~4700 LOC) has no dedicated security review yet.                                    |
+| TM-20 | Open (low)            | Privileged Tor HS setup (sudo, writes key material, restarts tor) not hardened / unreviewed.         |
 
 ---
 
@@ -1023,7 +1046,7 @@ pytest tests/test_pinstore.py -v
 # Invite system tests
 pytest tests/test_invite.py -v
 
-# Tor tests (requires Tor running with ControlPort 9051)
+# Tor tests (requires a running Tor service and passwordless sudo)
 pytest tests/test_transport.py::TestTorIntegration -v
 pytest tests/test_tor_e2e.py -v
 ```
@@ -1156,7 +1179,7 @@ When run with `--mode web`, malphas exposes a localhost-only FastAPI surface (de
 | GET | `/api/files/{file_id}/download` | stream a completed file (single-shot, drops the in-RAM copy) |
 | WS | `/ws` | push events: `message`, `file_offer`, `file_complete` |
 
-CORS allows only `http://localhost` and `http://127.0.0.1` origins. There is no auth on the local API by design — the threat model assumes the local user owns the loopback.
+CORS allows only `http://localhost` and `http://127.0.0.1` origins. The local control API requires a per-session bearer token (printed at startup) on every request and pins the `Host` header to loopback, defending against DNS-rebinding and CSRF attacks from a browser the user happens to have open. WebSocket connections must present the same token.
 
 ---
 

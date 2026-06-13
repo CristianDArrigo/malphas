@@ -3,10 +3,12 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
-## [Unreleased] — security review hardening
+## [1.0.0-rc6] — 2026-06-13
 
-A focused security/bug pass. New regression tests live in
-`tests/test_security_review_fixes.py`. No wire-format break; on-disk
+A security review of the crypto/protocol layer, plus a round of
+connectivity, Tor, GUI and file-transfer fixes shaken out by end-to-end
+testing over Tor. Regression tests in `tests/test_security_review_fixes.py`
+and the functional/CLI/GUI suites. No wire-format break; on-disk
 address-book and pin files auto-upgrade in place (AAD added with a
 one-time legacy fallback).
 
@@ -63,6 +65,47 @@ one-time legacy fallback).
   `host` validation on `/api/peers/connect`; mDNS no longer leaks the
   stable `peer_id` on the LAN and cleans up its zeroconf handle; onion
   address version byte enforced; SOCKS5 unknown ATYP rejected.
+
+### Fixed — connectivity & Tor
+
+- **Onion circuits only relay through CONNECTED peers** (`discovery.py`,
+  `node.py`): `select_relay_circuit` could put a peer the node had no live
+  connection to as the circuit's first hop, so once 2+ peers were known the
+  message was enqueued (a `msg_id` was returned, so it *looked* sent) but
+  never delivered. Relays are now chosen only from connected, authenticated
+  peers; with none available the circuit degrades to a direct hop.
+- **Hidden service: torrc written via sudo** (`transport.py`): the
+  `HiddenServiceDir`/`HiddenServicePort` directives were written with a
+  plain (non-sudo) `write_text` whose `PermissionError` was silently
+  swallowed, so Tor never published the onion. Now appended via `sudo tee`.
+- **Hidden service: restart Tor, not reload** (`transport.py`): a
+  `systemctl reload` (SIGHUP) does not reliably load changed v3 onion keys,
+  leaving the descriptor unpublished/unreachable. Now `systemctl restart`.
+
+### Added — GUI (Qt)
+
+- Per-message delivery status on outgoing bubbles — 🕓 pending → ✓ sent →
+  ✓✓ read (blue) → ✕ failed — replacing the old per-message "delivered"
+  system line.
+- Right-click a peer in the sidebar to **Hide chat** (drop the conversation)
+  or **Delete contact** (disconnect, remove from routing/discovery via the
+  new `MalphasNode.forget_peer`, and remove from the address book).
+- Connecting to a peer is non-blocking: a "Connecting…" spinner instead of
+  freezing the window (the old `future.result(timeout=35)` blocked the Qt
+  thread). Sending a file is likewise non-blocking.
+
+### Fixed — file transfer
+
+- **Manual accept now works** (`node.py`, `cli_ui.py`, `api.py`): the sender
+  waited only 0.3 s for the receiver's readiness signal before streaming
+  chunks, so a manually-accepted file (you take seconds to `/accept`) was
+  dropped and never completed. The receiver now sends a `file_resume` on
+  accept (auto and manual) and the sender waits up to 60 s for it.
+- `/accept`, `/reject`, `/savefile` accept the truncated 16-char file_id
+  shown in the offer (`cli_ui.py`).
+- `/savefile` expands `~`, saves under the original name when given a
+  directory, and defaults to `~/` when no path is given; received files keep
+  their real name (`cli_ui.py`).
 
 ## [1.0.0-rc5] — 2026-05-09
 

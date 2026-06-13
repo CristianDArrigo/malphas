@@ -16,12 +16,13 @@ malphas does and does not protect against.
 ## Supported Versions
 
 Only the latest released version receives security fixes. Older versions are
-unsupported. This project is pre-1.0 and the wire format may change.
+unsupported. The project is at the 1.0 release-candidate stage; the wire
+format has been frozen since 1.0.0-rc1.
 
-| Version | Supported |
-|---------|-----------|
-| 0.2.x   | yes       |
-| < 0.2   | no        |
+| Version     | Supported |
+|-------------|-----------|
+| 1.0.0-rc6   | yes       |
+| < 1.0.0-rc6 | no        |
 
 ## Out-of-scope (known design choices, not bugs)
 
