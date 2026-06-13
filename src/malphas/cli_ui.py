@@ -22,6 +22,7 @@ Commands:
 """
 
 import asyncio
+import os
 import re
 import sys
 import time
@@ -137,6 +138,10 @@ class MalphasCLI:
         # _pending_offers: offers received and awaiting /accept or /reject.
         # _completed_files: payloads ready for /savefile to flush to disk.
         self._pending_offers: dict[str, tuple[str, dict]] = {}
+        # _accepted_offers: offers we accepted, kept so _on_file_complete can
+        # recover the original name/sender once the transfer assembles
+        # (the entry is removed from _pending_offers on accept).
+        self._accepted_offers: dict[str, tuple[str, dict]] = {}
         self._completed_files: dict[str, tuple[str, str, bytes]] = {}
 
     # ── Output helpers ───────────────────────────────────────────────────
@@ -686,6 +691,8 @@ class MalphasCLI:
         if ok:
             self._ok(f"accepted {offer.get('name', '?')} from {from_id[:8]}")
             del self._pending_offers[fid]
+            # Remember the offer so _on_file_complete can show the real name.
+            self._accepted_offers[fid] = (from_id, offer)
             # Tell the sender we're ready so it streams the chunks now.
             await self.node.send_file_resume(from_id, fid)
         else:
@@ -706,7 +713,7 @@ class MalphasCLI:
         if len(args) < 2:
             self._err("usage: /savefile <file_id> <path>")
             return
-        out_path = " ".join(args[1:])
+        out_path = os.path.expanduser(" ".join(args[1:]))
         fid = self._resolve_file_id(args[0], self._completed_files)
         if fid is None:
             self._err(f"no completed file with id {args[0]}")
@@ -716,6 +723,9 @@ class MalphasCLI:
             self._err(f"no completed file with id {args[0]}")
             return
         from_id, name, payload = entry
+        # If a directory was given, save under the original file name.
+        if os.path.isdir(out_path):
+            out_path = os.path.join(out_path, os.path.basename(name) or "file.bin")
         try:
             with open(out_path, "wb") as f:
                 f.write(payload)
@@ -926,8 +936,10 @@ class MalphasCLI:
 
     async def _on_file_complete(self, file_id: str, data: bytes) -> None:
         """Hook fired by the node when a transfer is fully assembled."""
-        # Move from pending to completed using the offer info we recorded.
-        offer_entry = self._pending_offers.pop(file_id, None)
+        # Recover the original name/sender from the offer we accepted (or a
+        # still-pending one, e.g. auto-accept).
+        offer_entry = (self._accepted_offers.pop(file_id, None)
+                       or self._pending_offers.pop(file_id, None))
         if offer_entry is not None:
             from_id, offer = offer_entry
             name = offer.get("name", "file.bin")

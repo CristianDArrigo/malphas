@@ -1255,6 +1255,10 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
                                 sender_label=label)
         elif kind == "connect_result":
             self._finish_import(ev[1], ev[2])
+        elif kind == "file_sent":
+            peer, name, ok = ev[1], ev[2], ev[3]
+            self._add_system(
+                peer, f"sent '{name}'" if ok else f"send failed: '{name}'")
         elif kind == "send_done":
             # send_message returned: msg_id => went on the wire, None => failed
             status_key, mid = ev[1], ev[2]
@@ -1504,16 +1508,25 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         if not path:
             return
 
+        # Non-blocking: send_file now waits (up to 60s) for the receiver to
+        # accept before streaming, so blocking the Qt thread on its result
+        # would freeze the whole window. Fire it on the bridge and report via
+        # the event queue.
+        peer = self.active
+        name = Path(path).name
+        self._add_system(peer, f"sending '{name}'…")
+
         async def _send() -> str | None:
-            return await self.node.send_file(self.active, path)
-        future = self.bridge.submit_coro(_send())
-        try:
-            file_id = future.result(timeout=60.0)
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Send failed", str(e))
-            return
-        if file_id:
-            self._add_system(self.active, f"sent '{Path(path).name}'")
+            return await self.node.send_file(peer, path)
+        fut = self.bridge.submit_coro(_send())
+
+        def _done(f: Any) -> None:
+            try:
+                ok = bool(f.result())
+            except Exception:
+                ok = False
+            self.event_queue.put(("file_sent", peer, name, ok))
+        fut.add_done_callback(_done)
 
     def _action_backup(self) -> None:
         if self.salt_path is None:

@@ -195,6 +195,41 @@ class TestSavefile:
         await cli._cmd_savefile(["nope", "/tmp/whatever"])
         cli._err.assert_called()
 
+    async def test_savefile_to_directory_uses_original_name(self, tmp_path):
+        # Regression: /savefile <id> <dir> writes to <dir>/<original name>.
+        node = _mock_node()
+        cli = MalphasCLI(node, _mock_book())
+        cli._ok = MagicMock()
+        fid = "abad1dea" * 4
+        cli._completed_files[fid] = ("alice", "report.pdf", b"PDFDATA")
+        await cli._cmd_savefile([fid, str(tmp_path)])
+        assert (tmp_path / "report.pdf").read_bytes() == b"PDFDATA"
+
+    async def test_savefile_expands_tilde(self, monkeypatch, tmp_path):
+        # Regression: ~ must be expanded (open() does not do it).
+        node = _mock_node()
+        cli = MalphasCLI(node, _mock_book())
+        cli._ok = MagicMock()
+        monkeypatch.setenv("HOME", str(tmp_path))
+        fid = "0badf00d" * 4
+        cli._completed_files[fid] = ("alice", "x.bin", b"hi")
+        await cli._cmd_savefile([fid, "~/out.bin"])
+        assert (tmp_path / "out.bin").read_bytes() == b"hi"
+
+    async def test_on_file_complete_recovers_accepted_name(self):
+        # Regression: the received file kept the real name, not "file.bin"
+        # (the accepted offer was dropped from _pending_offers on /accept).
+        node = _mock_node()
+        cli = MalphasCLI(node, _mock_book())
+        cli._plain = MagicMock()
+        fid = "feedbeef" * 4
+        cli._accepted_offers[fid] = (
+            "alice", {"file_id": fid, "name": "secret.txt"})
+        await cli._on_file_complete(fid, b"data")
+        from_id, name, _ = cli._completed_files[fid]
+        assert name == "secret.txt"
+        assert from_id == "alice"
+
 
 # ── /files ───────────────────────────────────────────────────────────────────
 
