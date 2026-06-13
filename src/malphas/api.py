@@ -327,11 +327,13 @@ def create_app(
         entry = pending_offers.get(req.file_id)
         if not entry:
             raise HTTPException(status_code=404, detail="no pending offer with that file_id")
-        _, offer = entry
+        from_id, offer = entry
         ok = node.accept_file_offer(offer)
         if not ok:
             raise HTTPException(status_code=400, detail="malformed offer")
         del pending_offers[req.file_id]
+        # Tell the sender we're ready so it streams the chunks now.
+        await node.send_file_resume(from_id, offer["file_id"])
         return {"status": "accepted"}
 
     @app.post("/api/files/reject")

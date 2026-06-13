@@ -686,6 +686,8 @@ class MalphasCLI:
         if ok:
             self._ok(f"accepted {offer.get('name', '?')} from {from_id[:8]}")
             del self._pending_offers[fid]
+            # Tell the sender we're ready so it streams the chunks now.
+            await self.node.send_file_resume(from_id, fid)
         else:
             self._err("accept failed (malformed offer)")
 

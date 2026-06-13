@@ -332,3 +332,53 @@ class TestForgetPeer:
 
     async def test_forget_unknown_peer_is_noop(self, node_a):
         await node_a.forget_peer("f" * 40)   # must not raise
+
+
+class TestFileManualAccept:
+    async def test_delayed_manual_accept_delivers(
+        self, node_a, node_b, identity_b, tmp_path
+    ):
+        # Regression: with manual accept the receiver registers its buffer
+        # seconds after the offer (human types /accept). The sender must wait
+        # for the receiver's file_resume before streaming chunks — otherwise
+        # the chunks (previously sent 0.3s after the offer) are dropped and
+        # the file never completes.
+        got_offer = asyncio.Event()
+        box: dict = {}
+        done: dict = {}
+
+        async def on_offer(frm, offer):
+            box["from"], box["offer"] = frm, offer
+            got_offer.set()
+
+        async def on_complete(fid, data):
+            done["data"] = data
+
+        node_b.on_file_offer(on_offer)
+        node_b.on_file_complete(on_complete)
+
+        ok = await node_a.connect_to_peer(
+            "127.0.0.1", 17778, identity_b.peer_id,
+            identity_b.x25519_pub_bytes, identity_b.ed25519_pub_bytes)
+        assert ok
+
+        payload = b"recovery-codes-XYZ\n" * 4
+        path = tmp_path / "codes.txt"
+        path.write_bytes(payload)
+
+        async def delayed_accept():
+            await got_offer.wait()
+            await asyncio.sleep(1.5)   # human delay before /accept
+            offer = box["offer"]
+            assert node_b.accept_file_offer(offer)
+            await node_b.send_file_resume(box["from"], offer["file_id"])
+
+        asyncio.create_task(delayed_accept())
+        fid = await node_a.send_file(identity_b.peer_id, str(path))
+        assert fid is not None
+
+        for _ in range(50):
+            if done:
+                break
+            await asyncio.sleep(0.2)
+        assert done.get("data") == payload

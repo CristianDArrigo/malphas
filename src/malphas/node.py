@@ -979,22 +979,45 @@ class MalphasNode:
 
         offer_dict = offer.to_dict()
         if self.auto_accept_files:
-            # Already registered — notify application that an offer is being
-            # received automatically.
+            # Already registered — notify, and immediately tell the sender
+            # we're ready so it streams the chunks (the sender waits for this).
             self._notify_file_offer(from_id, offer_dict)
+            await self.send_file_resume(from_id, offer.file_id)
         else:
-            # Default policy: do NOT register; require explicit accept.
+            # Default policy: do NOT register; require explicit accept. The
+            # sender's resume wait will hold until the user accepts (which
+            # then sends the file_resume).
             self._files.drop_incoming(offer.file_id)
             self._notify_file_offer(from_id, offer_dict)
 
     def accept_file_offer(self, offer_dict: dict) -> bool:
-        """Application-level accept: register the incoming buffer."""
+        """Application-level accept: register the incoming buffer.
+
+        After this returns True the caller MUST call `send_file_resume` to
+        tell the sender to start streaming chunks — see send_file()'s resume
+        wait. Without it, a manually-accepted file never arrives (the sender
+        blasted the chunks right after the offer, before the buffer existed).
+        """
         try:
             offer = FileOffer.from_dict(offer_dict)
             self._files.register_incoming(offer)
             return True
         except (KeyError, ValueError):
             return False
+
+    async def send_file_resume(self, from_id: str, file_id: str) -> None:
+        """Signal the sender that we're ready to receive `file_id`.
+
+        Sends a `file_resume` listing the chunk indices we already hold
+        (empty on a fresh accept). This unblocks the sender's resume wait so
+        it streams the chunks AFTER our buffer is registered — required for
+        manual accept, where registration happens seconds after the offer.
+        """
+        ic = self._files.get_incoming(file_id)
+        received = ic.received_indices() if ic is not None else []
+        await self._try_send_payload(
+            from_id, KIND_FILE_RESUME,
+            {"file_id": file_id, "received_idx": received})
 
     async def _handle_file_chunk(self, data: dict, from_id: str) -> None:
         import base64
@@ -1397,12 +1420,14 @@ class MalphasNode:
             self._resume_events.pop(file_id, None)
             return None
 
-        # Wait briefly for a file_resume from the receiver. If none
-        # arrives within the window, the receiver had no partial
-        # buffer for this file_id (or is a 0.7.x peer): proceed with
-        # a full send.
+        # Wait for the receiver's file_resume before streaming chunks. A
+        # modern receiver sends it as soon as it has a buffer — immediately
+        # on auto-accept, or when the user runs /accept (which can take
+        # several seconds of human time, hence the generous timeout). If
+        # none arrives (legacy peer, or rejected), fall through and send
+        # anyway — harmless if the receiver has no buffer (chunks dropped).
         try:
-            await asyncio.wait_for(resume_event.wait(), timeout=0.3)
+            await asyncio.wait_for(resume_event.wait(), timeout=60.0)
         except asyncio.TimeoutError:
             pass
         skip = self._resume_signals.get(file_id, set())

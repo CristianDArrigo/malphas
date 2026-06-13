@@ -44,6 +44,7 @@ def _mock_node() -> MagicMock:
     node._files = FileTransferManager()
     node.send_file = AsyncMock(return_value="abc123def456" * 2 + "0000")
     node.accept_file_offer = MagicMock(return_value=True)
+    node.send_file_resume = AsyncMock()
     return node
 
 
