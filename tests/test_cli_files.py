@@ -132,6 +132,22 @@ class TestAcceptReject:
         # After accept, the offer is no longer pending
         assert offer_dict["file_id"] not in cli._pending_offers
 
+    async def test_accept_with_truncated_id(self):
+        # Regression: offers are DISPLAYED with a 16-char prefix
+        # (/accept {fid[:16]}), so accepting with that prefix must resolve
+        # to the full key. Previously it errored "no pending offer".
+        node = _mock_node()
+        cli = MalphasCLI(node, _mock_book())
+        cli._ok = MagicMock()
+        full = "d2fb0a66202e8051" + "abcdef01" * 2   # 32 hex chars
+        offer = {"file_id": full, "name": "codes.txt", "size": 135,
+                 "sha256": "0" * 64, "chunk_size": 32768, "chunk_count": 1}
+        cli._pending_offers[full] = ("alice", offer)
+
+        await cli._cmd_accept([full[:16]])   # the displayed, truncated id
+        node.accept_file_offer.assert_called_once_with(offer)
+        assert full not in cli._pending_offers
+
     async def test_reject_drops_pending_offer(self):
         node = _mock_node()
         cli = MalphasCLI(node, _mock_book())

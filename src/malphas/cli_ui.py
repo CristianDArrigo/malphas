@@ -660,16 +660,28 @@ class MalphasCLI:
             return
         self._ok(f"file_id  {file_id}")
 
+    @staticmethod
+    def _resolve_file_id(prefix: str, pool: dict) -> str | None:
+        """Resolve a (display-truncated) file_id prefix to a full key.
+
+        Offers are shown with a 16-char prefix, so /accept, /reject and
+        /savefile must accept that prefix. Exact match wins; otherwise a
+        unique startswith match; None on no match or ambiguity.
+        """
+        if prefix in pool:
+            return prefix
+        matches = [k for k in pool if k.startswith(prefix)]
+        return matches[0] if len(matches) == 1 else None
+
     async def _cmd_accept(self, args: list) -> None:
         if not args:
             self._err("usage: /accept <file_id>")
             return
-        fid = args[0]
-        pending = self._pending_offers.get(fid)
-        if not pending:
-            self._err(f"no pending offer with file_id {fid}")
+        fid = self._resolve_file_id(args[0], self._pending_offers)
+        if fid is None:
+            self._err(f"no pending offer with file_id {args[0]}")
             return
-        from_id, offer = pending
+        from_id, offer = self._pending_offers[fid]
         ok = self.node.accept_file_offer(offer)
         if ok:
             self._ok(f"accepted {offer.get('name', '?')} from {from_id[:8]}")
@@ -681,21 +693,25 @@ class MalphasCLI:
         if not args:
             self._err("usage: /reject <file_id>")
             return
-        fid = args[0]
-        if fid not in self._pending_offers:
-            self._err(f"no pending offer with file_id {fid}")
+        fid = self._resolve_file_id(args[0], self._pending_offers)
+        if fid is None:
+            self._err(f"no pending offer with file_id {args[0]}")
             return
         del self._pending_offers[fid]
-        self._ok(f"rejected {fid}")
+        self._ok(f"rejected {fid[:16]}")
 
     async def _cmd_savefile(self, args: list) -> None:
         if len(args) < 2:
             self._err("usage: /savefile <file_id> <path>")
             return
-        fid, out_path = args[0], " ".join(args[1:])
+        out_path = " ".join(args[1:])
+        fid = self._resolve_file_id(args[0], self._completed_files)
+        if fid is None:
+            self._err(f"no completed file with id {args[0]}")
+            return
         entry = self._completed_files.get(fid)
         if not entry:
-            self._err(f"no completed file with id {fid}")
+            self._err(f"no completed file with id {args[0]}")
             return
         from_id, name, payload = entry
         try:
