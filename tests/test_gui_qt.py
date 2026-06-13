@@ -294,3 +294,30 @@ def test_delete_contact_clears_conversation(qapp):
     assert "alice" not in w.conversations
     assert w.active is None
     w.close()
+
+
+# ── Non-blocking connect (spinner) ───────────────────────────────────────────
+
+_INVITE_DATA = {
+    "peer_id": "a" * 40, "host": "h", "port": 7,
+    "x25519_pub": "b" * 64, "ed25519_pub": "c" * 64,
+}
+
+
+def test_connect_result_failure_shows_error(qapp):
+    from unittest.mock import patch
+    w = gui_qt.MalphasQtWindow()
+    with patch.object(QtWidgets.QMessageBox, "critical") as crit:
+        w._handle_event(("connect_result", False, _INVITE_DATA))
+    crit.assert_called_once()
+    assert w.active is None   # failed → peer not selected
+    w.close()
+
+
+def test_connect_result_success_selects_peer(qapp):
+    from unittest.mock import patch
+    w = gui_qt.MalphasQtWindow()  # book=None -> save-label step is skipped
+    with patch.object(QtWidgets.QInputDialog, "getText", return_value=("", False)):
+        w._handle_event(("connect_result", True, _INVITE_DATA))
+    assert w.active == "a" * 40   # success → conversation opened
+    w.close()

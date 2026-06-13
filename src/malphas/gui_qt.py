@@ -545,6 +545,10 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         self._status_rows: dict[int, BubbleRow] = {}
         self._sent_msgid: dict[str, int] = {}
         self._send_seq = 0
+        # "Connecting…" progress dialog shown during a (slow, Tor) connect so
+        # the import doesn't freeze the Qt thread. Cleared when the connect
+        # result event arrives.
+        self._connect_dialog: QtWidgets.QProgressDialog | None = None
 
         self.setWindowTitle("malphas")
         self.resize(1240, 800)
@@ -1249,6 +1253,8 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             label = self._label_for(from_id)
             self._add_message(from_id, from_id, content, is_self=False,
                                 sender_label=label)
+        elif kind == "connect_result":
+            self._finish_import(ev[1], ev[2])
         elif kind == "send_done":
             # send_message returned: msg_id => went on the wire, None => failed
             status_key, mid = ev[1], ev[2]
@@ -1426,6 +1432,21 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         if ok != QtWidgets.QMessageBox.StandardButton.Yes:
             return
 
+        # Non-blocking connect. The old code did future.result(timeout=35)
+        # which froze the Qt thread for the whole (slow, over-Tor) connect —
+        # hence "python3 not responding". Now we show an indeterminate
+        # "Connecting…" dialog and resolve via the bridge future's callback,
+        # which posts a connect_result event onto the Qt thread.
+        dlg = QtWidgets.QProgressDialog("Connecting to peer…", "", 0, 0, self)
+        dlg.setWindowTitle("Import invite")
+        dlg.setCancelButton(None)
+        dlg.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.show()
+        self._connect_dialog = dlg
+
         async def _connect() -> bool:
             host = data.get("onion") or data["host"]
             port = 80 if "onion" in data else data["port"]
@@ -1434,22 +1455,30 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
                 bytes.fromhex(data["x25519_pub"]),
                 bytes.fromhex(data["ed25519_pub"]))
 
-        future = self.bridge.submit_coro(_connect())
-        try:
-            success = future.result(timeout=35.0)
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(
-                self, "Connection failed", str(e))
-            return
-        if not success:
+        fut = self.bridge.submit_coro(_connect())
+
+        def _done(f: Any) -> None:
+            try:
+                connected = bool(f.result())
+            except Exception:
+                connected = False
+            self.event_queue.put(("connect_result", connected, data))
+        fut.add_done_callback(_done)
+
+    def _finish_import(self, connected: bool, data: dict) -> None:
+        """Runs on the Qt thread once a connect attempt resolves."""
+        dlg = self._connect_dialog
+        self._connect_dialog = None
+        if dlg is not None:
+            dlg.close()
+        if not connected:
             QtWidgets.QMessageBox.critical(
                 self, "Connection failed", "Could not reach the peer.")
             return
-
         label, ok2 = QtWidgets.QInputDialog.getText(
             self, "Save to address book",
             "Label (leave empty to skip):")
-        if ok2 and label.strip():
+        if ok2 and label.strip() and self.book is not None:
             save_host = data.get("onion", data["host"])
             save_port = 80 if "onion" in data else data["port"]
             self.book.add(Contact(
