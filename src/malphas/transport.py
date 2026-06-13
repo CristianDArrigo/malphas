@@ -365,21 +365,29 @@ class TorTransport(BaseTransport):
                     timeout=5,
                 )  # torrc already configured by setup.sh
 
-            # Reload Tor to pick up the key files.
+            # RESTART Tor to pick up the key files — not reload. A reload
+            # (SIGHUP) re-reads torrc but does NOT reliably re-load the v3
+            # onion key of an already-registered HiddenServiceDir when the
+            # key files on disk have changed (e.g. a different identity now
+            # owns this dir). The result is an onion whose descriptor never
+            # publishes / is unreachable. A full restart makes Tor re-read
+            # the dir from scratch and publish the current onion.
             prefix = [] if os.getuid() == 0 else ["sudo", "-n"]
             try:
                 subprocess.run(
-                    prefix + ["systemctl", "reload", "tor@default"],
-                    capture_output=True, timeout=10,
+                    prefix + ["systemctl", "restart", "tor@default"],
+                    capture_output=True, timeout=15,
                 )
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 try:
                     subprocess.run(
-                        prefix + ["systemctl", "reload", "tor"],
-                        capture_output=True, timeout=10,
+                        prefix + ["systemctl", "restart", "tor"],
+                        capture_output=True, timeout=15,
                     )
                 except Exception:
-                    # Fallback: send SIGHUP directly to Tor process
+                    # Last-resort fallback (no systemctl): SIGHUP. This only
+                    # reloads config and may NOT pick up changed HS keys —
+                    # such hosts need a manual `tor` restart.
                     try:
                         subprocess.run(
                             prefix + ["killall", "-HUP", "tor"],
