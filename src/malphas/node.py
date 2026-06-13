@@ -522,6 +522,24 @@ class MalphasNode:
             if conn.authenticated
         }
 
+    async def forget_peer(self, peer_id: str) -> None:
+        """Disconnect and fully forget a peer.
+
+        Closes the live connection, drops the peer from the routing/discovery
+        table (so it can no longer be picked as a relay or a circuit
+        destination), cancels any pending reconnect, and discards queued
+        messages for it. The encrypted address-book entry is the caller's
+        responsibility (it lives outside the node).
+        """
+        conn = self._connections.pop(peer_id, None)
+        if conn is not None:
+            conn.close()
+        self.discovery.table.remove(peer_id)
+        task = self._reconnect_tasks.pop(peer_id, None)
+        if task is not None:
+            task.cancel()
+        self._message_queue.pop(peer_id, None)
+
     async def _try_send(self, dest_peer_id: str, content: str, msg_id: str) -> bool:
         """Attempt to send a message immediately. Returns True if sent."""
         try:

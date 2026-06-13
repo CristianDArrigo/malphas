@@ -203,3 +203,94 @@ def test_add_message_to_inactive_marks_unread(qapp):
     w._add_message("bob", "bob", "psst", is_self=False, sender_label="bob")
     assert "bob" in w.unread
     w.close()
+
+
+# ── Delivery-status checkmarks ───────────────────────────────────────────────
+
+def test_ts_html_maps_status_to_glyph():
+    assert gui_qt._ts_html("10:00", None) == "10:00"
+    assert "✓" in gui_qt._ts_html("10:00", "sent")
+    read = gui_qt._ts_html("10:00", "read")
+    assert "✓✓" in read and "#34b7f1" in read   # double check, WhatsApp blue
+    assert "✕" in gui_qt._ts_html("10:00", "failed")
+
+
+def test_bubble_row_status_updates_in_place(qapp):
+    row = gui_qt.BubbleRow("hi", "10:00", side="you", status="sent")
+    assert row._status_label is not None
+    assert "✓" in row._status_label.text()
+    row.set_status("read")
+    assert "✓✓" in row._status_label.text()
+    assert "#34b7f1" in row._status_label.text()
+
+
+def test_send_status_flow_pending_sent_read(qapp):
+    w = gui_qt.MalphasQtWindow()
+    w.active = "alice"
+    # mimic _on_send having queued an outgoing message with status_key 0
+    w._msg_status[0] = "pending"
+    w._add_message("alice", "you", "hi", is_self=True,
+                    sender_label="you", status_key=0)
+    assert 0 in w._status_rows  # live row registered
+
+    # send_message returned a msg_id -> "sent"
+    w._handle_event(("send_done", 0, "mid-123"))
+    assert w._msg_status[0] == "sent"
+    assert w._sent_msgid["mid-123"] == 0
+
+    # read receipt arrives -> "read"
+    w._handle_event(("receipt", "mid-123", "alice", True))
+    assert w._msg_status[0] == "read"
+    w.close()
+
+
+def test_receipt_no_longer_adds_system_block(qapp):
+    # The old invasive "delivered" system message must be gone.
+    w = gui_qt.MalphasQtWindow()
+    w.active = "alice"
+    w._msg_status[0] = "sent"
+    w._sent_msgid["mid-x"] = 0
+    w._add_message("alice", "you", "hi", is_self=True,
+                    sender_label="you", status_key=0)
+    before = len(w.conversations["alice"])
+    w._handle_event(("receipt", "mid-x", "alice", True))
+    # No new conversation event (no "sys" block appended).
+    assert len(w.conversations["alice"]) == before
+    assert all(ev[0] != "sys" for ev in w.conversations["alice"])
+    w.close()
+
+
+def test_send_failure_marks_failed(qapp):
+    w = gui_qt.MalphasQtWindow()
+    w.active = "alice"
+    w._msg_status[0] = "pending"
+    w._add_message("alice", "you", "hi", is_self=True,
+                    sender_label="you", status_key=0)
+    w._handle_event(("send_done", 0, None))   # send_message returned None
+    assert w._msg_status[0] == "failed"
+    w.close()
+
+
+# ── Hide / delete chat (sidebar context menu) ────────────────────────────────
+
+def test_hide_chat_drops_conversation(qapp):
+    w = gui_qt.MalphasQtWindow()
+    w.active = "alice"
+    w._add_message("alice", "alice", "ciao", is_self=False, sender_label="alice")
+    assert "alice" in w.conversations
+    w._hide_chat("alice")
+    assert "alice" not in w.conversations
+    assert w.active is None
+
+
+def test_delete_contact_clears_conversation(qapp):
+    from unittest.mock import patch
+    w = gui_qt.MalphasQtWindow()  # node=None, book=None -> only UI cleanup runs
+    w.active = "alice"
+    w._add_message("alice", "alice", "ciao", is_self=False, sender_label="alice")
+    yes = QtWidgets.QMessageBox.StandardButton.Yes
+    with patch.object(QtWidgets.QMessageBox, "question", return_value=yes):
+        w._delete_contact("alice")
+    assert "alice" not in w.conversations
+    assert w.active is None
+    w.close()

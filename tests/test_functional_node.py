@@ -310,3 +310,25 @@ class TestNodeLifecycle:
         )
         await node.stop()
         assert node.discovery.all_peers() == []
+
+
+class TestForgetPeer:
+    async def test_forget_disconnects_and_removes_from_routing(
+        self, node_a, node_b, identity_b
+    ):
+        ok = await node_a.connect_to_peer(
+            "127.0.0.1", 17778, identity_b.peer_id,
+            identity_b.x25519_pub_bytes, identity_b.ed25519_pub_bytes)
+        assert ok
+        assert identity_b.peer_id in node_a._connections
+        assert node_a.discovery.get_peer(identity_b.peer_id) is not None
+
+        await node_a.forget_peer(identity_b.peer_id)
+
+        # connection closed + dropped, and the peer is gone from routing so
+        # it can no longer be selected as a relay or circuit destination.
+        assert identity_b.peer_id not in node_a._connections
+        assert node_a.discovery.get_peer(identity_b.peer_id) is None
+
+    async def test_forget_unknown_peer_is_noop(self, node_a):
+        await node_a.forget_peer("f" * 40)   # must not raise

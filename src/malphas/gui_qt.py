@@ -49,6 +49,26 @@ def _ts() -> str:
     return time.strftime("%H:%M")
 
 
+# Per-message delivery status glyphs (WhatsApp-style), shown on outgoing
+# bubbles. "read" uses a literal WhatsApp blue (the app accent is red, so a
+# theme token would be ambiguous here).
+_STATUS_GLYPH = {
+    "pending": ("🕓", T.FG_FAINT),
+    "sent":    ("✓",  T.FG_FAINT),
+    "read":    ("✓✓", "#34b7f1"),
+    "failed":  ("✕",  T.ACCENT),
+}
+
+
+def _ts_html(ts: str, status: str | None) -> str:
+    """Timestamp line, optionally followed by a coloured status glyph."""
+    info = _STATUS_GLYPH.get(status or "")
+    if info is None:
+        return ts
+    glyph, color = info
+    return f'{ts}&nbsp;&nbsp;<span style="color:{color}">{glyph}</span>'
+
+
 def _avatar_color(peer_id: str) -> str:
     h = hashlib.blake2s(peer_id.encode("utf-8"), digest_size=4).digest()
     idx = int.from_bytes(h, "big") % len(AVATAR_PALETTE)
@@ -420,8 +440,12 @@ class BubbleRow(QtWidgets.QFrame):
         sender: str | None = None,
         avatar_key: str | None = None,
         parent: QtWidgets.QWidget | None = None,
+        status: str | None = None,
     ) -> None:
         super().__init__(parent)
+        self._status = status
+        self._ts = ts
+        self._status_label: QtWidgets.QLabel | None = None
         outer = QtWidgets.QHBoxLayout(self)
         outer.setContentsMargins(T.PAD_LG, 4, T.PAD_LG, 4)
         outer.setSpacing(T.PAD_SM)
@@ -472,10 +496,20 @@ class BubbleRow(QtWidgets.QFrame):
                  else QtCore.Qt.AlignmentFlag.AlignLeft)
         v.addWidget(bubble, 0, align)
 
-        ts_lbl = QtWidgets.QLabel(ts)
+        ts_lbl = QtWidgets.QLabel()
         ts_lbl.setObjectName("BubbleTimestamp")
+        ts_lbl.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        ts_lbl.setText(_ts_html(ts, self._status if side == "you" else None))
         v.addWidget(ts_lbl, 0, align)
+        if side == "you":
+            self._status_label = ts_lbl
         return v
+
+    def set_status(self, status: str) -> None:
+        """Update the delivery-status glyph on an outgoing bubble in place."""
+        self._status = status
+        if self._status_label is not None:
+            self._status_label.setText(_ts_html(self._ts, status))
 
 
 # ── Main window ─────────────────────────────────────────────────────────────
@@ -503,6 +537,14 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         # key on the item via Qt's UserRole instead.
         self._SIDEBAR_KEY_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 1
         self._pending_offers: dict[str, tuple[str, dict]] = {}
+        # Per-outgoing-message delivery status. status_key is a local counter
+        # stable across conversation re-renders; _status_rows maps it to the
+        # live BubbleRow widget; _sent_msgid maps the wire msg_id back to the
+        # status_key so an inbound receipt can flip the bubble to "read".
+        self._msg_status: dict[int, str] = {}
+        self._status_rows: dict[int, BubbleRow] = {}
+        self._sent_msgid: dict[str, int] = {}
+        self._send_seq = 0
 
         self.setWindowTitle("malphas")
         self.resize(1240, 800)
@@ -641,6 +683,9 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         self.peers.setObjectName("PeerList")
         self.peers.setUniformItemSizes(False)
         self.peers.itemClicked.connect(self._on_peer_clicked)
+        self.peers.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.peers.customContextMenuRequested.connect(self._on_peer_menu)
         v.addWidget(self.peers, 1)
 
         # Bottom action row
@@ -914,6 +959,57 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         if key:
             self._select(key)
 
+    def _on_peer_menu(self, pos: QtCore.QPoint) -> None:
+        item = self.peers.itemAt(pos)
+        if item is None:
+            return
+        key = item.data(self._SIDEBAR_KEY_ROLE)
+        if not key:
+            return
+        is_group = (self.node is not None
+                    and self.node._groups.get_by_id(key) is not None)
+        menu = QtWidgets.QMenu(self)
+        act_hide = menu.addAction("Hide chat")
+        act_delete = None if is_group else menu.addAction("Delete contact")
+        chosen = menu.exec(self.peers.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen is act_hide:
+            self._hide_chat(key)
+        elif chosen is act_delete:
+            self._delete_contact(key)
+
+    def _hide_chat(self, key: str) -> None:
+        """Drop the conversation from the UI; keep contact/connection/routing."""
+        self.conversations.pop(key, None)
+        self.unread.discard(key)
+        if self.active == key:
+            self.active = None
+            self._redraw_conv_header()
+            self._redraw_chat()
+        self._refresh_sidebar()
+
+    def _delete_contact(self, key: str) -> None:
+        """Disconnect, forget routing, drop from the address book + UI."""
+        label = self._label_for(key)
+        confirm = QtWidgets.QMessageBox.question(
+            self, "Delete contact",
+            f"Delete {label}?\n\nThis disconnects the peer, removes it from "
+            "routing/discovery, and deletes it from your address book.")
+        if confirm != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        if self.node is not None and self.bridge is not None:
+            self.bridge.submit_coro(self.node.forget_peer(key))
+        if self.book is not None:
+            self.book.remove_by_peer_id(key)
+        self.conversations.pop(key, None)
+        self.unread.discard(key)
+        if self.active == key:
+            self.active = None
+            self._redraw_conv_header()
+            self._redraw_chat()
+        self._refresh_sidebar()
+
     # ── Selection / chat ────────────────────────────────────────────────────
 
     def _select(self, key: str) -> None:
@@ -976,7 +1072,9 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         self.conv_sub.setText(sub)
 
     def _redraw_chat(self) -> None:
-        # Wipe chat layout
+        # Wipe chat layout. The BubbleRow widgets are about to be destroyed,
+        # so drop the live-status references; _render_event repopulates them.
+        self._status_rows.clear()
         while self.chat_layout.count():
             it = self.chat_layout.takeAt(0)
             w = it.widget()
@@ -1019,21 +1117,35 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
     def _render_event(self, ev: tuple) -> None:
         kind = ev[0]
         if kind == "msg":
-            _, sender, text, is_self, sender_label = ev
+            _, sender, text, is_self, sender_label = ev[:5]
+            status_key = ev[5] if len(ev) > 5 else None
+            status = (self._msg_status.get(status_key)
+                      if status_key is not None else None)
             side = "you" if is_self else "them"
             avatar_key = sender if not is_self else None
             row = BubbleRow(text, _ts(), side=side,
                               sender=sender_label if not is_self else None,
-                              avatar_key=avatar_key)
+                              avatar_key=avatar_key, status=status)
             self.chat_layout.addWidget(row)
+            if status_key is not None:
+                self._status_rows[status_key] = row
         elif kind == "sys":
             _, text = ev
             row = BubbleRow(text, "", side="sys")
             self.chat_layout.addWidget(row)
 
+    def _set_msg_status(self, status_key: int, status: str) -> None:
+        """Update an outgoing message's delivery status (model + live row)."""
+        self._msg_status[status_key] = status
+        row = self._status_rows.get(status_key)
+        if row is not None:
+            row.set_status(status)
+
     def _add_message(self, key: str, sender_id: str, text: str,
-                      is_self: bool, sender_label: str | None = None) -> None:
-        ev = ("msg", sender_id, text, is_self, sender_label or sender_id)
+                      is_self: bool, sender_label: str | None = None,
+                      status_key: int | None = None) -> None:
+        ev = ("msg", sender_id, text, is_self, sender_label or sender_id,
+              status_key)
         self.conversations.setdefault(key, []).append(ev)
         if key == self.active:
             # Always follow your own outgoing messages; for incoming
@@ -1073,11 +1185,26 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             self._add_message(self.active, "you", text, is_self=True,
                                 sender_label="you")
         else:
+            peer = self.active
+            status_key = self._send_seq
+            self._send_seq += 1
+            self._msg_status[status_key] = "pending"
+            self._add_message(peer, "you", text, is_self=True,
+                                sender_label="you", status_key=status_key)
+
             async def _send_peer() -> str | None:
-                return await self.node.send_message(self.active, text)
-            self.bridge.submit_coro(_send_peer())
-            self._add_message(self.active, "you", text, is_self=True,
-                                sender_label="you")
+                return await self.node.send_message(peer, text)
+            fut = self.bridge.submit_coro(_send_peer())
+
+            def _done(f: Any, sk: int = status_key) -> None:
+                # Runs on the asyncio thread; hand off to the Qt thread via
+                # the event queue (drained by _drain_events).
+                try:
+                    mid = f.result()
+                except Exception:
+                    mid = None
+                self.event_queue.put(("send_done", sk, mid))
+            fut.add_done_callback(_done)
 
     # ── Event drain ─────────────────────────────────────────────────────────
 
@@ -1122,10 +1249,20 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             label = self._label_for(from_id)
             self._add_message(from_id, from_id, content, is_self=False,
                                 sender_label=label)
+        elif kind == "send_done":
+            # send_message returned: msg_id => went on the wire, None => failed
+            status_key, mid = ev[1], ev[2]
+            if mid:
+                self._sent_msgid[mid] = status_key
+                self._set_msg_status(status_key, "sent")
+            else:
+                self._set_msg_status(status_key, "failed")
         elif kind == "receipt":
-            ok = ev[3]
-            self._add_system(ev[2],
-                              "delivered" if ok else "no receipt")
+            # Read receipt arrived → flip the bubble's checkmark to read.
+            mid, ok = ev[1], ev[3]
+            sk = self._sent_msgid.get(mid)
+            if sk is not None and ok:
+                self._set_msg_status(sk, "read")
         elif kind == "pin_violation":
             QtWidgets.QMessageBox.critical(
                 self, "Key mismatch",
