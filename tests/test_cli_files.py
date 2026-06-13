@@ -205,6 +205,17 @@ class TestSavefile:
         await cli._cmd_savefile([fid, str(tmp_path)])
         assert (tmp_path / "report.pdf").read_bytes() == b"PDFDATA"
 
+    async def test_savefile_defaults_to_home(self, monkeypatch, tmp_path):
+        # /savefile <id> with NO path saves to ~/<original name>.
+        node = _mock_node()
+        cli = MalphasCLI(node, _mock_book())
+        cli._ok = MagicMock()
+        monkeypatch.setenv("HOME", str(tmp_path))
+        fid = "deadc0de" * 4
+        cli._completed_files[fid] = ("alice", "codes.txt", b"abc")
+        await cli._cmd_savefile([fid])   # no path argument
+        assert (tmp_path / "codes.txt").read_bytes() == b"abc"
+
     async def test_savefile_expands_tilde(self, monkeypatch, tmp_path):
         # Regression: ~ must be expanded (open() does not do it).
         node = _mock_node()

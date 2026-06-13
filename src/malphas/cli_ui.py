@@ -297,7 +297,7 @@ class MalphasCLI:
             ("/sendfile <peer> <path>", "send a file to a peer (32 KB chunks, 100 MB cap)"),
             ("/accept <file_id>", "accept a pending incoming file"),
             ("/reject <file_id>", "reject a pending incoming file"),
-            ("/savefile <file_id> <path>", "write a completed file to disk"),
+            ("/savefile <file_id> [path]", "write a completed file to disk (default ~/)"),
             ("/files", "list pending and completed file transfers"),
             ("/quit", "shutdown"),
             ("<text>", "send message to active conversation"),
@@ -710,10 +710,13 @@ class MalphasCLI:
         self._ok(f"rejected {fid[:16]}")
 
     async def _cmd_savefile(self, args: list) -> None:
-        if len(args) < 2:
-            self._err("usage: /savefile <file_id> <path>")
+        if not args:
+            self._err("usage: /savefile <file_id> [path]   (path defaults to ~/)")
             return
-        out_path = os.path.expanduser(" ".join(args[1:]))
+        # Path is optional: default to the home directory, which (being a
+        # directory) saves under the file's original name below.
+        raw_path = " ".join(args[1:]) if len(args) > 1 else "~/"
+        out_path = os.path.expanduser(raw_path)
         fid = self._resolve_file_id(args[0], self._completed_files)
         if fid is None:
             self._err(f"no completed file with id {args[0]}")
@@ -952,7 +955,7 @@ class MalphasCLI:
             f"  \033[32m*** received {name} ({len(data)} bytes) from {label}\033[0m"
         )
         self._plain(
-            f"  \033[32m*** /savefile {file_id[:16]} <path>  to write to disk ***\033[0m"
+            f"  \033[32m*** /savefile {file_id[:16]} [path]  (path defaults to ~/) ***\033[0m"
         )
 
     async def _auto_connect(self) -> None:
