@@ -175,6 +175,7 @@ class PeerDiscovery:
         self,
         dest_id: str,
         hops: int = 3,
+        relay_pool: set[str] | None = None,
     ) -> list[tuple[bytes, str]]:
         """
         Select a circuit of (x25519_pub, peer_id) tuples.
@@ -195,6 +196,17 @@ class PeerDiscovery:
             p for p in self.table.all_peers()
             if p.peer_id != self._my_id and p.peer_id != dest_id
         ]
+
+        # Only relay through peers we actually have a live connection to.
+        # The first hop of the circuit is sent over an EXISTING connection
+        # (node looks it up in self._connections); a relay we aren't
+        # connected to as first hop means the send silently fails and the
+        # message is dropped. When `relay_pool` is given (the set of
+        # connected, authenticated peer_ids), filter candidates to it — so
+        # with no usable relays the circuit degrades to a direct hop to the
+        # destination, which is the common 1:1 case.
+        if relay_pool is not None:
+            candidates = [p for p in candidates if p.peer_id in relay_pool]
 
         import secrets as _secrets
         rng = _secrets.SystemRandom()

@@ -303,3 +303,42 @@ class TestIdentityBinding:
             assert ok is False
         finally:
             await liar.stop()
+
+
+# ── Onion circuit must only relay through CONNECTED peers ─────────────────────
+
+class TestRelayCircuitConnectivity:
+    async def test_delivery_with_extra_unconnected_peer(
+        self, node_a, node_b, identity_b
+    ):
+        # Regression: when the sender knows a peer it is NOT connected to,
+        # select_relay_circuit must not put it as the first hop — the first
+        # hop is sent over an existing connection, so an unconnected relay
+        # silently drops the message (it was enqueued, send_message returned
+        # a msg_id, but nothing was delivered). With no connected relays the
+        # circuit must degrade to a direct hop to the destination.
+        import os
+
+        received: list = []
+
+        async def _on_msg(f, c):
+            received.append((f, c))
+        node_b.on_message(_on_msg)
+        ok = await node_a.connect_to_peer(
+            "127.0.0.1", 17778, identity_b.peer_id,
+            identity_b.x25519_pub_bytes, identity_b.ed25519_pub_bytes)
+        assert ok is True
+
+        # The trigger: a peer we know but are NOT connected to.
+        node_a.discovery.add_peer(
+            "f" * 40, "127.0.0.1", 9999, os.urandom(32), os.urandom(32))
+
+        # The relay pool must contain only the connected peer, so the chosen
+        # circuit is direct (just the destination).
+        circuit = node_a.discovery.select_relay_circuit(
+            identity_b.peer_id, hops=3, relay_pool=node_a._relay_pool())
+        assert [c[1] for c in circuit] == [identity_b.peer_id]
+
+        await node_a.send_message(identity_b.peer_id, "regression-multipeer")
+        await asyncio.sleep(0.4)
+        assert any(c == "regression-multipeer" for _, c in received), received

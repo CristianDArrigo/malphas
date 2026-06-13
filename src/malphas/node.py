@@ -510,10 +510,23 @@ class MalphasNode:
 
         return None
 
+    def _relay_pool(self) -> set[str]:
+        """peer_ids we have a live, authenticated connection to.
+
+        Onion circuits may only relay through these: the first hop is sent
+        over an existing connection, so relaying through a peer we aren't
+        connected to silently drops the message.
+        """
+        return {
+            pid for pid, conn in self._connections.items()
+            if conn.authenticated
+        }
+
     async def _try_send(self, dest_peer_id: str, content: str, msg_id: str) -> bool:
         """Attempt to send a message immediately. Returns True if sent."""
         try:
-            circuit = self.discovery.select_relay_circuit(dest_peer_id, hops=3)
+            circuit = self.discovery.select_relay_circuit(
+                dest_peer_id, hops=3, relay_pool=self._relay_pool())
         except ValueError:
             return False
 
@@ -621,7 +634,8 @@ class MalphasNode:
 
         # Route back to sender if we have them in routing table
         try:
-            circuit = self.discovery.select_relay_circuit(from_id, hops=3)
+            circuit = self.discovery.select_relay_circuit(
+                from_id, hops=3, relay_pool=self._relay_pool())
         except ValueError:
             return
 
@@ -1404,7 +1418,8 @@ class MalphasNode:
         it through a freshly selected circuit.
         """
         try:
-            circuit = self.discovery.select_relay_circuit(dest_peer_id, hops=3)
+            circuit = self.discovery.select_relay_circuit(
+                dest_peer_id, hops=3, relay_pool=self._relay_pool())
         except ValueError:
             return False
 
