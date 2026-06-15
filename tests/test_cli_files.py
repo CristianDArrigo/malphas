@@ -227,6 +227,31 @@ class TestSavefile:
         await cli._cmd_savefile([fid, "~/out.bin"])
         assert (tmp_path / "out.bin").read_bytes() == b"hi"
 
+    def test_safe_strips_terminal_escapes(self):
+        # Peer content must not carry control chars into the ANSI renderer.
+        s = MalphasCLI._safe("a\x1b[31mB\x07\x7fc")
+        assert s == "a[31mBc"   # ESC/BEL/DEL gone; printables kept literally
+        for ch in ("\x1b", "\x07", "\x7f"):
+            assert ch not in s
+
+    async def test_on_message_sanitizes_injected_escapes(self):
+        cli = MalphasCLI(_mock_node(), _mock_book())
+        out: list = []
+        cli._plain = lambda m: out.append(m)
+        cli.active_peer = "a" * 40
+        # BEL (0x07) is never emitted by the app, so its absence proves the
+        # peer-supplied content was stripped before reaching ANSI().
+        await cli._on_message("a" * 40, "ciao\x07\x1b]0;pwn\x07there")
+        assert out and "\x07" not in out[0] and "there" in out[0]
+
+    async def test_on_group_message_sanitizes(self):
+        cli = MalphasCLI(_mock_node(), _mock_book())
+        out: list = []
+        cli._plain = lambda m: out.append(m)
+        cli.active_peer = "g1"
+        await cli._on_group_message("a" * 40, "g1", "grp\x07name", "hi\x07x")
+        assert out and "\x07" not in out[0]
+
     async def test_on_file_complete_recovers_accepted_name(self):
         # Regression: the received file kept the real name, not "file.bin"
         # (the accepted offer was dropped from _pending_offers on /accept).

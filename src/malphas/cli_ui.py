@@ -199,10 +199,23 @@ class MalphasCLI:
         """Print with ANSI colors, compatible with prompt_toolkit."""
         ptk_print(ANSI(msg))
 
+    @staticmethod
+    def _safe(text: str) -> str:
+        """Strip control characters from peer-supplied text before display.
+
+        The CLI renders through prompt_toolkit's ANSI(), which interprets
+        terminal escape sequences — so an incoming message/group name
+        containing ESC codes could inject colour/style (impersonating a
+        system line or another user) or worse. Drop everything below 0x20
+        and DEL; keep all printable characters.
+        """
+        return "".join(c for c in str(text) if c >= " " and c != "\x7f")
+
     async def _on_message(self, from_id: str, content: str) -> None:
         contact = self.book.get_by_peer_id(from_id)
         label = contact.label if contact else from_id[:8]
         ts = time.strftime("%H:%M")
+        content = self._safe(content)
 
         if from_id == self.active_peer:
             self._plain(f"  \033[90m{ts}\033[0m \033[31m{label}\033[0m  {content}")
@@ -271,12 +284,13 @@ class MalphasCLI:
             return
         for m in msgs:
             ts = time.strftime("%H:%M", time.localtime(m["timestamp"]))
+            body = self._safe(m["content"])
             if m["from_peer"] == self.node.identity.peer_id:
-                self._plain(f"  \033[90m{ts}  you\033[0m  {m['content']}")
+                self._plain(f"  \033[90m{ts}  you\033[0m  {body}")
             else:
                 contact = self.book.get_by_peer_id(m["from_peer"])
                 name = contact.label if contact else m["from_peer"][:8]
-                self._plain(f"  \033[90m{ts}\033[0m \033[31m{name}\033[0m  {m['content']}")
+                self._plain(f"  \033[90m{ts}\033[0m \033[31m{name}\033[0m  {body}")
 
     def _print_help(self):
         cmds = [
@@ -864,6 +878,7 @@ class MalphasCLI:
                                group_name: str, members: list) -> None:
         contact = self.book.get_by_peer_id(from_id)
         from_label = contact.label if contact else from_id[:8]
+        group_name = self._safe(group_name)
         self._plain(
             f"  \033[36m*** {from_label} added you to group '{group_name}' "
             f"({len(members)} members) ***\033[0m"
@@ -877,6 +892,8 @@ class MalphasCLI:
         contact = self.book.get_by_peer_id(from_id)
         from_label = contact.label if contact else from_id[:8]
         ts = time.strftime("%H:%M")
+        group_name = self._safe(group_name)
+        content = self._safe(content)
         if self.active_peer == group_id or self.active_peer == group_name:
             self._plain(
                 f"  \033[90m{ts}\033[0m  \033[36m[{group_name}]\033[0m  "
