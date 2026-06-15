@@ -10,20 +10,26 @@ from __future__ import annotations
 
 # ── Palette ──────────────────────────────────────────────────────────────────
 
-BG_BASE     = "#1f2129"
-BG_SURFACE  = "#262932"
-BG_RAISED   = "#30333d"
-BG_HOVER    = "#3d4150"
-BG_ACTIVE   = "#4a2630"
-BG_DIVIDER  = "#3a3d47"
+# Elevation ladder — each surface sits one perceptible step above the one
+# below it, so depth reads from tone rather than from hard 1px borders.
+#   BG_BASE   chat canvas (deepest)
+#   BG_SURFACE chrome: sidebar / header / input bar
+#   BG_RAISED  inputs, cards, "them" bubbles
+#   BG_HOVER / BG_ACTIVE  interactive states
+BG_BASE     = "#15171d"
+BG_SURFACE  = "#1d2027"
+BG_RAISED   = "#272b34"
+BG_HOVER    = "#333845"
+BG_ACTIVE   = "#3a2026"
+BG_DIVIDER  = "#23262e"
 
-BUBBLE_THEM = "#363944"
-BUBBLE_YOU  = "#7a2828"
-BUBBLE_SYS  = "#2a2c35"
+BUBBLE_THEM = "#272b34"
+BUBBLE_YOU  = "#8f2f30"
+BUBBLE_SYS  = "#242833"
 
-FG_PRIMARY  = "#f0f0f2"
-FG_MUTED    = "#b0b2bb"
-FG_FAINT    = "#7a7d88"
+FG_PRIMARY  = "#f1f1f4"
+FG_MUTED    = "#aab0bd"
+FG_FAINT    = "#737783"
 
 ACCENT      = "#d23a3a"
 ACCENT_DIM  = "#7a2222"

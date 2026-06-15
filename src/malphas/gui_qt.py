@@ -35,9 +35,13 @@ if TYPE_CHECKING:
 
 GITHUB_URL = "https://github.com/CristianDArrigo/malphas"
 
+# Muted, earthy palette tuned to sit beside the red "tactical" accent —
+# warm-dominant with a few desaturated cool tones for variety, all at a
+# similar saturation/lightness so a roomful of avatars feels cohesive
+# rather than like a default rainbow.
 AVATAR_PALETTE = [
-    "#c44e4e", "#c47e4e", "#c4a44e", "#7eb84e", "#4eb88a",
-    "#4e9bc4", "#4e72c4", "#7e4ec4", "#b84e9b", "#b8584e",
+    "#b8524a", "#c07d4a", "#a8924e", "#7a9456", "#4e9e84",
+    "#5688a6", "#7b6fa8", "#a85f86", "#9c5a4e", "#6f7c8c",
 ]
 
 
@@ -222,37 +226,43 @@ def _qss() -> str:
     }}
 
     QLabel#BubbleThem {{
-        background-color: {T.BUBBLE_THEM};
+        background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #30343f, stop:1 {T.BUBBLE_THEM});
         color: {T.FG_PRIMARY};
-        padding: 10px 15px;
-        border-radius: 16px;
-        border-bottom-left-radius: 4px;
-        border: 1px solid {T.BG_DIVIDER};
+        padding: 12px 17px;
+        border-radius: 20px;
+        border-bottom-left-radius: 6px;
     }}
     QLabel#BubbleYou {{
-        background-color: {T.BUBBLE_YOU};
-        color: {T.FG_PRIMARY};
-        padding: 10px 15px;
-        border-radius: 16px;
-        border-bottom-right-radius: 4px;
-        border: 1px solid #8a3232;
+        background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #b5403f, stop:1 #7e2627);
+        color: #fdeceb;
+        padding: 12px 17px;
+        border-radius: 20px;
+        border-bottom-right-radius: 6px;
     }}
     QLabel#BubbleSys {{
         background-color: {T.BUBBLE_SYS};
         color: {T.FG_MUTED};
-        padding: 5px 14px;
-        border-radius: 12px;
+        padding: 6px 15px;
+        border-radius: 11px;
         font-style: italic;
         font-size: 9pt;
-        border: 1px solid {T.BG_DIVIDER};
     }}
     QLabel#BubbleTimestamp {{
         color: {T.FG_FAINT};
         font-size: 8pt;
     }}
+    QLabel#EmptyTitle {{
+        color: {T.FG_PRIMARY};
+        font-size: 17pt;
+        font-weight: 600;
+        background: transparent;
+    }}
     QLabel#EmptyHint {{
         color: {T.FG_FAINT};
         font-size: 11pt;
+        background: transparent;
     }}
 
     QFrame#InputRow {{
@@ -282,6 +292,25 @@ def _qss() -> str:
     }}
     QPushButton#AccentButton:hover {{
         background-color: {T.ACCENT_GLOW};
+    }}
+    /* Outline variant of the accent button — keeps the red identity as a
+       border rather than a filled block (lighter-weight primary action). */
+    QPushButton#AccentOutline {{
+        background-color: transparent;
+        color: #e8908e;
+        border: 1px solid {T.ACCENT_DIM};
+        border-radius: 10px;
+        padding: 8px 18px;
+        font-weight: 600;
+    }}
+    QPushButton#AccentOutline:hover {{
+        background-color: #3a1f1f;
+        border-color: {T.ACCENT};
+        color: #ff9a98;
+    }}
+    QPushButton#AccentOutline:pressed {{
+        background-color: {T.ACCENT_DIM};
+        color: {T.FG_PRIMARY};
     }}
     QPushButton#GhostIcon {{
         background-color: transparent;
@@ -378,9 +407,22 @@ def _qss() -> str:
         padding: 4px 8px;
     }}
 
-    /* QMessageBox / QInputDialog inherit from QDialog */
+    /* QMessageBox / QInputDialog inherit from QDialog. The min-width keeps
+       even terse modals (a one-word title, a short prompt) wide enough that
+       the window-title text isn't clipped. */
     QDialog {{
         background-color: {T.BG_BASE};
+        min-width: 360px;
+    }}
+    QLabel#DialogTitle {{
+        font-size: 14pt;
+        font-weight: 600;
+        color: {T.FG_PRIMARY};
+        background: transparent;
+    }}
+    QLabel#DialogPrompt {{
+        color: {T.FG_MUTED};
+        background: transparent;
     }}
     QDialog QLabel {{
         color: {T.FG_PRIMARY};
@@ -388,10 +430,13 @@ def _qss() -> str:
     QDialog QLineEdit {{
         background-color: {T.BG_RAISED};
         color: {T.FG_PRIMARY};
-        border: none;
-        border-radius: 6px;
-        padding: 6px 10px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 8px 12px;
         selection-background-color: {T.ACCENT};
+    }}
+    QDialog QLineEdit:focus {{
+        border: 1px solid {T.ACCENT_DIM};
     }}
     """
 
@@ -412,9 +457,19 @@ class Avatar(QtWidgets.QLabel):
         pm.fill(QtCore.Qt.GlobalColor.transparent)
         p = QtGui.QPainter(pm)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        p.setBrush(QtGui.QColor(_avatar_color(key)))
+        # Subtle top-to-bottom gradient gives the disc a little volume
+        # instead of reading as a flat sticker.
+        base = QtGui.QColor(_avatar_color(key))
+        grad = QtGui.QLinearGradient(0, 0, 0, size)
+        grad.setColorAt(0.0, base.lighter(118))
+        grad.setColorAt(1.0, base.darker(110))
+        p.setBrush(QtGui.QBrush(grad))
         p.setPen(QtCore.Qt.PenStyle.NoPen)
         p.drawEllipse(0, 0, size, size)
+        # Hairline highlight ring lifts the disc off the dark surface.
+        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 28), 1))
+        p.drawEllipse(1, 1, size - 2, size - 2)
         p.setPen(QtGui.QColor(T.FG_PRIMARY))
         font = p.font()
         font.setBold(True)
@@ -441,11 +496,15 @@ class BubbleRow(QtWidgets.QFrame):
         avatar_key: str | None = None,
         parent: QtWidgets.QWidget | None = None,
         status: str | None = None,
+        show_name: bool = True,
     ) -> None:
         super().__init__(parent)
         self._status = status
         self._ts = ts
         self._status_label: QtWidgets.QLabel | None = None
+        # `sender` always drives the avatar initial; `show_name` controls
+        # whether the name is *also* printed above the bubble (groups only).
+        name = sender if show_name else None
         outer = QtWidgets.QHBoxLayout(self)
         outer.setContentsMargins(T.PAD_LG, 4, T.PAD_LG, 4)
         outer.setSpacing(T.PAD_SM)
@@ -464,13 +523,13 @@ class BubbleRow(QtWidgets.QFrame):
 
         if side == "you":
             outer.addStretch()
-            stack = self._stack(text, ts, sender, side)
+            stack = self._stack(text, ts, name, side)
             outer.addLayout(stack, 0)
         else:
             if avatar_key:
                 outer.addWidget(Avatar(sender or "?", avatar_key, size=32),
                                  0, QtCore.Qt.AlignmentFlag.AlignTop)
-            stack = self._stack(text, ts, sender, side)
+            stack = self._stack(text, ts, name, side)
             outer.addLayout(stack, 0)
             outer.addStretch()
 
@@ -779,29 +838,68 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         self.chat_layout.setContentsMargins(0, T.PAD_MD, 0, T.PAD_MD)
         self.chat_layout.setSpacing(2)
 
-        # Empty-state stack
-        self.empty_widget = QtWidgets.QWidget()
-        ev = QtWidgets.QVBoxLayout(self.empty_widget)
-        ev.addStretch()
-        if self._sigil is not None:
-            sigil_lbl = QtWidgets.QLabel()
-            sigil_lbl.setPixmap(_sigil_with_halo(self._sigil, 200, pad=32))
-            sigil_lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            sigil_lbl.setStyleSheet("background: transparent;")
-            ev.addWidget(sigil_lbl)
-        hint = QtWidgets.QLabel("pick a peer or generate an invite to start")
-        hint.setObjectName("EmptyHint")
-        hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        ev.addWidget(hint)
-        ev.addStretch()
-        self.chat_layout.addWidget(self.empty_widget)
-        self.chat_layout.addStretch()
+        # Empty-state — rebuilt fresh each time it is shown (see
+        # _make_empty_state) so it is never a dangling deleteLater'd ref.
+        self.chat_layout.addWidget(self._make_empty_state(), 1)
 
         self.chat_scroll.setWidget(self.chat_viewport)
         v.addWidget(self.chat_scroll, 1)
 
         v.addWidget(self._build_input_row())
         return wrap
+
+    def _make_empty_state(self) -> QtWidgets.QWidget:
+        """A fresh, vertically-centred empty-state panel: sigil, headline,
+        a short reassuring subtitle, and the two actions a new user needs.
+
+        Rebuilt on every show (the chat layout wipes and recreates its
+        children each redraw), so it is never a deleteLater'd dangling ref.
+        """
+        box = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(box)
+        v.setContentsMargins(T.PAD_XL, T.PAD_XL, T.PAD_XL, T.PAD_XL)
+        v.setSpacing(T.PAD_MD)
+        v.addStretch()
+
+        if self._sigil is not None:
+            sig = QtWidgets.QLabel()
+            sig.setPixmap(_sigil_with_halo(self._sigil, 168, pad=30))
+            sig.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            sig.setStyleSheet("background: transparent;")
+            v.addWidget(sig)
+
+        title = QtWidgets.QLabel("Start a conversation")
+        title.setObjectName("EmptyTitle")
+        title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(title)
+
+        sub = QtWidgets.QLabel(
+            "Pick a contact on the left — or share an invite to add one.\n"
+            "Every message is end-to-end encrypted and routed over Tor.")
+        sub.setObjectName("EmptyHint")
+        sub.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        sub.setWordWrap(True)
+        v.addWidget(sub)
+
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(T.PAD_SM)
+        row.addStretch()
+        share = QtWidgets.QPushButton("Share invite")
+        share.setObjectName("AccentOutline")
+        share.setFixedHeight(40)
+        share.clicked.connect(self._action_export)
+        row.addWidget(share)
+        add = QtWidgets.QPushButton("Add contact")
+        add.setObjectName("SideAction")
+        add.setProperty("tone", "success")
+        add.setFixedHeight(40)
+        add.clicked.connect(self._action_import)
+        row.addWidget(add)
+        row.addStretch()
+        v.addLayout(row)
+
+        v.addStretch()
+        return box
 
     def _build_input_row(self) -> QtWidgets.QFrame:
         row = QtWidgets.QFrame()
@@ -1045,8 +1143,10 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
                 w.deleteLater()
 
         if not self.active:
+            # Header stays blank when nothing is selected — the centred
+            # empty-state panel already says "Start a conversation".
             self.conv_avatar_holder.setVisible(False)
-            self.conv_title.setText("No conversation selected")
+            self.conv_title.setText("")
             self.conv_sub.setText("")
             return
 
@@ -1097,8 +1197,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             del it
 
         if not self.active:
-            self.chat_layout.addWidget(self.empty_widget)
-            self.chat_layout.addStretch()
+            self.chat_layout.addWidget(self._make_empty_state(), 1)
             return
 
         for ev in self.conversations.get(self.active, []):
@@ -1137,9 +1236,15 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
                       if status_key is not None else None)
             side = "you" if is_self else "them"
             avatar_key = sender if not is_self else None
+            # The sender name only carries information in groups; in a 1:1
+            # the avatar already says who's talking, so repeating the name
+            # above every incoming bubble just reads as dated clutter.
+            in_group = (self.node is not None
+                        and self.node._groups.get_by_id(self.active) is not None)
             row = BubbleRow(text, _ts(), side=side,
-                              sender=sender_label if not is_self else None,
-                              avatar_key=avatar_key, status=status)
+                              sender=sender_label,
+                              avatar_key=avatar_key, status=status,
+                              show_name=(not is_self) and in_group)
             self.chat_layout.addWidget(row)
             if status_key is not None:
                 self._status_rows[status_key] = row
@@ -1489,18 +1594,22 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(
                 self, "Connection failed", "Could not reach the peer.")
             return
-        label, ok2 = QtWidgets.QInputDialog.getText(
-            self, "Save to address book",
-            "Label (leave empty to skip):")
-        if ok2 and label.strip() and self.book is not None:
-            save_host = data.get("onion", data["host"])
-            save_port = 80 if "onion" in data else data["port"]
-            self.book.add(Contact(
-                label=label.strip(), peer_id=data["peer_id"],
-                host=save_host, port=save_port,
-                x25519_pub=data["x25519_pub"],
-                ed25519_pub=data["ed25519_pub"]))
-            self._refresh_sidebar()
+        # Only prompt for a label when there's an address book to save into;
+        # otherwise there is nothing to do but open the conversation.
+        if self.book is not None:
+            label, ok2 = self._ask_text(
+                "Save to address book",
+                "Give this contact a label to save it (leave empty to skip).",
+                placeholder="e.g. raven")
+            if ok2 and label.strip():
+                save_host = data.get("onion", data["host"])
+                save_port = 80 if "onion" in data else data["port"]
+                self.book.add(Contact(
+                    label=label.strip(), peer_id=data["peer_id"],
+                    host=save_host, port=save_port,
+                    x25519_pub=data["x25519_pub"],
+                    ed25519_pub=data["ed25519_pub"]))
+                self._refresh_sidebar()
         self._select(data["peer_id"])
 
     def _action_send_file(self) -> None:
@@ -1676,11 +1785,63 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
                 self.bridge.stop(timeout=1.0)
             QtWidgets.QApplication.instance().quit()
 
+    def _ask_text(self, title: str, prompt: str, text: str = "",
+                  placeholder: str = "",
+                  ok_label: str = "OK") -> tuple[str, bool]:
+        """A roomy, on-theme text-input modal.
+
+        QInputDialog.getText renders a cramped box whose OS title bar often
+        clips the title; this shows the title *inside* the dialog and
+        enforces a sensible minimum width. Returns (text, accepted).
+        """
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(440)
+        v = QtWidgets.QVBoxLayout(dlg)
+        v.setContentsMargins(T.PAD_LG, T.PAD_LG, T.PAD_LG, T.PAD_MD)
+        v.setSpacing(T.PAD_MD)
+
+        head = QtWidgets.QLabel(title)
+        head.setObjectName("DialogTitle")
+        v.addWidget(head)
+
+        prompt_lbl = QtWidgets.QLabel(prompt)
+        prompt_lbl.setObjectName("DialogPrompt")
+        prompt_lbl.setWordWrap(True)
+        v.addWidget(prompt_lbl)
+
+        edit = QtWidgets.QLineEdit(text)
+        edit.setMinimumHeight(38)
+        if placeholder:
+            edit.setPlaceholderText(placeholder)
+        v.addWidget(edit)
+
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(T.PAD_SM)
+        row.addStretch()
+        cancel = QtWidgets.QPushButton("Cancel")
+        cancel.setFixedHeight(36)
+        cancel.clicked.connect(dlg.reject)
+        row.addWidget(cancel)
+        ok = QtWidgets.QPushButton(ok_label)
+        ok.setObjectName("AccentButton")
+        ok.setFixedHeight(36)
+        ok.setDefault(True)
+        ok.clicked.connect(dlg.accept)
+        row.addWidget(ok)
+        v.addLayout(row)
+
+        edit.returnPressed.connect(dlg.accept)
+        edit.setFocus()
+        accepted = dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted
+        return edit.text(), accepted
+
     def _action_group_new(self) -> None:
         if self.node is None or self.bridge is None:
             return
-        name, ok = QtWidgets.QInputDialog.getText(
-            self, "New group", "Group name:")
+        name, ok = self._ask_text(
+            "New group", "Choose a name for the group.",
+            placeholder="e.g. Nightfall Cell")
         if not ok or not name.strip():
             return
 
@@ -1706,8 +1867,9 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         group = self.node._groups.get_by_id(self.active)
         if group is None:
             return
-        target, ok = QtWidgets.QInputDialog.getText(
-            self, "Add member", "Peer label or peer_id:")
+        target, ok = self._ask_text(
+            "Add member", "Enter a saved contact's label, or a peer ID.",
+            placeholder="label or 40-char hex peer ID")
         if not ok or not target.strip():
             return
         contact = self.book.get(target.strip()) if self.book else None
@@ -1757,49 +1919,72 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             ver = "?"
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("About malphas")
-        dlg.resize(440, 380)
+        dlg.resize(460, 500)
         v = QtWidgets.QVBoxLayout(dlg)
+        v.setContentsMargins(T.PAD_XL, T.PAD_XL, T.PAD_XL, T.PAD_LG)
+        v.setSpacing(T.PAD_MD)
+        v.addStretch()
 
         if self._sigil is not None:
             sigil_lbl = QtWidgets.QLabel()
-            sigil_lbl.setPixmap(self._sigil.scaled(
-                120, 120,
-                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                QtCore.Qt.TransformationMode.SmoothTransformation,
-            ))
+            sigil_lbl.setPixmap(_sigil_with_halo(self._sigil, 132, pad=24))
             sigil_lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            sigil_lbl.setStyleSheet("background: transparent;")
             v.addWidget(sigil_lbl)
 
         title = QtWidgets.QLabel(f"malphas {ver}")
-        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        title.setObjectName("EmptyTitle")
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
 
-        body = QtWidgets.QLabel(
-            "Privacy-first P2P messenger\n"
-            "Tor onion routing · BLAKE2s peer IDs · "
-            "Argon2 + AES-GCM at rest")
-        body.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        body.setStyleSheet(f"color: {T.FG_MUTED};")
-        v.addWidget(body)
+        tagline = QtWidgets.QLabel("Privacy-first peer-to-peer messenger")
+        tagline.setObjectName("EmptyHint")
+        tagline.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(tagline)
+
+        feats = QtWidgets.QLabel(
+            "End-to-end encrypted · Double Ratchet · sealed sender\n"
+            "Anonymous over Tor · 3-hop onion routing · v3 hidden services\n"
+            "X25519 · Ed25519 · ChaCha20-Poly1305 · BLAKE2s peer IDs\n"
+            "At rest: Argon2id-derived key · ChaCha20-Poly1305")
+        feats.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        feats.setStyleSheet(f"color: {T.FG_MUTED}; font-size: 9pt;"
+                            "background: transparent;")
+        v.addWidget(feats)
 
         if self.node is not None:
+            pid_cap = QtWidgets.QLabel("YOUR PEER ID")
+            pid_cap.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            pid_cap.setStyleSheet(
+                f"color:{T.FG_FAINT}; font-size: 8pt; font-weight: 700; "
+                "letter-spacing: 2px; background: transparent;")
+            v.addWidget(pid_cap)
             pid = QtWidgets.QLabel(self.node.identity.peer_id)
             pid.setStyleSheet(
                 f"font-family:'JetBrains Mono', monospace; "
-                f"color:{T.FG_FAINT}; font-size: 9pt;")
+                f"color:{T.FG_MUTED}; font-size: 9pt; background: transparent;")
             pid.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             pid.setWordWrap(True)
+            pid.setTextInteractionFlags(
+                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
             v.addWidget(pid)
 
-        link = QtWidgets.QPushButton("Open GitHub")
-        link.clicked.connect(lambda: webbrowser.open(GITHUB_URL))
-        v.addWidget(link)
+        v.addStretch()
 
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(T.PAD_SM)
+        row.addStretch()
+        link = QtWidgets.QPushButton("Open GitHub")
+        link.setObjectName("AccentOutline")
+        link.setFixedHeight(38)
+        link.clicked.connect(lambda: webbrowser.open(GITHUB_URL))
+        row.addWidget(link)
         close = QtWidgets.QPushButton("Close")
-        close.setObjectName("AccentButton")
+        close.setFixedHeight(38)
         close.clicked.connect(dlg.accept)
-        v.addWidget(close)
+        row.addWidget(close)
+        row.addStretch()
+        v.addLayout(row)
 
         dlg.exec()
 
