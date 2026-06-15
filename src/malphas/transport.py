@@ -17,7 +17,10 @@ stem is required only for TorTransport (hidden service registration).
 import asyncio
 import base64
 import hashlib
+import logging
 import struct
+
+logger = logging.getLogger(__name__)
 
 # SOCKS5 constants
 SOCKS5_VERSION = 0x05
@@ -401,6 +404,9 @@ class TorTransport(BaseTransport):
         # Wait for Tor to publish the descriptor
         await asyncio.sleep(5)
 
+        logger.debug(
+            "hidden service configured: %s -> 127.0.0.1:%d (torrc updated, tor restarted)",
+            onion, local_port)
         self._onion_address = onion
         self._hs_dir = hs_path
         return onion

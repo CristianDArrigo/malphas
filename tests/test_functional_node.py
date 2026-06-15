@@ -334,6 +334,32 @@ class TestForgetPeer:
         await node_a.forget_peer("f" * 40)   # must not raise
 
 
+class TestDebugLogging:
+    async def test_drop_emits_debug_log(self, node_a, caplog):
+        import logging
+        caplog.set_level(logging.DEBUG, logger="malphas")
+        # send to an unknown peer → returns None and logs a debug line so the
+        # silent fail-closed drop is observable with --debug.
+        result = await node_a.send_message("a" * 40, "hi")
+        assert result is None
+        assert any("unknown" in r.getMessage().lower() for r in caplog.records)
+
+    def test_setup_debug_logging_wires_stderr(self):
+        import logging
+
+        from malphas.__main__ import _setup_debug_logging
+        pkg = logging.getLogger("malphas")
+        saved = (list(pkg.handlers), pkg.level, pkg.propagate)
+        try:
+            _setup_debug_logging(True)
+            assert pkg.level == logging.DEBUG
+            assert any(isinstance(h, logging.StreamHandler) for h in pkg.handlers)
+        finally:
+            pkg.handlers, pkg.level, pkg.propagate = (
+                saved[0], saved[1], saved[2])
+            pkg.setLevel(saved[1])
+
+
 class TestFileManualAccept:
     async def test_delayed_manual_accept_delivers(
         self, node_a, node_b, identity_b, tmp_path

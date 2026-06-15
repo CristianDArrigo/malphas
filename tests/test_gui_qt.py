@@ -321,3 +321,36 @@ def test_connect_result_success_selects_peer(qapp):
         w._handle_event(("connect_result", True, _INVITE_DATA))
     assert w.active == "a" * 40   # success → conversation opened
     w.close()
+
+
+# ── Untrusted content must render as PlainText (no HTML injection / IP leak) ──
+
+@pytest.mark.parametrize("side", ["you", "them"])
+def test_message_bubbles_are_plaintext(qapp, side):
+    # A peer-controlled message like `<img src="http://x">` must NOT be
+    # auto-detected as rich text (Qt could fetch the remote resource from the
+    # real IP, outside Tor). The bubble must be PlainText.
+    row = gui_qt.BubbleRow('<img src="http://x">', "10:00", side=side, sender="a")
+    bubbles = [w for w in row.findChildren(QtWidgets.QLabel)
+               if w.objectName() in ("BubbleYou", "BubbleThem")]
+    assert bubbles
+    assert all(w.textFormat() == QtCore.Qt.TextFormat.PlainText for w in bubbles)
+
+
+def test_sys_bubble_is_plaintext(qapp):
+    row = gui_qt.BubbleRow("joined '<i>grp</i>'", "", side="sys")
+    sys_b = [w for w in row.findChildren(QtWidgets.QLabel)
+             if w.objectName() == "BubbleSys"]
+    assert sys_b and all(
+        w.textFormat() == QtCore.Qt.TextFormat.PlainText for w in sys_b)
+
+
+def test_sidebar_group_name_is_plaintext(qapp):
+    # Group names are peer-supplied and shown in the sidebar.
+    w = gui_qt.MalphasQtWindow()
+    w._add_sidebar_row("g1", "<b>grp</b>", "2 members", is_group=True)
+    roww = w.peers.itemWidget(w.peers.item(0))
+    title = [lbl for lbl in roww.findChildren(QtWidgets.QLabel)
+             if lbl.text() == "<b>grp</b>"]
+    assert title and title[0].textFormat() == QtCore.Qt.TextFormat.PlainText
+    w.close()

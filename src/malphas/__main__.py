@@ -11,6 +11,7 @@ Address book is stored encrypted at ~/.malphas/book (configurable via --book).
 import argparse
 import asyncio
 import getpass
+import logging
 import os
 import secrets
 import signal
@@ -286,6 +287,7 @@ async def _run_web(args) -> None:
         message_ttl=args.ttl,
     )
     await node.start()
+    node.set_reconnect_book(book)   # auto-reconnect known contacts on drop
 
     # Auto-connect from address book
     for c in book.all():
@@ -507,6 +509,24 @@ def _run_gui_qt(args) -> None:
         book.wipe_memory()
 
 
+def _setup_debug_logging(debug: bool) -> None:
+    """Wire the package logger to STDERR at DEBUG when --debug is set.
+
+    Logging is OFF by default and goes ONLY to stderr (never to disk),
+    preserving the no-persistence privacy stance: nothing is written
+    anywhere unless the user explicitly opts in for a troubleshooting run.
+    """
+    if not debug:
+        return
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s", "%H:%M:%S"))
+    pkg = logging.getLogger("malphas")
+    pkg.setLevel(logging.DEBUG)
+    pkg.addHandler(handler)
+    pkg.propagate = False
+
+
 def main():
     from . import __version__
 
@@ -550,7 +570,14 @@ def main():
             "mismatch."
         ),
     )
+    parser.add_argument(
+        "--debug", action="store_true",
+        help=("Verbose diagnostic logging to STDERR (never to disk). Surfaces "
+              "fail-closed drops — dropped frames, auth failures, queued-not-"
+              "sent messages, hidden-service setup. Off by default."),
+    )
     args = parser.parse_args()
+    _setup_debug_logging(args.debug)
 
     if args.mode == "web":
         asyncio.run(_run_web(args))

@@ -454,6 +454,7 @@ class BubbleRow(QtWidgets.QFrame):
             outer.addStretch()
             bubble = QtWidgets.QLabel(text)
             bubble.setObjectName("BubbleSys")
+            bubble.setTextFormat(QtCore.Qt.TextFormat.PlainText)
             bubble.setWordWrap(True)
             bubble.setMaximumWidth(560)
             outer.addWidget(bubble, 0,
@@ -482,11 +483,18 @@ class BubbleRow(QtWidgets.QFrame):
         if sender and side == "them":
             sender_lbl = QtWidgets.QLabel(sender)
             sender_lbl.setObjectName("BubbleTimestamp")
+            sender_lbl.setTextFormat(QtCore.Qt.TextFormat.PlainText)
             v.addWidget(sender_lbl,
                           0, QtCore.Qt.AlignmentFlag.AlignLeft)
 
+        # PlainText: message content (and peer-supplied names) is UNTRUSTED.
+        # QLabel's default AutoText auto-detects HTML, so a message like
+        # `<img src="http://x/p.png">` would render as rich text and could
+        # trigger a remote fetch from the user's real IP (outside Tor) —
+        # deanonymisation — besides markup/display spoofing.
         bubble = QtWidgets.QLabel(text)
         bubble.setObjectName("BubbleYou" if side == "you" else "BubbleThem")
+        bubble.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         bubble.setWordWrap(True)
         bubble.setMaximumWidth(560)
         bubble.setTextInteractionFlags(
@@ -920,6 +928,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
         title_lbl = QtWidgets.QLabel(title)
+        title_lbl.setTextFormat(QtCore.Qt.TextFormat.PlainText)  # group name is peer-supplied
         title_lbl.setStyleSheet(
             f"color: {T.FG_PRIMARY}; font-weight: 600; background: transparent;"
             "font-size: 10pt;"
@@ -936,6 +945,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         text.addLayout(title_row)
 
         sub_lbl = QtWidgets.QLabel(sub)
+        sub_lbl.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         sub_lbl.setStyleSheet(
             f"color: {T.FG_MUTED}; font-size: 9pt; "
             "font-family: 'JetBrains Mono', monospace; background: transparent;"

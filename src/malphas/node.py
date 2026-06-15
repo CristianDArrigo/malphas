@@ -12,6 +12,7 @@ No logging to disk. No persistence.
 
 import asyncio
 import json
+import logging
 import secrets
 import time
 from collections.abc import Callable
@@ -52,6 +53,13 @@ from .replay import ReplayCache
 from .sealed_sender import seal as seal_from
 from .sealed_sender import unseal as unseal_from
 from .transport import BaseTransport, DirectTransport
+
+# Diagnostic logger. No handler is attached by default (the privacy stance
+# is: nothing on disk), so this is silent unless `--debug` wires a stderr
+# handler onto the `malphas` logger. It exists so silent fail-closed drops
+# (auth failures, dropped frames, queued-not-sent) are observable when you
+# explicitly opt in, instead of vanishing.
+logger = logging.getLogger(__name__)
 
 # Wire-protocol version. Bumped when the byte-level layout of
 # anything in PROTOCOL.md sections 4-9 changes. Frozen at 1 from
@@ -504,10 +512,13 @@ class MalphasNode:
 
         # If peer is known but offline, queue for later delivery
         if self.discovery.get_peer(dest_peer_id):
+            logger.debug("message to %s queued (not connected / no circuit yet)",
+                         dest_peer_id[:8])
             self._enqueue(dest_peer_id, content, msg_id)
             self.store.store(self.identity.peer_id, dest_peer_id, content, msg_id)
             return msg_id
 
+        logger.debug("send to %s failed: peer unknown", dest_peer_id[:8])
         return None
 
     def _relay_pool(self) -> set[str]:
@@ -796,6 +807,9 @@ class MalphasNode:
                 # identity of the connection (peer_id == BLAKE2s(ed25519_pub),
                 # enforced in _perform_handshake).
                 if from_id != _peer_id:
+                    logger.debug(
+                        "dropped ratchet msg: sealed from_id %s != connection peer %s",
+                        from_id[:8], _peer_id[:8])
                     _restore_ratchet(ratchet, snap)
                     return
 
@@ -807,6 +821,7 @@ class MalphasNode:
                 await self._dispatch_kind(data, from_id, peer)
                 return
             # No ratchet could decrypt — drop
+            logger.debug("dropped ratchet frame: no connection ratchet decrypted it")
             return
 
         if prefix == AUTH_HMAC:
@@ -834,6 +849,8 @@ class MalphasNode:
 
         peer = self.discovery.get_peer(from_id)
         if not peer:
+            logger.debug("dropped frame from unknown sender %s",
+                         from_id[:8] if from_id else "?")
             return  # unknown sender — drop silently
 
         # Verify the auth tag matches the declared method.
@@ -1028,6 +1045,8 @@ class MalphasNode:
             return
         ic = self._files.get_incoming(file_id)
         if ic is None:
+            logger.debug("file chunk for %s dropped (not accepted / unknown)",
+                         str(file_id)[:8])
             return  # unknown / not accepted — drop silently
         try:
             payload_bytes = base64.b64decode(data_b64)
