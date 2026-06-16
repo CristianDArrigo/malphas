@@ -1,10 +1,11 @@
 # malphas — Wire Protocol Specification
 
-> **Wire version: `WIRE_VERSION = 2`** (`1.0.0-rc7`, 2026-06-16; the
-> field set was first frozen at `1.0.0-rc1`, 2026-05-09)
+> **Wire version: `WIRE_VERSION = 2`** (stable since `1.0.0`, 2026-06-16;
+> the field set was first frozen at `1.0.0-rc1`, 2026-05-09, and the v2
+> handshake/ratchet changes landed in `1.0.0-rc7`)
 >
-> Status: **release candidate**.
-> Breaking changes from this point require a major version bump and
+> Status: **stable** (`1.0.0`). The wire format is frozen and binding:
+> breaking changes from this point require a major version bump and
 > a deprecation window — see §10.
 >
 > This document is the authoritative description of every byte
@@ -322,15 +323,16 @@ always bump major or minor** (never patch).
 | 0.10.x    | 0.9.x ⊕ GUI only            |
 | 0.11.x    | 0.10.x ⊕ Qt GUI only        |
 | 1.0.0-rc1 | Wire format frozen in intent (`WIRE_VERSION` 1). Frozen *fields* listed in §10.1. |
-| 1.0.0-rc7 | `rc7` only (`WIRE_VERSION` 2). Final pre-1.0 break carrying the security-audit fixes — does **not** interoperate with rc1–rc6. The freeze becomes binding at 1.0.0; from there, breaking changes require **2.0.0**. |
+| 1.0.0-rc7 | `WIRE_VERSION` 2. Final pre-1.0 break carrying the security-audit fixes — does **not** interoperate with the `v1` wire of rc1–rc6. |
+| **1.0.0** | **Stable. `WIRE_VERSION` 2, frozen and binding** — breaking changes from here require **2.0.0**. |
 
 ### 10.1 · Wire freeze policy
 
-The freeze was declared at `1.0.0-rc1` and becomes binding at the `1.0.0`
-release. `1.0.0-rc7` made the last intentional pre-1.0 break — the
-handshake JSON shape (§5: `eph_sig` now covers `x25519_pub`) and the Double
-Ratchet header binding (now AEAD AAD) — and bumped `WIRE_VERSION` 1 → 2 so
-a mismatch fails cleanly at the handshake. From `1.0.0`:
+The freeze was declared at `1.0.0-rc1` and is **binding from `1.0.0`**. The
+last intentional break was `1.0.0-rc7`: the handshake JSON shape (§5:
+`eph_sig` now covers `x25519_pub`) and the Double Ratchet header binding
+(now AEAD AAD), with `WIRE_VERSION` bumped 1 → 2 so a mismatch fails cleanly
+at the handshake. From `1.0.0`:
 
 - **Frozen fields** (cannot change without a major bump): `peer_id`
   derivation (§3), outer frame layout (§4), handshake JSON shape
@@ -498,3 +500,4 @@ the contract surface to extend.
 |---------|-------------|------------|-------------------------------------------------|
 | 1.0     | 1.0.0-rc1   | 2026-05-09 | Initial freeze. Reviewer-ready.                 |
 | 1.1     | 1.0.0-rc7   | 2026-06-16 | `WIRE_VERSION` 2: handshake `eph_sig` covers `x25519_pub`, both keys pinned, ratchet header bound as AAD. Security-audit fixes. |
+| 1.2     | 1.0.0       | 2026-06-16 | Stable release. Wire frozen and binding (no spec change from rc7). |

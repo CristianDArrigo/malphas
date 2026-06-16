@@ -3,6 +3,27 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [1.0.0] — 2026-06-16
+
+First stable release. The wire format (`WIRE_VERSION = 2`) is now **frozen
+and binding**: breaking changes from here require a major version (2.0.0).
+Contains everything in `1.0.0-rc7` (the full pre-1.0 security audit) plus
+the hidden-service fixes shaken out by end-to-end PC↔VPS testing over Tor
+(bidirectional connect + messaging + file transfer verified).
+
+### Fixed
+
+- **The Qt GUI registers its v3 hidden service** when run with `--tor`.
+  `_run_gui_qt` previously started the P2P server but skipped
+  `start_hidden_service` (unlike the CLI and Tk paths), so a Qt node was
+  reachable outbound only and its invites carried no `.onion` — no peer
+  could connect back to it.
+- **Hidden-service setup now fails loudly when it lacks root** instead of
+  advertising an onion Tor isn't serving. The `sudo -n` file/restart steps
+  used to be swallowed silently, leaving a "dead onion" in invites. On a
+  host without passwordless/cached sudo, run `sudo -v` once before
+  launching (or start as root).
+
 ## [1.0.0-rc7] — 2026-06-16
 
 A full independent security audit of the whole tree (crypto, protocol,

@@ -98,16 +98,17 @@ No servers. No accounts. No logs. No traces.
 
 ## Status
 
-**`1.0.0-rc7` (2026-06-16) · post-audit, wire format `v2`.**
+**`1.0.0` (2026-06-16) · stable · wire format `v2` (frozen).**
 
-malphas is a release candidate. `1.0.0-rc7` carries a full pre-1.0
-security audit (see [`CHANGELOG.md`](CHANGELOG.md)) and made a final
-breaking wire change — `WIRE_VERSION` is now `2`, so rc7 nodes do not
-interoperate with rc6 and earlier (**update all peers together**). From
-`1.0.0` the wire format becomes binding and additive-only (see
+malphas is at its first stable release. `1.0.0` carries a full pre-1.0
+security audit (see [`CHANGELOG.md`](CHANGELOG.md)); the wire format
+(`WIRE_VERSION = 2`) is now frozen and **binding** — breaking changes
+from here require a major version (2.0.0), and `1.0.0` nodes do not
+interoperate with the `rc6`-and-earlier `v1` wire (see
 [`PROTOCOL.md`](PROTOCOL.md) §10). The threat model is documented in
 [`THREAT_MODEL.md`](THREAT_MODEL.md) and graded against five adversary
-profiles.
+profiles. It is still **not independently audited** — see the disclaimer
+below before relying on it for high-stakes use.
 
 The full canonical document set:
 
@@ -1000,7 +1001,7 @@ Messages are encrypted at send time (after reconnection), not at queue time. Thi
 
 For the formal weakness list with severity grades, see
 [`THREAT_MODEL.md`](THREAT_MODEL.md) §5. Snapshot of where things
-stand at `1.0.0-rc7`:
+stand at `1.0.0`:
 
 | ID    | Status                | Summary                                                                                              |
 |-------|-----------------------|------------------------------------------------------------------------------------------------------|
