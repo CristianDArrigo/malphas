@@ -406,17 +406,22 @@ format; it is back-filled on the next contact with that peer.
 
 ### 11.4 · Tor v3 hidden-service key
 
-The node configures the v3 HS **file-based**, not over the Tor
-ControlPort: it writes the derived v3 key material
-(`hs_ed25519_secret_key`, `hs_ed25519_public_key`, `hostname`) into
-`/var/lib/tor/malphas_hs` (owned by the Tor user), appends a
-`HiddenServiceDir` / `HiddenServicePort` block to `/etc/tor/torrc`
-(idempotently), and **restarts** tor (`systemctl restart tor`) so the
-new key is loaded. A reload (SIGHUP) is *not* used: Tor does not
-reliably pick up changed HS keys on reload. The ControlPort is not
-used to register the service. Writing under `/var/lib/tor` and
-restarting tor requires privilege (sudo); see `THREAT_MODEL.md` §4 for
-the trust/robustness note on this path.
+The node registers the v3 HS over the Tor **ControlPort** with
+`ADD_ONION` (since `1.0.0`'s post-release hardening — earlier versions
+wrote key files under `/var/lib/tor` and restarted tor, which needed
+sudo). It hands Tor the *expanded* Ed25519 secret key
+(`ED25519-V3 = clamp(SHA-512(seed))`, base64) and a `Port=80,127.0.0.1:<p>`
+mapping, so the onion is the same deterministic address every launch.
+The service is **ephemeral and connection-scoped**: it is bound to the
+control connection (`Flags` without `Detach`), so Tor drops it
+(`DEL_ONION`) automatically when the node stops or the process dies —
+no key files on disk, no `torrc` edits, no tor restart, **no sudo**.
+
+This needs Tor's ControlPort enabled and authenticable: cookie auth
+(the user must be able to read the control auth cookie — typically by
+membership in the `debian-tor`/`tor` group) or a control password. If
+authentication fails, the node logs the reason and runs outbound-only
+(it can still dial peers' onions; it just isn't reachable inbound).
 
 Backed up via the BIP39 mnemonic? **No** — Tor HS keys are derived
 from Ed25519 separately. Reconstructing from passphrase + salt +

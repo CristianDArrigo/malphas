@@ -241,6 +241,7 @@ class TorTransport(BaseTransport):
         self._control_password = control_password
         self._onion_address: str | None = None
         self._hs_dir = None
+        self._hs_controller = None   # stem Controller holding the ephemeral HS
         self._server: asyncio.AbstractServer | None = None
 
     async def start_hidden_service(
@@ -251,179 +252,94 @@ class TorTransport(BaseTransport):
         hs_dir: str | None = None,
     ) -> str:
         """
-        Register a Tor v3 hidden service using our Ed25519 keypair.
+        Register a Tor v3 hidden service via the ControlPort (ADD_ONION).
         Returns the .onion address.
 
-        Uses a persistent hidden service directory on disk.
-        Tor manages the descriptor publication — this is the standard
-        and reliable way to run hidden services, unlike ephemeral HS
-        via stem which has compatibility issues across Tor versions.
+        No sudo, no filesystem, no `tor` restart: we hand Tor our own Ed25519
+        key over the (cookie-authenticated) control port, so the onion is the
+        same deterministic address every launch. The service is ephemeral —
+        tied to this control connection and removed (DEL_ONION) automatically
+        when the node stops or the process dies.
 
-        Requires:
-        - Write access to the HS directory (or sudo/debian-tor group)
-        - stem for ControlPort communication (SIGHUP reload)
+        Requires Tor's ControlPort enabled and authenticable (cookie auth: the
+        user must be able to read the control auth cookie — typically by being
+        in the `debian-tor`/`tor` group — or a control password). `hs_dir` is
+        accepted for signature compatibility and ignored.
         """
-        import os
-        from pathlib import Path
+        import base64
+        import hashlib
 
         try:
             from stem.control import Controller
-        except ImportError:
+        except ImportError as e:
             raise RuntimeError(
                 "stem is required for Tor hidden service support.\n"
                 "Install it with: pip install stem"
-            )
+            ) from e
 
         onion = ed25519_pub_to_onion(ed25519_pub_bytes)
 
-        # Determine HS directory
-        if hs_dir:
-            hs_path = Path(hs_dir)
-        else:
-            hs_path = Path("/var/lib/tor/malphas_hs")
+        # Tor's ADD_ONION wants the *expanded* Ed25519 secret key — the clamp
+        # of SHA-512(seed), 64 bytes — base64-encoded, NOT the 32-byte seed.
+        h = hashlib.sha512(ed25519_priv_bytes).digest()
+        expanded = bytearray(h)
+        expanded[0] &= 248
+        expanded[31] &= 127
+        expanded[31] |= 64
+        key_b64 = base64.b64encode(bytes(expanded)).decode()
 
-        # Write key files in Tor's expected format
         loop = asyncio.get_running_loop()
 
-        def _setup_hs():
-
-            # Tor v3 secret key format: "== ed25519v1-secret: type0 ==\x00\x00\x00"
-            # followed by the 64-byte expanded private key.
-            # Ed25519 expanded key = SHA512(seed), with clamping on first 32 bytes.
-            # This is NOT the same as seed+pub — Tor requires the expanded form.
-            import hashlib
-            h = hashlib.sha512(ed25519_priv_bytes).digest()
-            # Clamp: clear bottom 3 bits of first byte, clear top bit and set
-            # second-to-top bit of last byte of the first 32 bytes
-            expanded = bytearray(h)
-            expanded[0] &= 248
-            expanded[31] &= 127
-            expanded[31] |= 64
-
-            header_secret = b"== ed25519v1-secret: type0 ==\x00\x00\x00"
-            secret_key_content = header_secret + bytes(expanded)
-
-            # Tor v3 public key format: "== ed25519v1-public: type0 ==\x00\x00\x00"
-            # followed by the 32-byte public key
-            header_public = b"== ed25519v1-public: type0 ==\x00\x00\x00"
-            public_key_content = header_public + ed25519_pub_bytes
-
-            # Write key files to /tmp, then use sudo to copy into the
-            # Tor HS directory and set correct ownership/permissions.
-            # All file operations in /var/lib/tor/ go through sudo because
-            # the directory is owned by debian-tor with mode 700.
-            import subprocess
-            import tempfile
-
-            tor_user = "debian-tor"
+        def _add() -> None:
+            controller = Controller.from_port(
+                address=self._control_host, port=self._control_port)
             try:
-                import pwd
-                pwd.getpwnam(tor_user)
-            except KeyError:
-                tor_user = "tor"
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmp = Path(tmpdir)
-                (tmp / "hs_ed25519_secret_key").write_bytes(secret_key_content)
-                (tmp / "hs_ed25519_public_key").write_bytes(public_key_content)
-                (tmp / "hostname").write_text(onion + "\n")
-
-                # Use sudo only if not running as root
-                prefix = [] if os.getuid() == 0 else ["sudo", "-n"]
-
-                def _run(cmd):
-                    return subprocess.run(
-                        prefix + cmd, capture_output=True, timeout=5)
-
-                # The HS directory lives under /var/lib/tor (root, mode 700),
-                # so every step needs root. With `sudo -n` (non-interactive)
-                # and no cached credentials this fails — and used to fail
-                # SILENTLY, leaving Tor with no key for the onion we then
-                # advertised (a dead onion). Gate on the first command and
-                # raise a clear, actionable error instead.
-                r = _run(["mkdir", "-p", str(hs_path)])
-                if r.returncode != 0:
-                    raise RuntimeError(
-                        "hidden-service setup needs root and non-interactive "
-                        "sudo is unavailable. Run `sudo -v` once before "
-                        "launching (caches credentials ~15 min), or start as "
-                        "root. sudo: "
-                        + r.stderr.decode(errors="replace").strip()[:140]
-                    )
-                for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                    _run(["cp", str(tmp / f), str(hs_path / f)])
-                _run(["chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)])
-                _run(["chmod", "700", str(hs_path)])
-                for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
-                    _run(["chmod", "600", str(hs_path / f)])
-
-            # Add HiddenService config to torrc if not already present.
-            # /etc/tor/torrc is root-owned, so this MUST go through the same
-            # sudo path as the key files above. The previous code did a plain
-            # Path.write_text() which failed with PermissionError for a
-            # non-root user and was silently swallowed — leaving the HS keys
-            # on disk but no `HiddenServiceDir` directive, so Tor never
-            # published the onion (keys present, service dead).
-            torrc_path = "/etc/tor/torrc"
-            hs_config = (
-                f"\n# malphas hidden service\n"
-                f"HiddenServiceDir {hs_path}\n"
-                f"HiddenServicePort 80 127.0.0.1:{local_port}\n"
-            )
-            already = subprocess.run(
-                prefix + ["grep", "-qF", str(hs_path), torrc_path],
-                capture_output=True,
-            )
-            if already.returncode != 0:
-                # Append via `sudo tee -a` (idempotent: guarded by the grep).
-                subprocess.run(
-                    prefix + ["tee", "-a", torrc_path],
-                    input=hs_config.encode(),
-                    capture_output=True,
-                    timeout=5,
-                )  # torrc already configured by setup.sh
-
-            # RESTART Tor to pick up the key files — not reload. A reload
-            # (SIGHUP) re-reads torrc but does NOT reliably re-load the v3
-            # onion key of an already-registered HiddenServiceDir when the
-            # key files on disk have changed (e.g. a different identity now
-            # owns this dir). The result is an onion whose descriptor never
-            # publishes / is unreachable. A full restart makes Tor re-read
-            # the dir from scratch and publish the current onion.
-            prefix = [] if os.getuid() == 0 else ["sudo", "-n"]
+                if self._control_password is not None:
+                    controller.authenticate(password=self._control_password)
+                else:
+                    controller.authenticate()
+            except Exception as e:
+                controller.close()
+                raise RuntimeError(
+                    "Tor ControlPort authentication failed on "
+                    f"{self._control_host}:{self._control_port} ({e}). Enable "
+                    "`ControlPort 9051` + `CookieAuthentication 1` in torrc and "
+                    "make sure your user can read the control auth cookie (add "
+                    "it to the `debian-tor`/`tor` group), or set a control "
+                    "password."
+                ) from e
             try:
-                subprocess.run(
-                    prefix + ["systemctl", "restart", "tor@default"],
-                    capture_output=True, timeout=15,
+                # Ephemeral v3 HS from our own key. detached=False ties it to
+                # this control connection: it lives exactly as long as we hold
+                # the controller (closed in stop()) and is gone if we crash —
+                # no stale registration, no key files, no torrc edits, no sudo.
+                controller.create_ephemeral_hidden_service(
+                    {80: f"127.0.0.1:{local_port}"},
+                    key_type="ED25519-V3",
+                    key_content=key_b64,
+                    await_publication=False,
+                    detached=False,
                 )
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                try:
-                    subprocess.run(
-                        prefix + ["systemctl", "restart", "tor"],
-                        capture_output=True, timeout=15,
-                    )
-                except Exception:
-                    # Last-resort fallback (no systemctl): SIGHUP. This only
-                    # reloads config and may NOT pick up changed HS keys —
-                    # such hosts need a manual `tor` restart.
-                    try:
-                        subprocess.run(
-                            prefix + ["killall", "-HUP", "tor"],
-                            capture_output=True, timeout=5,
-                        )
-                    except Exception:
-                        pass
+            except Exception:
+                controller.close()
+                raise
+            # Hold the controller open: the ephemeral HS lives as long as this
+            # connection does (closed in stop()). Set here, inside the worker,
+            # so a failure above leaves _hs_controller None (no dead onion).
+            self._hs_controller = controller
 
-        await loop.run_in_executor(None, _setup_hs)
+        await loop.run_in_executor(None, _add)
+        self._onion_address = onion
+        self._hs_dir = hs_dir
 
-        # Wait for Tor to publish the descriptor
-        await asyncio.sleep(5)
+        # Let Tor start publishing the descriptor before the onion goes out in
+        # invites. Full publication can take ~30 s; we don't block startup on
+        # it (a freshly shared invite is dialed by a human well after that).
+        await asyncio.sleep(2)
 
         logger.debug(
-            "hidden service configured: %s -> 127.0.0.1:%d (torrc updated, tor restarted)",
+            "hidden service via ADD_ONION: %s -> 127.0.0.1:%d",
             onion, local_port)
-        self._onion_address = onion
-        self._hs_dir = hs_path
         return onion
 
     async def connect(self, host: str, port: int):
@@ -451,8 +367,14 @@ class TorTransport(BaseTransport):
                 await asyncio.wait_for(self._server.wait_closed(), timeout=5.0)
             except (asyncio.TimeoutError, Exception):
                 pass
-        # Persistent HS stays registered in Tor — no cleanup needed.
-        # The HS directory on disk persists across restarts (by design).
+        # Close the control connection holding the ephemeral hidden service:
+        # Tor drops the onion (DEL_ONION) when its owning connection goes away.
+        if self._hs_controller is not None:
+            try:
+                self._hs_controller.close()
+            except Exception:  # noqa: S110
+                pass
+            self._hs_controller = None
 
 
 # ── Tor availability check ────────────────────────────────────────────────────

@@ -283,7 +283,7 @@ Tor hidden services do not work reliably inside Docker containers due to Tor sel
 
 ### Automated setup (Linux)
 
-The setup script installs Tor, configures passwordless sudo for the Tor service, sets permissions, and prepares the hidden service directory:
+The setup script installs Tor, enables the ControlPort with cookie authentication, and adds your user to the Tor group so malphas can register its hidden service over the control port (`ADD_ONION`) — no per-launch sudo:
 
 ```bash
 git clone https://github.com/CristianDArrigo/malphas.git

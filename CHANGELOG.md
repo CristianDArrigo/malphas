@@ -3,6 +3,21 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [Unreleased]
+
+### Changed
+
+- **Hidden service is now registered over the Tor ControlPort (`ADD_ONION`)**
+  instead of writing key files under `/var/lib/tor` + editing `torrc` +
+  restarting tor. malphas hands Tor the expanded Ed25519 key over the
+  cookie-authenticated control port and gets the same deterministic onion —
+  **no sudo, no on-disk keys, no torrc edits, no tor restart**. The service
+  is ephemeral and connection-scoped: Tor drops it (`DEL_ONION`) when the
+  node stops or the process dies. Resolves TM-20. No wire-format change (the
+  onion address is identical), so this interoperates with any `1.0.0` node.
+  Needs Tor's ControlPort enabled and readable cookie auth (`scripts/setup.sh`
+  configures this and adds you to the `debian-tor` group).
+
 ## [1.0.0] — 2026-06-16
 
 First stable release. The wire format (`WIRE_VERSION = 2`) is now **frozen

@@ -120,8 +120,8 @@ Code and dependencies that, if compromised, defeat the model:
 | `cryptography` (PyCA)                  | All primitives (X25519, Ed25519, ChaCha20-Poly1305, HKDF, BLAKE2s, Argon2id is via `argon2-cffi`) | Industry-standard, audited.               |
 | `argon2-cffi`                          | Argon2id KDF                                  | Used for passphrase → seed.               |
 | `mnemonic`                             | BIP39 word list                               | Public dictionary, no secrets.            |
-| `stem`                                 | Tor dependency gate                           | Present, but the HS is configured file-based (torrc + restart), not via the ControlPort. |
-| Privileged Tor HS setup (sudo)         | Writes v3 key into `/var/lib/tor`, edits `/etc/tor/torrc`, restarts tor | Trust/robustness concern: runs with privilege and writes key material outside `~/.malphas`. Not yet hardened or independently reviewed. See PROTOCOL.md §11.4. |
+| `stem`                                 | Tor ControlPort client                        | Used to register the hidden service via `ADD_ONION` (since 1.0.0 post-release). Cookie-authenticated. |
+| Tor HS setup (ControlPort `ADD_ONION`) | Registers an ephemeral v3 HS from our own key | No sudo, no files under `/var/lib/tor`, no torrc edits, no tor restart. The key never leaves the process; the onion is dropped (`DEL_ONION`) on exit. See PROTOCOL.md §11.4. |
 | `cryptography` ed25519 → onion conversion | Derives `.onion` from Ed25519 pub          | Implementation matches Tor's.             |
 | The Python interpreter                 | All code runs here                            | Same-process attack surface as any app.   |
 | The OS keyring / filesystem permissions | Address-book file mode 0600                  | We rely on OS to enforce.                 |
@@ -158,7 +158,7 @@ release.
 | TM-17 | ~~High~~ resolved | Pin store silently reset to empty pins on a corrupt/tampered file, opening a MITM re-pin window. The node now raises `PinStoreCorruptError` and refuses to start. | `pinstore.py` ✅ |
 | TM-18 | ~~Medium~~ resolved | Deprecated `MSG_PEER_ANNOUNCE` could poison the routing table. The handler no longer updates routing state — received frames are dropped. Peers are learned only via authenticated handshake or explicit invite. | `node.py` ✅ |
 | TM-19 | Medium   | The GUI/CLI surface (~4700 LOC) has not had a dedicated security review.  | future       |
-| TM-20 | Low      | The privileged Tor HS setup runs with sudo and writes key material into `/var/lib/tor` + `/etc/tor/torrc`, then restarts tor. Trust/robustness concern; not hardened or independently reviewed. | PROTOCOL.md §11.4 |
+| TM-20 | ~~Low~~ resolved | The old file-based HS setup ran with sudo and wrote key material into `/var/lib/tor` + `/etc/tor/torrc`. Replaced (1.0.0 post-release) by ControlPort `ADD_ONION`: ephemeral, no sudo, no on-disk keys, no torrc edits. | PROTOCOL.md §11.4 |
 
 > **Still open.** TM-01 (cryptographic group membership consensus) remains
 > unsolved: the current scheme is creator-authorized with eventually-consistent
