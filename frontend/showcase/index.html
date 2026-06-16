@@ -601,7 +601,7 @@
       <div class="feature reveal">
         <span class="feature-icon">.onion</span>
         <h3>Tor hidden services</h3>
-        <p>Your node registers a Tor v3 hidden service derived from your passphrase. No port forwarding, no public IP. Your .onion address is permanent and stable across restarts.</p>
+        <p>Your node registers a Tor v3 hidden service derived from your passphrase, over the Tor ControlPort (<code>ADD_ONION</code>) — no sudo, no files on disk, no torrc edits. No port forwarding, no public IP. Your .onion address is permanent and stable across restarts.</p>
       </div>
       <div class="feature reveal">
         <span class="feature-icon">#!</span>
@@ -636,7 +636,7 @@
       <div class="feature reveal">
         <span class="feature-icon">[]</span>
         <h3>Desktop UI</h3>
-        <p>Pick the surface that fits. A modern Qt desktop client with chat-app-style bubbles and a sidebar of peers, a stdlib Tkinter fallback for any Python install, a terminal CLI for power users, and a local web API. All four drive the same node — same wire, same security.</p>
+        <p>Pick the surface that fits. A modern Qt desktop client with chat-app-style bubbles and a sidebar of peers, a stdlib Tkinter fallback for any Python install, and a terminal CLI for power users. All three drive the same node — same wire, same security.</p>
       </div>
       <div class="feature reveal">
         <span class="feature-icon">&lt;/&gt;</span>
@@ -844,14 +844,16 @@
         <div class="terminal-title">quickstart</div>
       </div>
       <div class="terminal-body">
-<span class="output">$</span> <span class="cmd">sudo bash scripts/setup.sh</span>
+<span class="output">$</span> <span class="cmd">sudo bash scripts/setup.sh</span>   <span class="dim"># Tor + ControlPort; adds you to the debian-tor group</span>
+<span class="output">$</span> <span class="dim"># log out and back in once so the group takes effect</span>
 <span class="output">$</span> <span class="cmd">pip install -e &quot;.[gui-qt]&quot;</span>      <span class="dim"># or just `pip install -e .` for CLI-only</span>
-<span class="output">$</span> <span class="cmd">malphas --mode gui-qt --tor</span>   <span class="dim"># or --mode cli / web</span>
+<span class="output">$</span> <span class="cmd">malphas --mode gui-qt --tor</span>   <span class="dim"># or --mode cli / gui</span>
 <span class="output">  passphrase: </span><span class="dim">••••••••••••••••••</span>
+<span class="dim">  first run prints a 12-word recovery phrase — write it down.</span>
 
-<span class="prompt">&gt;</span> <span class="cmd">/export</span>
+<span class="prompt">&gt;</span> <span class="cmd">/export</span>   <span class="dim"># or "Share invite" in the GUI</span>
 <span class="output">  malphas://eyJ0eXBlIjoiaW52aXRl...</span>
-<span class="dim">  share this URL with your peer.</span></div>
+<span class="dim">  share this URL with your peer — they /import (Add contact) it to connect.</span></div>
     </div>
   </div>
 </section>

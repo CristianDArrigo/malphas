@@ -289,9 +289,16 @@ The setup script installs Tor, enables the ControlPort with cookie authenticatio
 git clone https://github.com/CristianDArrigo/malphas.git
 cd malphas
 sudo bash scripts/setup.sh
-pip install -e .
-malphas --tor --port 7777
+pip install -e ".[gui-qt]"        # drop [gui-qt] for CLI-only
+# log out and back in once — so the debian-tor group takes effect
+malphas --mode gui-qt --tor       # or --mode cli
 ```
+
+On first launch malphas prompts for a **passphrase** in the terminal (yes,
+even for the GUI — launch it from a terminal), derives your identity from
+it, and prints a **12-word recovery phrase once**. Write the words down:
+together with the passphrase they are the only way to recover the identity
+on another machine. See [Onboarding](#quickstart) below.
 
 To remove all malphas traces from the system (Tor config, hidden service keys, address book, pins):
 
@@ -328,7 +335,7 @@ brew install tor
 brew services restart tor
 ```
 
-**Note:** malphas does not use the Tor control port. Hidden services are set up by writing the v3 key files into `/var/lib/tor/malphas_hs` and appending the `HiddenServiceDir`/`HiddenServicePort` lines to `/etc/tor/torrc`, then restarting Tor. Launching with `--tor` therefore requires passwordless sudo (or root) so malphas can write those paths and restart the Tor service. The setup script handles this automatically.
+**Note:** malphas registers its hidden service over the Tor **ControlPort** (`ADD_ONION`) — no key files on disk, no `torrc` edits, no tor restart, **no sudo**. It needs Tor's ControlPort enabled with readable cookie authentication; `scripts/setup.sh` turns on `ControlPort`/`CookieAuthentication` and adds you to the `debian-tor` group. **Log out and back in once after running it** so the group membership takes effect.
 
 **Dependencies installed automatically:**
 
@@ -437,8 +444,8 @@ sudo systemctl restart tor              # start the Tor service
 git clone https://github.com/CristianDArrigo/malphas.git
 cd malphas && pip install -e .
 
-malphas --tor --port 7777               # launch with Tor (needs passwordless sudo)
-# enter a strong passphrase
+malphas --tor --port 7777               # launch with Tor (no sudo — uses the Tor ControlPort)
+# enter a strong passphrase when prompted
 ```
 
 **Peer A** runs `/export` and sends the `malphas://...` URL to Peer B.
@@ -645,27 +652,19 @@ This means:
 
 ### Hidden service implementation
 
-malphas uses persistent hidden services (files on disk in `/var/lib/tor/malphas_hs/`) rather than ephemeral hidden services via stem's `create_ephemeral_hidden_service`. It does not use the Tor control port at all: it writes the v3 key files into `/var/lib/tor/malphas_hs` and appends the `HiddenServiceDir`/`HiddenServicePort` lines to `/etc/tor/torrc` (both via sudo), then restarts Tor with `systemctl restart tor`. A reload is deliberately not used — it does not reliably pick up changed hidden-service onion keys.
+malphas registers an **ephemeral v3 hidden service over the Tor ControlPort** (`ADD_ONION`), keyed with the node's own Ed25519 identity so the `.onion` is the same deterministic address every launch. There are no key files on disk, no `torrc` edits, no `tor` restart, and **no sudo**. (Versions up to `1.0.0` used a file-based approach — writing v3 key files into `/var/lib/tor/malphas_hs` and restarting tor — which needed root; `1.0.1` replaced it.)
 
-This is a deliberate choice driven by extensive testing. The ephemeral approach (ADD_ONION via the Tor control protocol) accepts custom Ed25519 keys without error but silently fails to publish the descriptor on multiple Tor versions (tested on 0.4.2.7, 0.4.6.10, 0.4.8.16). The hidden service appears registered locally but is never reachable from the Tor network. This failure is silent — no error is returned by stem or by Tor's control protocol.
+The service is **connection-scoped**: bound to the control connection (not detached), so Tor drops it (`DEL_ONION`) the moment the node stops or the process dies — no stale registration, no cleanup. If the onion is already being served (a host still carrying the legacy file-based HS in `torrc`, or a second instance), `ADD_ONION` reports an address collision; malphas treats that as success, since the node is in fact reachable.
 
-The persistent approach writes the key files directly to disk in the format Tor expects:
+**The Ed25519 expanded key.** Tor does not take the raw 32-byte Ed25519 seed; `ADD_ONION ED25519-V3` wants the 64-byte *expanded* private key — `SHA-512(seed)` with clamping (clear bits 0–2 of byte 0; clear bit 7 and set bit 6 of byte 31) — base64-encoded. malphas computes this and hands it to Tor; the returned service id matches `ed25519_pub_to_onion()` exactly (verified on Tor 0.4.6.10 and 0.4.8.16).
 
-```
-/var/lib/tor/malphas_hs/
-    hs_ed25519_secret_key   — header(32) + expanded_private_key(64) = 96 bytes
-    hs_ed25519_public_key   — header(32) + public_key(32) = 64 bytes
-    hostname                — the .onion address
-```
+**Access.** `ADD_ONION` needs Tor's ControlPort enabled with authentication malphas can satisfy: cookie auth (the launching user must be able to read Tor's control auth cookie — typically via membership in the `debian-tor`/`tor` group) or a control password. If authentication fails, the node logs the reason and runs **outbound-only** — it can still dial peers' onions, it just isn't reachable inbound.
 
-**Critical detail: the Ed25519 expanded key.** Tor does not use the raw 32-byte Ed25519 seed. It requires the 64-byte expanded private key, computed as `SHA-512(seed)` with clamping (clear bits 0-2 of byte 0, clear bit 7 and set bit 6 of byte 31). Writing the raw seed instead of the expanded key causes Tor to silently generate a different key pair, producing a different `.onion` address than expected — or failing to publish the descriptor entirely. This is not documented in Tor's specification and was discovered through binary analysis of working vs non-working key files.
-
-**Permissions.** Tor runs as user `debian-tor` (or `tor` on some distributions) and requires strict ownership: the hidden service directory must be owned by the Tor user with mode 700, and key files must be mode 600. malphas sets these permissions automatically, but launching with `--tor` requires root or membership in the `debian-tor` group.
-
-**Setup script.** The included `scripts/setup.sh` automates Tor installation, passwordless-sudo configuration for the Tor service, permission setup, and malphas installation:
+**Setup script.** The included `scripts/setup.sh` installs Tor, enables `ControlPort`/`CookieAuthentication`, adds you to the Tor group, and installs malphas:
 
 ```bash
 sudo bash scripts/setup.sh
+# then log out and back in so the debian-tor group membership applies
 ```
 
 ### Verified behavior
@@ -673,9 +672,9 @@ sudo bash scripts/setup.sh
 The Tor hidden service integration has been tested end-to-end between a local machine (Tor 0.4.8.16, Ubuntu 25.04) and an Oracle Cloud VPS (Tor 0.4.6.10, Ubuntu 22.04) on different public IP addresses. Messages sent from the local machine via the VPS's `.onion` address were received and decrypted successfully.
 
 Key findings from testing:
-- Ephemeral hidden services (ADD_ONION with custom key) do not work reliably across Tor versions
-- Persistent hidden services with correctly formatted expanded keys work on the first attempt
-- The descriptor typically publishes within 30-60 seconds of the Tor restart
+- Ephemeral hidden services over the ControlPort (`ADD_ONION` with our expanded Ed25519 key) register and publish reliably — verified bidirectionally (connect, messages, file transfer) on Tor 0.4.6.10 and 0.4.8.16; the onion Tor returns matches the deterministic address exactly
+- Passing the *expanded* 64-byte key (`SHA-512(seed)` + clamping), not the raw 32-byte seed, is essential — the raw seed yields a different onion
+- The descriptor typically publishes within ~30 seconds of registration
 - Tor self-rendezvous (connecting to your own .onion from the same machine or NAT) fails on all tested configurations — this is a Tor architectural limitation, not a malphas issue
 - Docker containers sharing the same host cannot reach each other's hidden services for the same reason
 
@@ -987,7 +986,7 @@ Messages are encrypted at send time (after reconnection), not at queue time. Thi
 
 **Traffic correlation.** A sophisticated adversary monitoring both endpoints simultaneously can correlate message timing even through Tor and cover traffic, given enough observations. This is a fundamental limitation of low-latency anonymous communication.
 
-**Tor hidden service requires sudo.** The persistent hidden service writes key files to `/var/lib/tor/malphas_hs/`, which is owned by the Tor user. Launching malphas with `--tor` requires root privileges or membership in the `debian-tor` group. The setup script (`scripts/setup.sh`) configures this automatically.
+**Tor hidden service needs ControlPort access (no sudo).** Since `1.0.1` the hidden service is registered over the Tor ControlPort (`ADD_ONION`), so launching with `--tor` needs Tor's ControlPort enabled and a readable auth cookie — i.e. membership in the `debian-tor`/`tor` group, not root. `scripts/setup.sh` configures this; log out and back in once afterwards. Without it, the node runs outbound-only (reachable by dialing out, not inbound).
 
 **Tor self-rendezvous.** A single Tor process cannot connect to its own hidden service. Two machines sharing the same public IP (e.g., Docker containers on the same host, or two processes behind the same NAT) also fail. This is a Tor architectural constraint, not a malphas issue. Testing hidden service delivery requires two machines on genuinely different networks.
 
@@ -1051,7 +1050,7 @@ pytest tests/test_pinstore.py -v
 # Invite system tests
 pytest tests/test_invite.py -v
 
-# Tor tests (requires a running Tor service and passwordless sudo)
+# Tor tests (need a running Tor service with ControlPort access — debian-tor group)
 pytest tests/test_transport.py::TestTorIntegration -v
 pytest tests/test_tor_e2e.py -v
 ```
