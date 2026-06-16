@@ -110,14 +110,20 @@ class RatchetState:
             msg_num=self._send_msg_num,
         )
         self._send_msg_num += 1
-        ciphertext = encrypt(message_key, plaintext)
+        # Bind the (cleartext, on-wire) header to the ciphertext as AEAD AAD.
+        # serialize() is the exact 40 bytes that travel on the wire, and the
+        # receiver's deserialize()->serialize() round-trips to the same bytes,
+        # so the tags match. Without this the header (dh_pub, prev_count,
+        # msg_num) is unauthenticated alongside the ciphertext.
+        ciphertext = encrypt(message_key, plaintext, aad=header.serialize())
         return header, ciphertext
 
     def decrypt(self, header: MessageHeader, ciphertext: bytes) -> bytes:
+        aad = header.serialize()
         skip_key = (header.dh_pub, header.msg_num)
         if skip_key in self._skipped:
             mk = self._skipped.pop(skip_key)
-            return decrypt(mk, ciphertext)
+            return decrypt(mk, ciphertext, aad=aad)
 
         if header.dh_pub != self._remote_dh_pub:
             self._skip_messages(header.prev_count)
@@ -133,7 +139,7 @@ class RatchetState:
         self._recv_chain_key, message_key = kdf_chain(self._recv_chain_key)
         self._recv_msg_num += 1
 
-        return decrypt(message_key, ciphertext)
+        return decrypt(message_key, ciphertext, aad=aad)
 
     def _dh_ratchet(self, new_remote_pub: bytes) -> None:
         self._prev_send_count = self._send_msg_num

@@ -161,11 +161,17 @@ class AddressBook:
         padded = _pad(plaintext, BLOCK_SIZE)
         ciphertext = encrypt(self._key, padded, aad=_BOOK_AAD)
 
-        # Atomic write: write to temp file, then rename
+        # Atomic write with restrictive perms (0o600). Path.write_bytes uses
+        # the umask default (typically 0o644 — world-readable). The book holds
+        # peer labels, onion addresses and public keys; on a shared host that
+        # leaks the ciphertext for offline attack. pinstore/salt_store already
+        # do this; the book is the higher-value target and must match.
         tmp = self._path.with_suffix(".tmp")
         try:
-            tmp.write_bytes(ciphertext)
-            tmp.replace(self._path)
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(ciphertext)
+            os.replace(str(tmp), str(self._path))
         except Exception:
             tmp.unlink(missing_ok=True)
             raise

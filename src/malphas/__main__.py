@@ -3,7 +3,7 @@ Malphas entrypoint.
 
 Modes:
   python -m malphas                    # CLI interactive (default)
-  python -m malphas --mode web         # PWA + API server
+  python -m malphas --mode gui-qt      # desktop GUI (PySide6)
 
 Address book is stored encrypted at ~/.malphas/book (configurable via --book).
 """
@@ -13,7 +13,6 @@ import asyncio
 import getpass
 import logging
 import os
-import secrets
 import signal
 import sys
 from pathlib import Path
@@ -29,15 +28,15 @@ from .transport import DirectTransport, TorTransport, tor_is_available
 
 DEFAULT_BOOK_PATH = str(Path.home() / ".malphas" / "book")
 DEFAULT_SALT_PATH = str(Path.home() / ".malphas" / "salt")
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "showcase")
 
 
 def _resolve_salt(args) -> bytes:
     """
     Decide where the per-user salt comes from, in priority order:
-      1. `--from-mnemonic <words>` — restore from a 12-word BIP39
-         backup. The salt is written to args.salt if absent;
-         otherwise verified to match.
+      1. `--from-mnemonic` — restore from a 12-word BIP39 backup. The
+         words are prompted interactively (never read from argv, which
+         is world-readable via /proc and the process list). The salt is
+         written to args.salt if absent; otherwise verified to match.
       2. `args.salt` file — read if present, generate if absent
          (the existing v0.7.0 flow).
 
@@ -48,8 +47,9 @@ def _resolve_salt(args) -> bytes:
     salt_path = Path(args.salt)
 
     if args.from_mnemonic:
+        words = getpass.getpass("  recovery mnemonic (12 words): ").strip()
         try:
-            salt = mnemonic_to_salt(args.from_mnemonic)
+            salt = mnemonic_to_salt(words)
         except ValueError as e:
             print(f"  error: {e}", file=sys.stderr)
             sys.exit(2)
@@ -91,7 +91,8 @@ def _resolve_salt(args) -> bytes:
         for i, word in enumerate(words.split(), start=1):
             print(f"    {i:2d}. {word}")
         print()
-        print("  to restore on another machine:  malphas --from-mnemonic \"...\"")
+        print("  to restore on another machine:  malphas --from-mnemonic"
+              "   (you'll be prompted for the words)")
         print()
     return salt
 
@@ -254,76 +255,6 @@ async def _run_cli(args) -> None:
     finally:
         await node.stop()
         book.wipe_memory()
-
-
-async def _run_web(args) -> None:
-    import uvicorn
-
-    from .api import create_app
-
-    passphrase = _get_passphrase()
-    salt = _resolve_salt(args)
-
-    book_path = Path(args.book)
-    book_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        book, book_key, identity = _open_book_with_migration(
-            book_path, passphrase, salt
-        )
-    except ValueError as e:
-        print(f"\n  error: {e}", file=sys.stderr)
-        sys.exit(1)
-    passphrase = ""
-    del passphrase
-
-    print(f"  peer_id  {identity.peer_id}")
-    print(f"  p2p      {args.host}:{args.port}")
-    print(f"  api      http://127.0.0.1:{args.api_port}")
-
-    node = MalphasNode(
-        identity=identity,
-        host=args.host,
-        port=args.port,
-        message_ttl=args.ttl,
-    )
-    await node.start()
-    node.set_reconnect_book(book)   # auto-reconnect known contacts on drop
-
-    # Auto-connect from address book
-    for c in book.all():
-        await node.connect_to_peer(
-            c.host, c.port, c.peer_id,
-            bytes.fromhex(c.x25519_pub),
-            bytes.fromhex(c.ed25519_pub),
-        )
-
-    api_token = secrets.token_urlsafe(32)
-    app = create_app(node, STATIC_DIR, token=api_token)
-    print(f"  api token {api_token}")
-    print("  (the local UI must send this as 'Authorization: Bearer <token>'")
-    print("   on /api requests and as ?token=<token> on /ws)")
-    config = uvicorn.Config(
-        app,
-        host="127.0.0.1",
-        port=args.api_port,
-        log_level="error",
-        access_log=False,
-    )
-    server = uvicorn.Server(config)
-
-    loop = asyncio.get_running_loop()
-
-    def _shutdown():
-        loop.create_task(node.stop())
-        server.should_exit = True
-
-    if sys.platform != 'win32':
-        loop.add_signal_handler(signal.SIGINT, _shutdown)
-        loop.add_signal_handler(signal.SIGTERM, _shutdown)
-
-    await server.serve()
-    await node.stop()
-    book.wipe_memory()
 
 
 def _run_gui(args) -> None:
@@ -536,11 +467,16 @@ def main():
         action="version",
         version=f"malphas {__version__}",
     )
-    parser.add_argument("--mode", choices=["cli", "web", "gui", "gui-qt"],
+    parser.add_argument("--mode", choices=["cli", "gui", "gui-qt"],
                          default="cli")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument(
+        "--host", default="127.0.0.1",
+        help=("P2P listen address in DIRECT mode (default: 127.0.0.1, "
+              "loopback-only). Pass 0.0.0.0 to accept connections from other "
+              "machines. Ignored under --tor (Tor always binds loopback and "
+              "exposes the node only as a v3 onion service)."),
+    )
     parser.add_argument("--port", type=int, default=7777)
-    parser.add_argument("--api-port", type=int, default=8080)
     parser.add_argument("--ttl", type=int, default=3600)
     parser.add_argument(
         "--tor", action="store_true",
@@ -561,13 +497,13 @@ def main():
     )
     parser.add_argument(
         "--from-mnemonic",
-        default=None,
-        metavar='"WORD WORD ... WORD"',
+        action="store_true",
         help=(
-            "Restore the per-user salt from a 12-word BIP39 mnemonic "
-            "(printed on first run). The salt file is written if absent; "
-            "if it exists, it is verified to match — startup aborts on "
-            "mismatch."
+            "Restore the per-user salt from a 12-word BIP39 mnemonic. The "
+            "words are prompted interactively (never passed on the command "
+            "line, which would leak them via the process list). The salt "
+            "file is written if absent; if it exists it is verified to "
+            "match — startup aborts on mismatch."
         ),
     )
     parser.add_argument(
@@ -579,9 +515,7 @@ def main():
     args = parser.parse_args()
     _setup_debug_logging(args.debug)
 
-    if args.mode == "web":
-        asyncio.run(_run_web(args))
-    elif args.mode == "gui":
+    if args.mode == "gui":
         _run_gui(args)
     elif args.mode == "gui-qt":
         _run_gui_qt(args)

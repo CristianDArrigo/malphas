@@ -38,55 +38,81 @@ class PinStoreCorruptError(Exception):
 
 class PinStore:
     def __init__(self, path: str | None = None, key: bytes | None = None):
-        self._pins: dict[str, str] = {}  # peer_id -> ed25519_pub hex
+        # peer_id -> {"ed25519": hex, "x25519": hex|None}. x25519 may be None
+        # for pins migrated from the legacy ed25519-only format; it is filled
+        # in on the next contact with that peer.
+        self._pins: dict[str, dict[str, str | None]] = {}
         self._path = Path(path) if path else None
         self._key = key
 
-    def check_and_pin(self, peer_id: str, ed25519_pub: bytes) -> tuple[bool, str | None]:
+    def check_and_pin(self, peer_id: str, ed25519_pub: bytes,
+                      x25519_pub: bytes | None = None) -> tuple[bool, str | None]:
         """
-        Check a peer's key against the store.
+        Check a peer's keys against the store (TOFU).
+
+        Both the Ed25519 identity key and the static X25519 encryption key are
+        pinned. They are derived from the same identity seed, so for a given
+        peer they are always presented together — a matching Ed25519 with a
+        *different* X25519 is an impersonation/tamper signal (the exact
+        sealed-sender-redirection MITM), not a legitimate rotation, and is
+        rejected.
 
         Returns:
-            (True, None) — key matches existing pin or newly pinned
-            (False, pinned_key_hex) — key mismatch, returns the expected key
+            (True, None) — keys match the existing pin, or newly pinned
+            (False, pinned_ed25519_hex) — mismatch; returns the expected key
         """
-        pub_hex = ed25519_pub.hex()
+        import hmac as _hmac
+        ed_hex = ed25519_pub.hex()
+        x_hex = x25519_pub.hex() if x25519_pub is not None else None
         existing = self._pins.get(peer_id)
 
         if existing is None:
-            # First contact — pin it
-            self._pins[peer_id] = pub_hex
+            # First contact — pin both keys.
+            self._pins[peer_id] = {"ed25519": ed_hex, "x25519": x_hex}
             self._save()
             return True, None
 
-        # Constant-time compare so a timing oracle can't be used to
-        # fingerprint pin-store contents byte-by-byte. Pinned keys
-        # are nominally public, but the safe path is the cheap path.
-        import hmac as _hmac
-        if _hmac.compare_digest(existing, pub_hex):
-            return True, None
+        # Constant-time compare so a timing oracle can't fingerprint the
+        # pin store byte-by-byte. Pinned keys are nominally public, but the
+        # safe path is the cheap path.
+        pinned_ed = existing.get("ed25519") or ""
+        if not _hmac.compare_digest(pinned_ed, ed_hex):
+            return False, (pinned_ed or None)
 
-        # Mismatch
-        return False, existing
+        # Ed25519 matches — check (or back-fill) the X25519 pin.
+        pinned_x = existing.get("x25519")
+        if pinned_x is None and x_hex is not None:
+            existing["x25519"] = x_hex   # legacy/missing pin: record it now
+            self._save()
+        elif (pinned_x is not None and x_hex is not None
+              and not _hmac.compare_digest(pinned_x, x_hex)):
+            return False, pinned_ed
+        return True, None
 
-    def trust(self, peer_id: str, ed25519_pub: bytes | None = None) -> None:
+    def trust(self, peer_id: str, ed25519_pub: bytes | None = None,
+              x25519_pub: bytes | None = None) -> None:
         """
-        Reset or remove pin for a peer. If ed25519_pub is given,
-        pin to that key. Otherwise, remove the pin entirely
+        Reset or remove pin for a peer. If ed25519_pub is given, pin to that
+        key (optionally with x25519_pub). Otherwise, remove the pin entirely
         (next contact will re-pin).
         """
         if ed25519_pub:
-            self._pins[peer_id] = ed25519_pub.hex()
+            self._pins[peer_id] = {
+                "ed25519": ed25519_pub.hex(),
+                "x25519": x25519_pub.hex() if x25519_pub is not None else None,
+            }
         else:
             self._pins.pop(peer_id, None)
         self._save()
 
     def get_pin(self, peer_id: str) -> str | None:
         """Return the pinned Ed25519 pubkey hex for a peer, or None."""
-        return self._pins.get(peer_id)
+        entry = self._pins.get(peer_id)
+        return entry.get("ed25519") if entry else None
 
     def all_pins(self) -> dict[str, str]:
-        return dict(self._pins)
+        """peer_id -> pinned Ed25519 hex (the X25519 pin is internal)."""
+        return {pid: (e.get("ed25519") or "") for pid, e in self._pins.items()}
 
     # ── Persistence ──────────────────────────────────────────────────────
 
@@ -114,7 +140,19 @@ class PinStore:
             pins = json.loads(plaintext.decode())
             if not isinstance(pins, dict):
                 raise ValueError("pin file did not contain a JSON object")
-            self._pins = pins
+            # Migrate the legacy flat format {peer_id: ed25519_hex} to the
+            # current {peer_id: {"ed25519": ..., "x25519": ...}} shape.
+            normalized: dict[str, dict[str, str | None]] = {}
+            for pid, val in pins.items():
+                if isinstance(val, str):
+                    normalized[pid] = {"ed25519": val, "x25519": None}
+                    upgrade = True
+                elif isinstance(val, dict) and val.get("ed25519"):
+                    normalized[pid] = {"ed25519": val.get("ed25519"),
+                                       "x25519": val.get("x25519")}
+                else:
+                    raise ValueError(f"malformed pin entry for {pid}")
+            self._pins = normalized
             if upgrade:
                 self._save()
             return True

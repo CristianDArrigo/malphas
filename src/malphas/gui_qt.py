@@ -654,6 +654,8 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         sb = self.statusBar()
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setObjectName("StatusLabel")
+        # PlainText — the status line embeds the active group name (peer-supplied).
+        self.status_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         sb.addWidget(self.status_label, 1)
 
     # Header --------------------------------------------------------------
@@ -698,6 +700,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
 
         self.header_status = QtWidgets.QLabel("0 peers · 0 groups")
         self.header_status.setObjectName("HeaderSub")
+        self.header_status.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         h.addWidget(self.header_status)
 
         self.status_dot = QtWidgets.QLabel("●")
@@ -809,8 +812,14 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         title_box.setContentsMargins(0, 0, 0, 0)
         self.conv_title = QtWidgets.QLabel("No conversation selected")
         self.conv_title.setObjectName("HeaderBrand")
+        # PlainText: the conversation title is a peer-supplied group name (and
+        # the sub a peer_id). QLabel's default AutoText would render a name
+        # like `<img src=http://x>` as HTML and fetch it from the real IP,
+        # outside Tor — deanonymisation. Same rule as the message bubbles.
+        self.conv_title.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.conv_sub = QtWidgets.QLabel("")
         self.conv_sub.setObjectName("HeaderSub")
+        self.conv_sub.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         title_box.addWidget(self.conv_title)
         title_box.addWidget(self.conv_sub)
         chl.addLayout(title_box)
@@ -1424,11 +1433,21 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         if not fid:
             return
         self._pending_offers[fid] = (from_id, offer)
-        ok = QtWidgets.QMessageBox.question(
-            self, "Incoming file",
+        # PlainText: the file name is peer-controlled. A static
+        # QMessageBox.question renders AutoText, so a name like
+        # `<img src=http://x>` would fetch from the real IP (outside Tor) the
+        # moment the offer dialog appears — before the user even clicks.
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Question)
+        box.setWindowTitle("Incoming file")
+        box.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        box.setText(
             f"{_short(from_id, 12)} wants to send "
-            f"'{offer.get('name')}' ({offer.get('size', 0)} bytes). Accept?",
-        )
+            f"'{offer.get('name')}' ({offer.get('size', 0)} bytes). Accept?")
+        box.setStandardButtons(
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No)
+        ok = box.exec()
         if ok == QtWidgets.QMessageBox.StandardButton.Yes:
             self.node.accept_file_offer(offer)
             self._add_system(

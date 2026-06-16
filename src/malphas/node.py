@@ -35,7 +35,7 @@ from .crypto import (
 )
 from .discovery import PeerDiscovery, PeerInfo
 from .files import FileOffer, FileTransferManager, OutgoingFile
-from .groups import MAX_MEMBERS, Group, GroupRegistry
+from .groups import MAX_MEMBERS, MAX_NAME_LEN, Group, GroupRegistry
 from .identity import Identity
 from .memory import MessageStore
 from .obfuscation import (
@@ -82,6 +82,20 @@ HEADER_LEN = 5   # type(1) + length(4)
 # killing the process pre-authentication. PROTOCOL.md §4 already specifies
 # this 16 MiB limit — it just wasn't enforced.
 MAX_FRAME_BYTES = 16 * 1024 * 1024
+# Cap on simultaneous inbound connections (incl. in-flight handshakes). An
+# unbounded accept loop lets an attacker exhaust file descriptors / tasks and
+# inflate the O(connections) ratchet trial-decrypt. Outbound (user-initiated)
+# connections are not counted against this.
+MAX_INBOUND_CONNECTIONS = 128
+# Idle timeout for an authenticated read loop (seconds). A peer that sends a
+# partial frame and then stalls (slowloris) would otherwise pin a task and its
+# buffer forever; cover traffic / pings on a live link arrive well inside this.
+_READ_IDLE_TIMEOUT = 300
+# Upper bound on a file-resume `received_idx` list. We only ever send files
+# chunked at files.CHUNK_SIZE (32 KB), so a 100 MB file is ~3200 chunks; this
+# bounds the set comprehension that materialises the list so a peer can't ship
+# millions of integers to burn CPU on the event-loop thread.
+_MAX_RESUME_INDICES = 8192
 # Freshness window for the per-payload `ts` field (seconds). A message may
 # arrive up to _TS_FUTURE_SKEW in the "future" (peer clock ahead) and up to
 # _TS_PAST_WINDOW in the past (peer clock behind / brief queueing) before we
@@ -287,6 +301,7 @@ class MalphasNode:
         self._groups = GroupRegistry()
         self.auto_accept_files = False
         self._connections: dict[str, PeerConnection] = {}
+        self._inflight_inbound = 0   # active inbound conns incl. handshakes
         self._server: asyncio.AbstractServer | None = None
         self._callbacks: set[Callable] = set()
         self._receipt_callbacks: set[Callable] = set()
@@ -575,7 +590,7 @@ class MalphasNode:
             "content": content,
             "msg_id": msg_id,
             "nonce": nonce.hex(),
-            "ts": time.time(),
+            "ts": int(time.time()),  # int secs; sub-second would leak clock-skew
         }
         payload_bytes = json.dumps(payload_dict).encode()
 
@@ -681,18 +696,34 @@ class MalphasNode:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
-        conn = PeerConnection(reader, writer)
-        ok = await self._perform_handshake(conn, outbound=False)
-        if ok and conn.peer_info:
-            self._connections[conn.peer_info.peer_id] = conn
-            await self._read_loop(conn)
-        else:
-            conn.close()
+        # Reject early if we're already at the inbound cap — before doing any
+        # handshake work — so a connection flood can't exhaust fds/tasks.
+        if self._inflight_inbound >= MAX_INBOUND_CONNECTIONS:
+            try:
+                writer.close()
+            except Exception:  # noqa: S110
+                pass
+            return
+        self._inflight_inbound += 1
+        try:
+            conn = PeerConnection(reader, writer)
+            ok = await self._perform_handshake(conn, outbound=False)
+            if ok and conn.peer_info:
+                self._connections[conn.peer_info.peer_id] = conn
+                await self._read_loop(conn)
+            else:
+                conn.close()
+        finally:
+            self._inflight_inbound -= 1
 
     async def _read_loop(self, conn: PeerConnection) -> None:
         try:
             while self._running:
-                msg_type, payload = await conn.recv_raw()
+                # Idle timeout: a stalled/partial-frame peer (slowloris) must
+                # not hold this task and its buffer open indefinitely.
+                msg_type, payload = await asyncio.wait_for(
+                    conn.recv_raw(), timeout=_READ_IDLE_TIMEOUT
+                )
                 await self._dispatch(conn, msg_type, payload)
         except (asyncio.IncompleteReadError, ConnectionResetError, OSError, Exception):
             pass
@@ -891,9 +922,14 @@ class MalphasNode:
             if ts > now + _TS_FUTURE_SKEW or ts < now - _TS_PAST_WINDOW:
                 return
 
-        # Replay protection across every kind (msg, receipt, file_*).
-        # Cover packets carry no msg_id and are dropped before reaching here.
-        if msg_id and self._replay.seen(from_id, msg_id):
+        # Replay protection across every kind (msg, receipt, file_*, group_*).
+        # Cover packets carry no msg_id and are dropped before reaching here,
+        # so every real payload that arrives MUST have one (every sender stamps
+        # it in _try_send_payload). Treat a missing/empty msg_id as malformed
+        # and drop it — otherwise file_offer/group_invite, which don't re-check
+        # msg_id downstream, would slip past the replay guard (notification
+        # flooding).
+        if not msg_id or self._replay.seen(from_id, msg_id):
             return
 
         if kind == KIND_MESSAGE:
@@ -1082,12 +1118,18 @@ class MalphasNode:
         received = data.get("received_idx")
         if not isinstance(file_id, str) or not isinstance(received, list):
             return
+        # Only honor resume signals for files we are actively sending — checked
+        # BEFORE materialising the index set, so a peer can't burn CPU/memory
+        # by sending millions of entries for a file we don't even have.
+        if self._files.get_outgoing(file_id) is None:
+            return
+        # A file we send is chunked at CHUNK_SIZE (32 KB), so a 100 MB file has
+        # at most ~3200 chunks; any longer index list is bogus.
+        if len(received) > _MAX_RESUME_INDICES:
+            return
         try:
             idx_set = {int(i) for i in received}
         except (TypeError, ValueError):
-            return
-        # Only honor resume signals for files we are actively sending.
-        if self._files.get_outgoing(file_id) is None:
             return
         self._resume_signals[file_id] = idx_set
         ev = self._resume_events.get(file_id)
@@ -1108,8 +1150,14 @@ class MalphasNode:
         if not isinstance(group_id, str) or not isinstance(group_name, str) \
                 or not isinstance(members, list):
             return
+        # Bound peer-supplied strings on the receive path. GroupRegistry.create
+        # enforces MAX_NAME_LEN locally, but register() (the receive path) did
+        # not — an authenticated peer could otherwise send a 100 MB group_name
+        # or group_id and have it stored in memory (per-invite heap DoS).
+        if len(group_name) > MAX_NAME_LEN or len(group_id) > 128:
+            return
         try:
-            members_list = [str(m) for m in members]
+            members_list = [str(m)[:64] for m in members]
         except Exception:
             return
         if len(members_list) > MAX_MEMBERS:
@@ -1498,7 +1546,7 @@ class MalphasNode:
             "from_sealed": from_sealed,
             "msg_id": msg_id,
             "nonce": nonce.hex(),
-            "ts": time.time(),
+            "ts": int(time.time()),  # int secs; sub-second would leak clock-skew
             **extras,
         }
         payload_bytes = json.dumps(payload_dict).encode()
@@ -1536,9 +1584,16 @@ class MalphasNode:
         try:
             eph_priv, eph_pub = generate_ephemeral_keypair()
 
-            # Sign ephemeral pubkey with our Ed25519 identity key
-            # This proves we hold the private key for our claimed identity
-            eph_sig = self.identity.sign(eph_pub)
+            # Sign the ephemeral pubkey AND our static X25519 key with our
+            # Ed25519 identity key. Signing eph_pub proves we hold the
+            # identity private key; binding x25519_pub stops an on-path
+            # attacker from swapping our static encryption key during the
+            # handshake (which would redirect every sealed-sender envelope
+            # for us to the attacker — sender deanonymisation + channel DoS).
+            # Both operands are fixed 32-byte keys, so the concatenation is
+            # unambiguous.
+            eph_sig = self.identity.sign(
+                eph_pub + self.identity.x25519_pub_bytes)
 
             hello = json.dumps({
                 "v": WIRE_VERSION,
@@ -1586,20 +1641,22 @@ class MalphasNode:
             if their_peer_id != peer_id_from_pubkey(their_ed25519):
                 return False
 
-            # Verify the peer's Ed25519 signature over their ephemeral key.
-            # Without this, a MITM could present their own ephemeral key
-            # and intercept the entire session.
+            # Verify the peer's Ed25519 signature over (their ephemeral key
+            # || their static X25519 key). Without this, a MITM could present
+            # their own ephemeral key and intercept the session, or swap the
+            # static x25519_pub to redirect our sealed-sender envelopes.
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
             try:
                 peer_ed_pub = Ed25519PublicKey.from_public_bytes(their_ed25519)
-                peer_ed_pub.verify(their_eph_sig, their_eph)
+                peer_ed_pub.verify(their_eph_sig, their_eph + their_x25519)
             except Exception:
                 return False  # signature invalid — reject handshake
 
             # Key pinning (TOFU): verify Ed25519 key matches the pinned key
             # for this peer_id. First contact pins the key; subsequent contacts
             # must match or the handshake is rejected.
-            ok, pinned = self.pins.check_and_pin(their_peer_id, their_ed25519)
+            ok, pinned = self.pins.check_and_pin(
+                their_peer_id, their_ed25519, their_x25519)
             if not ok:
                 for cb in self._pin_callbacks:
                     try:

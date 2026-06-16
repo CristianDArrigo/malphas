@@ -12,16 +12,11 @@ description = "Privacy-first P2P messenger with onion routing"
 requires-python = ">=3.10"
 dependencies = [
     "cryptography>=42.0",
-    "fastapi>=0.111",
-    "uvicorn>=0.29",
-    "websockets>=12.0",
     "zeroconf>=0.131",
-    "pydantic>=2.0",
     "stem>=1.8",
     "argon2-cffi>=23.0",
     "prompt_toolkit>=3.0",
     "rich>=13.0",
-    "python-multipart>=0.0.9",
     "mnemonic>=0.20",
 ]
 
@@ -142,7 +137,6 @@ strict = true
 module = [
     "malphas.node",
     "malphas.transport",
-    "malphas.api",
     "malphas.cli_ui",
     "malphas.__main__",
     "malphas.splash",
@@ -165,7 +159,6 @@ disable_error_code = [
     "name-defined",  # ditto for Tk runtime-only attrs
     "misc",
     "call-overload",     # Tk typestubs over-narrow Toplevel(master=Misc)
-    "untyped-decorator", # FastAPI's @app.post / @app.get aren't typed in older mypy stubs (api.py)
 ]
 
 [tool.ruff]
@@ -187,7 +180,6 @@ ignore = [
     "E501",  # line too long (managed by formatter)
     "S101",  # assert in tests is fine
     "S311",  # we use `random` only for non-crypto jitter where appropriate
-    "B008",  # FastAPI Depends-style defaults
     # Triaged backlog — keep silenced until each is reviewed individually.
     # Each carries an existing design rationale (see docs/auto-loop/iter-007).
     "S110",  # try-except-pass: fail-closed silent drops are a feature

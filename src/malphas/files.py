@@ -265,6 +265,14 @@ class FileTransferManager:
     # ── Incoming ──────────────────────────────────────────────────────────────
 
     def register_incoming(self, offer: FileOffer) -> IncomingFile:
+        # Enforce the concurrency cap (was declared but never checked): each
+        # IncomingFile buffers up to MAX_FILE_BYTES, so an unbounded number of
+        # concurrent offers is a memory-exhaustion vector. Re-registering an
+        # already-tracked file_id is allowed (resume), and doesn't count.
+        if (offer.file_id not in self._incoming
+                and len(self._incoming) >= self._max):
+            raise ValueError(
+                f"too many concurrent incoming transfers (cap={self._max})")
         ic = IncomingFile(offer)
         self._incoming[offer.file_id] = ic
         return ic

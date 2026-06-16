@@ -211,6 +211,17 @@ class MalphasCLI:
         """
         return "".join(c for c in str(text) if c >= " " and c != "\x7f")
 
+    @staticmethod
+    def _rsafe(text: str) -> str:
+        """Sanitize peer text destined for a Rich sink (_ok/_err/_info, Table).
+
+        _safe() strips control chars (the ANSI/_plain risk); this also escapes
+        Rich console markup so a peer-supplied name like `[red]SYSTEM[/red]` or
+        `[link=http://x]` can't inject styling/hyperlinks via console.print().
+        """
+        from rich.markup import escape
+        return escape(MalphasCLI._safe(text))
+
     async def _on_message(self, from_id: str, content: str) -> None:
         contact = self.book.get_by_peer_id(from_id)
         label = contact.label if contact else from_id[:8]
@@ -424,7 +435,7 @@ class MalphasCLI:
         group = self.node._groups.lookup(target)
         if group is not None:
             self.active_peer = group.group_id
-            self._ok(f"chatting in group {group.name} "
+            self._ok(f"chatting in group {self._rsafe(group.name)} "
                      f"({group.member_count()} members)")
             return
 
@@ -624,7 +635,7 @@ class MalphasCLI:
             if ok:
                 ts = time.strftime("%H:%M")
                 self._plain(
-                    f"  \033[90m{ts}\033[0m  \033[36m[{group.name}]\033[0m  "
+                    f"  \033[90m{ts}\033[0m  \033[36m[{self._safe(group.name)}]\033[0m  "
                     f"\033[90myou\033[0m  {text}"
                 )
             else:
@@ -703,7 +714,8 @@ class MalphasCLI:
         from_id, offer = self._pending_offers[fid]
         ok = self.node.accept_file_offer(offer)
         if ok:
-            self._ok(f"accepted {offer.get('name', '?')} from {from_id[:8]}")
+            self._ok(f"accepted {self._rsafe(offer.get('name', '?'))} "
+                     f"from {from_id[:8]}")
             del self._pending_offers[fid]
             # Remember the offer so _on_file_complete can show the real name.
             self._accepted_offers[fid] = (from_id, offer)
@@ -817,7 +829,8 @@ class MalphasCLI:
             t.add_column("group_id", style=C_DIM)
             t.add_column("members", style=C_DIM)
             for g in groups:
-                t.add_row(g.name, g.group_id[:16] + "...", str(g.member_count()))
+                t.add_row(Text(self._safe(g.name)),
+                          g.group_id[:16] + "...", str(g.member_count()))
             self._print(Panel(t, border_style=C_BORDER,
                               title="[dim]groups[/dim]", title_align="left"))
             return
@@ -837,7 +850,8 @@ class MalphasCLI:
                 return
             ok = await self.node.add_group_member(group.group_id, peer_id)
             if ok:
-                self._ok(f"added {target} to {group.name} "
+                self._ok(f"added {self._rsafe(target)} "
+                         f"to {self._rsafe(group.name)} "
                          f"({group.member_count()} members)")
             else:
                 self._err("add failed (cap reached or peer offline)")
@@ -867,7 +881,7 @@ class MalphasCLI:
                 self._err(f"unknown group: {args[1]}")
                 return
             self.node.leave_group(group.group_id)
-            self._ok(f"left {group.name}")
+            self._ok(f"left {self._rsafe(group.name)}")
             if self.active_peer == group.group_id:
                 self.active_peer = None
             return
@@ -945,7 +959,7 @@ class MalphasCLI:
         contact = self.book.get_by_peer_id(from_id)
         from_label = contact.label if contact else from_id[:8]
         self._pending_offers[fid] = (from_id, offer)
-        name = offer.get("name", "?")
+        name = self._safe(offer.get("name", "?"))
         size = offer.get("size", 0)
         self._plain(
             f"  \033[33m*** offer from {from_label}: {name} ({size} bytes)\033[0m"
@@ -962,7 +976,7 @@ class MalphasCLI:
                        or self._pending_offers.pop(file_id, None))
         if offer_entry is not None:
             from_id, offer = offer_entry
-            name = offer.get("name", "file.bin")
+            name = self._safe(offer.get("name", "file.bin"))
         else:
             from_id, name = "?", "file.bin"
         self._completed_files[file_id] = (from_id, name, data)

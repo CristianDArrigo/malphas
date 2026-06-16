@@ -116,6 +116,16 @@ def parse_invite(url: str) -> dict[str, Any]:
     except Exception as e:
         raise ValueError(f"Signature verification failed: {e}") from e
 
+    # Bind peer_id to the signed Ed25519 key. The signature only proves the
+    # key holder authored the invite; without this an attacker can sign a valid
+    # invite carrying a *victim's* peer_id, which the CLI/GUI display in the
+    # "add contact?" confirmation before connecting — identity spoofing at the
+    # UI layer. The handshake re-checks this, but parse_invite must be safe on
+    # its own (it's the value callers show and trust pre-handshake).
+    from .identity import peer_id_from_pubkey
+    if payload["peer_id"] != peer_id_from_pubkey(ed_pub_bytes):
+        raise ValueError("peer_id does not match ed25519_pub")
+
     # Reject expired invites. `exp` is optional for backward compatibility
     # with pre-expiry invites, but when present it is signed, so it cannot
     # be stripped or extended without invalidating the signature above.
