@@ -425,6 +425,32 @@ def _run_gui_qt(args) -> None:
     bridge.submit_coro(node.start()).result(timeout=10.0)
     node.set_reconnect_book(book)
 
+    if args.tor:
+        # Register the v3 hidden service so other peers can reach us via
+        # .onion and our invites carry an onion address (mirrors _run_cli /
+        # _run_gui — the Qt path previously skipped this, so a Qt node was
+        # only ever reachable outbound, and its invites had no onion).
+        try:
+            from cryptography.hazmat.primitives.serialization import (
+                Encoding,
+                NoEncryption,
+                PrivateFormat,
+            )
+            priv_bytes = identity.ed25519_priv.private_bytes(
+                Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+            )
+            onion = bridge.submit_coro(
+                transport.start_hidden_service(
+                    identity.ed25519_pub_bytes, priv_bytes, args.port
+                )
+            ).result(timeout=30.0)
+            print(f"  onion    {onion}")
+        except Exception as e:
+            print(f"  warning: hidden service registration failed: {e}",
+                  file=sys.stderr)
+            print("  continuing without hidden service (outbound Tor only)",
+                  file=sys.stderr)
+
     print(f"  peer_id  {identity.peer_id}")
     print(f"  port     {args.port}")
     print("  launching Qt GUI...")
