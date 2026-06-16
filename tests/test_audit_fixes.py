@@ -16,7 +16,6 @@ import pytest
 
 from malphas.identity import create_identity_with_book_key
 
-
 # ── PinStore: x25519 pinned alongside ed25519 (sealed-sender redirect MITM) ──
 
 class TestPinStoreX25519:
