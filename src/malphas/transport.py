@@ -332,9 +332,24 @@ class TorTransport(BaseTransport):
                 prefix = [] if os.getuid() == 0 else ["sudo", "-n"]
 
                 def _run(cmd):
-                    subprocess.run(prefix + cmd, capture_output=True, timeout=5)
+                    return subprocess.run(
+                        prefix + cmd, capture_output=True, timeout=5)
 
-                _run(["mkdir", "-p", str(hs_path)])
+                # The HS directory lives under /var/lib/tor (root, mode 700),
+                # so every step needs root. With `sudo -n` (non-interactive)
+                # and no cached credentials this fails — and used to fail
+                # SILENTLY, leaving Tor with no key for the onion we then
+                # advertised (a dead onion). Gate on the first command and
+                # raise a clear, actionable error instead.
+                r = _run(["mkdir", "-p", str(hs_path)])
+                if r.returncode != 0:
+                    raise RuntimeError(
+                        "hidden-service setup needs root and non-interactive "
+                        "sudo is unavailable. Run `sudo -v` once before "
+                        "launching (caches credentials ~15 min), or start as "
+                        "root. sudo: "
+                        + r.stderr.decode(errors="replace").strip()[:140]
+                    )
                 for f in ["hs_ed25519_secret_key", "hs_ed25519_public_key", "hostname"]:
                     _run(["cp", str(tmp / f), str(hs_path / f)])
                 _run(["chown", "-R", f"{tor_user}:{tor_user}", str(hs_path)])
