@@ -16,15 +16,16 @@ malphas does and does not protect against.
 ## Supported Versions
 
 Only the latest released version receives security fixes. Older versions are
-unsupported. The project is at its first stable release, `1.0.0`. The wire
+unsupported. The project is stable; the latest release is `1.0.1`. The wire
 format (`WIRE_VERSION = 2`) is frozen and binding; it was bumped 1 → 2 across
-the pre-1.0 security audit (handshake + ratchet), so `1.0.0` nodes do not
-interoperate with the `v1` wire of `1.0.0-rc6` and earlier.
+the pre-1.0 security audit (handshake + ratchet), so `1.0.x` nodes do not
+interoperate with the `v1` wire of `1.0.0-rc6` and earlier. `1.0.1` is wire-
+compatible with `1.0.0`.
 
 | Version  | Supported |
 |----------|-----------|
-| 1.0.0    | yes       |
-| < 1.0.0  | no        |
+| 1.0.1    | yes       |
+| < 1.0.1  | no        |
 
 ## Out-of-scope (known design choices, not bugs)
 

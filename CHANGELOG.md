@@ -3,7 +3,11 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
-## [Unreleased]
+## [1.0.1] — 2026-06-16
+
+No wire-format change (the onion address is identical), so `1.0.1`
+interoperates with any `1.0.0` node. This release removes the last reason
+malphas needed `sudo`.
 
 ### Changed
 
@@ -13,10 +17,16 @@ versioning is SemVer with the caveat that wire-format-breaking changes always bu
   cookie-authenticated control port and gets the same deterministic onion —
   **no sudo, no on-disk keys, no torrc edits, no tor restart**. The service
   is ephemeral and connection-scoped: Tor drops it (`DEL_ONION`) when the
-  node stops or the process dies. Resolves TM-20. No wire-format change (the
-  onion address is identical), so this interoperates with any `1.0.0` node.
-  Needs Tor's ControlPort enabled and readable cookie auth (`scripts/setup.sh`
-  configures this and adds you to the `debian-tor` group).
+  node stops or the process dies. Resolves TM-20. Needs Tor's ControlPort
+  enabled and readable cookie auth (`scripts/setup.sh` configures this and
+  adds you to the `debian-tor` group).
+
+### Fixed
+
+- `ADD_ONION` "Onion address collision" is treated as success: if the onion
+  is already served (e.g. a box still carrying the legacy file-based HS in
+  `torrc`, or a second instance), the node is in fact reachable, so it
+  advertises the onion instead of failing and shipping an onion-less invite.
 
 ## [1.0.0] — 2026-06-16
 
