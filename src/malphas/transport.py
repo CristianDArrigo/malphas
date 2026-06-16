@@ -320,12 +320,21 @@ class TorTransport(BaseTransport):
                     await_publication=False,
                     detached=False,
                 )
-            except Exception:
+            except Exception as e:
                 controller.close()
+                # "Onion address collision" = this onion is already registered
+                # with Tor: by a persistent (torrc) hidden service for the same
+                # identity, or another running instance. It's already serving
+                # the same deterministic address (mapped to our local port), so
+                # the node IS reachable — treat it as up and advertise the
+                # onion. We don't own that service, so we keep no controller
+                # for it (nothing to DEL_ONION on stop).
+                if "collision" in str(e).lower():
+                    return
                 raise
-            # Hold the controller open: the ephemeral HS lives as long as this
-            # connection does (closed in stop()). Set here, inside the worker,
-            # so a failure above leaves _hs_controller None (no dead onion).
+            # Fresh ephemeral HS — hold the controller open so it lives exactly
+            # as long as this connection (closed in stop()). Set here, inside
+            # the worker, so a failure above leaves _hs_controller None.
             self._hs_controller = controller
 
         await loop.run_in_executor(None, _add)
