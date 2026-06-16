@@ -3,6 +3,78 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [1.0.0-rc7] — 2026-06-16
+
+A full independent security audit of the whole tree (crypto, protocol,
+anonymity, DoS, at-rest, UI), with every HIGH finding verified against the
+code, plus a Qt GUI visual refresh. The core cryptography held; the fixes
+close anonymity, MITM, DoS and untrusted-content vectors at the edges.
+Regression tests in `tests/test_audit_fixes.py`.
+
+### ⚠️ Breaking — wire format (`WIRE_VERSION` 1 → 2)
+
+The audit motivated two intentional, breaking changes. rc7 nodes do **not**
+interoperate with rc6 and earlier — **all peers must update together**. The
+version bump makes a mismatch fail cleanly at the handshake (the `v` field is
+now mandatory and checked) instead of as an opaque signature error.
+
+- **Handshake signature now covers the static X25519 key.** `eph_sig` signs
+  `eph_pub || x25519_pub` (was `eph_pub` only), binding the encryption key to
+  the identity. The TOFU store now pins **both** Ed25519 and X25519 (legacy
+  ed25519-only pins migrate and back-fill). Closes a first-contact MITM that
+  could swap the static X25519 and redirect every sealed-sender envelope to
+  the attacker.
+- **Double Ratchet binds its cleartext header as AEAD AAD** (`dh_pub`,
+  `prev_count`, `msg_num`), authenticating the header alongside the ciphertext.
+
+### Removed
+
+- **`--mode web` (the in-app FastAPI server + PWA) entirely**, along with
+  `api.py`, its tests, and the `fastapi`/`uvicorn`/`websockets`/`pydantic`/
+  `python-multipart` dependencies. It ran on `DirectTransport` and ignored
+  `--tor`, sending all traffic in the clear from the user's real IP — an
+  anonymity hole at odds with the whole project. To be redone properly later.
+  (The `frontend/` showcase site, deployed separately, is unaffected.)
+
+### Fixed — Anonymity
+
+- `--host` now defaults to `127.0.0.1` (was `0.0.0.0`); exposing the P2P
+  listener publicly in direct mode is now an explicit opt-in. Tor mode is
+  unaffected (always loopback + onion).
+- Qt GUI: the conversation title/subtitle, header/status labels and the
+  file-offer dialog now render **PlainText**. A peer-controlled group or file
+  name like `<img src="http://x">` no longer triggers a fetch from the real
+  IP outside Tor (the same IP-leak class as the rc6 message-bubble fix, on
+  the sinks it missed).
+- Per-payload `ts` is now integer seconds — sub-second precision leaked a
+  clock-skew fingerprint to the receiving/relay hop.
+- `--from-mnemonic` is prompted interactively instead of read from `argv`
+  (which is world-readable via `/proc` and the process list).
+
+### Fixed — DoS / resource
+
+- Inbound connection cap and a read-loop idle timeout (slowloris / partial-
+  frame stalls).
+- The file-transfer concurrency cap is now actually enforced; file-resume
+  index lists and received `group_name`/`group_id` lengths are bounded.
+- Every payload must carry a `msg_id` — `file_offer`/`group_invite` previously
+  slipped past the replay guard (notification flooding).
+
+### Fixed — At-rest / input
+
+- `parse_invite` binds `peer_id` to the signed Ed25519 key (a forged peer_id
+  in a validly-signed invite could spoof a victim in the add-contact UI).
+- The address book is written `0600` (was umask-default, often
+  world-readable) — matching pinstore/salt_store.
+- The CLI sanitises peer-supplied file and group names before ANSI/`_plain`
+  and Rich console sinks (terminal-escape and Rich-markup injection).
+
+### Changed — UI
+
+- Qt GUI visual refresh: cohesive avatar palette, modern borderless bubbles
+  with depth, legible system messages, a proper empty state, a corrected
+  About dialog (accurate crypto, labelled peer ID), roomy input modals.
+
 ## [1.0.0-rc6] — 2026-06-13
 
 A security review of the crypto/protocol layer, plus a round of

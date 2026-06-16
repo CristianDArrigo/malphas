@@ -1618,11 +1618,13 @@ class MalphasNode:
 
             their_data = json.loads(their_hello.decode())
 
-            # Wire-version check. Lenient on missing (pre-1.0.0-rc1
-            # peers don't send it); strict on mismatch (a future
-            # bump means the protocol changed, refuse to talk).
+            # Wire-version check. Now strict: `v` is mandatory and must equal
+            # WIRE_VERSION. (Pre-rc1 peers that omitted it no longer exist, and
+            # rc7 bumped the wire to 2 over a breaking handshake/ratchet change
+            # — a mismatched or missing version must fail here, cleanly, rather
+            # than later as an opaque signature error.)
             their_v = their_data.get("v")
-            if their_v is not None and their_v != WIRE_VERSION:
+            if their_v != WIRE_VERSION:
                 return False
 
             their_eph = bytes.fromhex(their_data["eph_pub"])

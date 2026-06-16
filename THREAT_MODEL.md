@@ -141,7 +141,7 @@ release.
 | ID    | Severity | Item                                                                     | Tracked in   |
 |-------|:--------:|--------------------------------------------------------------------------|--------------|
 | TM-01 | Medium (was High) | Operational consensus on group membership added in iter-055 via additive `group_member_change` kind: add/remove/leave fan a notification to all remaining members so their fanouts converge to the new list. **Cryptographic** PCS at the membership boundary (MLS-style `member_ratchet`) is still TBD. | iter-055 ⚠️ partial |
-| TM-03 | High     | Wire format has been broken 4× in two months. Not stable yet.            | PROTOCOL.md, frozen at `1.0.0-rc1`. |
+| TM-03 | High     | Wire format churned during 0.x; frozen in intent at `1.0.0-rc1`. `1.0.0-rc7` made a final, deliberate pre-1.0 break (`WIRE_VERSION` 2) carrying the security-audit fixes. Binding from `1.0.0`. | PROTOCOL.md §10. |
 | TM-04 | Medium   | TOFU window: first connect to a new peer trusts the public key on faith. | by design; documented in invite flow. |
 | TM-05 | ~~Medium~~ resolved | Constant-time compares audited (iter-054). `pinstore` and `files` integrity check now use `hmac.compare_digest`. Other comparisons either go through `cryptography.hazmat` (constant-time by construction) or compare public identifiers where timing leaks no secret. Regression-tested in `tests/test_constant_time.py`. | iter-054 ✅ |
 | TM-06 | Medium   | Cover traffic optional and basic; doesn't defeat traffic analysis.       | future       |
@@ -154,7 +154,7 @@ release.
 | TM-13 | ~~High~~ resolved | Unbounded ratchet skip: one crafted header (uint32 `msg_num`) could drive ~2³² skipped-key KDF iterations. Now bounded by `MAX_SKIP=1000`, which raises if exceeded (Signal-spec). | PROTOCOL.md §7.1 ✅ |
 | TM-14 | ~~High~~ resolved | Sender impersonation: the sealed-sender `from` was trusted on the ratchet path. The unsealed `from` is now bound to the connection's authenticated peer; mismatch drops the frame and rolls back ratchet state. | PROTOCOL.md §8.2 ✅ |
 | TM-15 | ~~High~~ resolved | `peer_id` was not bound to the Ed25519 key at handshake. The receiver now recomputes `BLAKE2s(ed25519_pub)` and rejects on mismatch, in addition to verifying the Ed25519 signature. | PROTOCOL.md §5 ✅ |
-| TM-16 | ~~High~~ resolved | Local control API was unauthenticated. Now requires a bearer token (constant-time check) plus Host-header pinning to localhost; the WebSocket endpoint is gated the same way. | `api.py` ✅ |
+| TM-16 | ~~High~~ removed | The local control API (`--mode web`) ran on the direct transport and ignored `--tor`, leaking the real IP. Removed entirely in `1.0.0-rc7` — the attack surface is gone. A Tor-correct local API may return later. | removed ✅ |
 | TM-17 | ~~High~~ resolved | Pin store silently reset to empty pins on a corrupt/tampered file, opening a MITM re-pin window. The node now raises `PinStoreCorruptError` and refuses to start. | `pinstore.py` ✅ |
 | TM-18 | ~~Medium~~ resolved | Deprecated `MSG_PEER_ANNOUNCE` could poison the routing table. The handler no longer updates routing state — received frames are dropped. Peers are learned only via authenticated handshake or explicit invite. | `node.py` ✅ |
 | TM-19 | Medium   | The GUI/CLI surface (~4700 LOC) has not had a dedicated security review.  | future       |
@@ -215,3 +215,4 @@ RC level). Editorial / clarification changes don't.
 | Doc rev | Code rev    | Date       | Change                                              |
 |---------|-------------|------------|-----------------------------------------------------|
 | 1.0     | 1.0.0-rc1   | 2026-05-09 | Initial public draft.                               |
+| 1.1     | 1.0.0-rc7   | 2026-06-16 | Post-audit: TM-16 removed (web API deleted), TM-03 updated (wire `v2`). |

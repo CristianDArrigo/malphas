@@ -1,6 +1,7 @@
 # malphas — Wire Protocol Specification
 
-> **Wire version: `1.0.0-rc1`** (frozen 2026-05-09)
+> **Wire version: `WIRE_VERSION = 2`** (`1.0.0-rc7`, 2026-06-16; the
+> field set was first frozen at `1.0.0-rc1`, 2026-05-09)
 >
 > Status: **release candidate**.
 > Breaking changes from this point require a major version bump and
@@ -122,15 +123,18 @@ Both sides exchange `MSG_HANDSHAKE` (initiator) /
 
 ```json
 {
-  "v":          1,
-  "peer_id":    "<40 hex>",
-  "x25519_pub": "<64 hex>",
-  "ed25519_pub":"<64 hex>",
-  "eph_pub":   "<64 hex, ephemeral X25519>",
-  "sig":       "<128 hex, Ed25519(eph_pub || timestamp)>",
-  "ts":         <unix seconds>
+  "v":           2,
+  "peer_id":     "<40 hex>",
+  "x25519_pub":  "<64 hex>",
+  "ed25519_pub": "<64 hex>",
+  "eph_pub":     "<64 hex, ephemeral X25519>",
+  "eph_sig":     "<128 hex, Ed25519(eph_pub || x25519_pub)>",
+  "port":        <int, sender's P2P listen port>
 }
 ```
+
+`v` is mandatory and must equal `WIRE_VERSION` (2 since `1.0.0-rc7`); a
+missing or mismatched value is rejected at the handshake.
 
 After both messages:
 
@@ -145,17 +149,21 @@ hmac_key    = HKDF-SHA256(session_key, b"", b"malphas-hmac-key", 32)
 ratchet_root = derive_root_key(session_key, ...)   # see ratchet.py
 ```
 
-Both peers verify the signature against the claimed `ed25519_pub`,
-recompute the BLAKE2s peer_id from `ed25519_pub`, and compare with
-the claimed `peer_id`. Mismatch ⇒ disconnect. This binds the
-identity cryptographically to the Ed25519 key: a peer cannot present
-a `peer_id` it does not hold the matching key for, and the bound
-identity is what every later authentication step (HMAC, ratchet,
-sealed-sender §8.2) is checked against.
+Both peers verify `eph_sig` against the claimed `ed25519_pub` over
+`eph_pub || x25519_pub` (since `1.0.0-rc7` — previously over `eph_pub`
+alone). Covering the static `x25519_pub` binds the encryption key to the
+identity: an on-path attacker cannot swap `x25519_pub` to redirect the
+peer's sealed-sender envelopes (§8.2) to itself. Both peers then recompute
+the BLAKE2s peer_id from `ed25519_pub` and compare with the claimed
+`peer_id`. Mismatch ⇒ disconnect. This binds the identity cryptographically
+to the Ed25519 key, and the bound identity is what every later
+authentication step (HMAC, ratchet, sealed-sender §8.2) is checked against.
 
-If the receiver had a pinned key for this peer_id (PinStore), the
-new `ed25519_pub` and `x25519_pub` must match the pinned values
-exactly. Mismatch ⇒ pin violation, disconnect, surface to UI.
+If the receiver had a pinned key for this peer_id (PinStore), the new
+`ed25519_pub` **and** `x25519_pub` must match the pinned values exactly
+(both are pinned since `1.0.0-rc7`; the two keys derive from one identity
+seed, so a matching Ed25519 with a different X25519 is an impersonation
+signal). Mismatch ⇒ pin violation, disconnect, surface to UI.
 
 ---
 
@@ -313,9 +321,16 @@ always bump major or minor** (never patch).
 | 0.9.x     | 0.8.x ⊕ groups optional     |
 | 0.10.x    | 0.9.x ⊕ GUI only            |
 | 0.11.x    | 0.10.x ⊕ Qt GUI only        |
-| 1.0.0-rc1 | All wire format frozen here. Breaking changes from this point require **2.0.0**. |
+| 1.0.0-rc1 | Wire format frozen in intent (`WIRE_VERSION` 1). Frozen *fields* listed in §10.1. |
+| 1.0.0-rc7 | `rc7` only (`WIRE_VERSION` 2). Final pre-1.0 break carrying the security-audit fixes — does **not** interoperate with rc1–rc6. The freeze becomes binding at 1.0.0; from there, breaking changes require **2.0.0**. |
 
-### 10.1 · Wire freeze policy from `1.0.0-rc1`
+### 10.1 · Wire freeze policy
+
+The freeze was declared at `1.0.0-rc1` and becomes binding at the `1.0.0`
+release. `1.0.0-rc7` made the last intentional pre-1.0 break — the
+handshake JSON shape (§5: `eph_sig` now covers `x25519_pub`) and the Double
+Ratchet header binding (now AEAD AAD) — and bumped `WIRE_VERSION` 1 → 2 so
+a mismatch fails cleanly at the handshake. From `1.0.0`:
 
 - **Frozen fields** (cannot change without a major bump): `peer_id`
   derivation (§3), outer frame layout (§4), handshake JSON shape
@@ -373,15 +388,19 @@ Plaintext layout:
 ### 11.3 · `~/.malphas/pins`
 
 ```
-[12: nonce] || ChaCha20-Poly1305(book_key, json)
+[12: nonce] || ChaCha20-Poly1305(book_key, json, aad=b"malphas-pinstore-v1")
 ```
 
-Same key as the address book; we use HKDF info=`malphas-pin-key`
-in a future version (see §13).
+Same key as the address book, with domain-separating AAD. (Deriving a
+separate pin-store key via HKDF info=`malphas-pin-key` is a future change,
+see §13.)
 
 ```json
-{ "<peer_id>": { "x25519_pub": "...", "ed25519_pub": "..." } }
+{ "<peer_id>": { "ed25519": "<64 hex>", "x25519": "<64 hex|null>" } }
 ```
+
+`x25519` is `null` for pins migrated from the pre-`1.0.0-rc7` ed25519-only
+format; it is back-filled on the next contact with that peer.
 
 ### 11.4 · Tor v3 hidden-service key
 
@@ -478,3 +497,4 @@ the contract surface to extend.
 | Doc rev | Code rev    | Date       | Change                                          |
 |---------|-------------|------------|-------------------------------------------------|
 | 1.0     | 1.0.0-rc1   | 2026-05-09 | Initial freeze. Reviewer-ready.                 |
+| 1.1     | 1.0.0-rc7   | 2026-06-16 | `WIRE_VERSION` 2: handshake `eph_sig` covers `x25519_pub`, both keys pinned, ratchet header bound as AAD. Security-audit fixes. |

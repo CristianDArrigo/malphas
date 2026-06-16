@@ -98,13 +98,16 @@ No servers. No accounts. No logs. No traces.
 
 ## Status
 
-**`1.0.0-rc6` (2026-06-13) · wire format frozen.**
+**`1.0.0-rc7` (2026-06-16) · post-audit, wire format `v2`.**
 
-malphas is a release candidate. Wire format is frozen at
-`WIRE_VERSION = 1` and additive-only from here (see
-[`PROTOCOL.md`](PROTOCOL.md) §10). The threat model is
-documented in [`THREAT_MODEL.md`](THREAT_MODEL.md) and graded
-against five adversary profiles.
+malphas is a release candidate. `1.0.0-rc7` carries a full pre-1.0
+security audit (see [`CHANGELOG.md`](CHANGELOG.md)) and made a final
+breaking wire change — `WIRE_VERSION` is now `2`, so rc7 nodes do not
+interoperate with rc6 and earlier (**update all peers together**). From
+`1.0.0` the wire format becomes binding and additive-only (see
+[`PROTOCOL.md`](PROTOCOL.md) §10). The threat model is documented in
+[`THREAT_MODEL.md`](THREAT_MODEL.md) and graded against five adversary
+profiles.
 
 The full canonical document set:
 
@@ -221,7 +224,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 ┌─────────────────────────────────────────────────────────────────┐
 │                         APPLICATION                             │
 │  CLI (cli_ui.py)                                                │
-│  prompt_toolkit + rich    FastAPI + WebSocket (api.py)          │
+│  prompt_toolkit + rich    Tkinter / PySide6 GUIs               │
 └────────────────────────────┬────────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────────┐
@@ -332,7 +335,6 @@ brew services restart tor
 - `argon2-cffi` — password hashing
 - `prompt_toolkit` — CLI input with readline, tab completion, history
 - `rich` — CLI output formatting (panels, tables, colors)
-- `fastapi` + `uvicorn` — web API (optional, web mode only)
 - `stem` — Tor controller library (optional; imported but not required for hidden services, which use sudo + torrc directly)
 - `zeroconf` — mDNS peer discovery on LAN (optional)
 
@@ -351,7 +353,10 @@ identical:
 | `cli`      | terminal (`prompt_toolkit`)        | —              | servers, ssh, scripts, the original UI     |
 | `gui`      | desktop (Tkinter, stdlib)          | —              | works everywhere Python does, basic look   |
 | `gui-qt`   | desktop (PySide6 / Qt)             | `[gui-qt]`     | recommended for daily use; modern look     |
-| `web`      | REST + WebSocket via FastAPI       | —              | machine-to-machine, custom front-ends      |
+
+> A fourth `--mode web` (a localhost FastAPI + WebSocket surface) was
+> removed in `1.0.0-rc7`: it ran on the direct transport and ignored
+> `--tor`, leaking the real IP. A Tor-correct local API may return later.
 
 The Qt GUI ships with the `gui-qt` extra:
 
@@ -841,7 +846,6 @@ malphas writes nothing to disk during operation except the encrypted address boo
 - No routing table persistence
 - No debug output to files
 - The Python logging system uses `NullHandler` throughout
-- The FastAPI web API disables access logs (`access_log=False`)
 - Input history (prompt_toolkit) is in-memory only — not persisted
 
 ---
@@ -996,7 +1000,7 @@ Messages are encrypted at send time (after reconnection), not at queue time. Thi
 
 For the formal weakness list with severity grades, see
 [`THREAT_MODEL.md`](THREAT_MODEL.md) §5. Snapshot of where things
-stand at `1.0.0-rc6`:
+stand at `1.0.0-rc7`:
 
 | ID    | Status                | Summary                                                                                              |
 |-------|-----------------------|------------------------------------------------------------------------------------------------------|
@@ -1014,7 +1018,7 @@ stand at `1.0.0-rc6`:
 | TM-13 | Resolved              | Unbounded ratchet skip bounded by `MAX_SKIP=1000` (raises if exceeded).                              |
 | TM-14 | Resolved              | Sealed-sender impersonation on the ratchet path: `from` bound to the authenticated peer.             |
 | TM-15 | Resolved              | `peer_id` verified against `BLAKE2s(ed25519_pub)` at handshake.                                      |
-| TM-16 | Resolved              | Local control API gated by a bearer token + loopback `Host` pinning (incl. WebSocket).               |
+| TM-16 | Removed               | The local control API (`--mode web`) was removed in `1.0.0-rc7` — it bypassed Tor; the attack surface is gone.   |
 | TM-17 | Resolved              | Pin store refuses to start on a corrupt/tampered file (was a silent reset → MITM window).            |
 | TM-18 | Resolved              | Deprecated `MSG_PEER_ANNOUNCE` routing-table poisoning neutralised (frames dropped).                 |
 | TM-19 | Open (medium)         | GUI/CLI surface (~4700 LOC) has no dedicated security review yet.                                    |
@@ -1034,8 +1038,8 @@ pytest tests/test_security_*.py -v
 # End-to-end integration tests (real TCP, real nodes)
 pytest tests/test_integration_e2e.py -v
 
-# API and WebSocket tests
-pytest tests/test_api.py -v
+# Security-audit regression tests
+pytest tests/test_audit_fixes.py -v
 
 # CLI command tests
 pytest tests/test_cli.py -v
@@ -1065,7 +1069,7 @@ pytest tests/test_tor_e2e.py -v
 | `test_functional_node.py` | Handshake, authenticated handshake, delivery, receipts, cover traffic, lifecycle | 19 |
 | `test_integration_e2e.py` | Cross-node delivery, bidirectional, relay, receipts, wire crypto, tamper resilience | 18 |
 | `test_transport.py` | SOCKS5, DirectTransport, TorTransport, .onion derivation, hidden service | 28 |
-| `test_api.py` | REST endpoints, WebSocket push, CORS, Pydantic validation, edge cases | 91 |
+| `test_audit_fixes.py` | Pre-1.0 security-audit regressions: x25519 pinning, file caps, invite binding, ratchet header AAD, book perms | 9 |
 | `test_cli.py` | All commands, tab completion, status bar, callbacks, export/import, trust | 128 |
 | `test_invite.py` | Generate/parse roundtrip, signature verification, tampered blobs, validation | 17 |
 | `test_pinstore.py` | First contact pins, mismatch rejected, trust reset, persistence, handshake integration | 17 |
@@ -1161,26 +1165,6 @@ bandit -r src/malphas/ -c pyproject.toml -l
 pytest tests/ -m "not tor and not slow" --cov --cov-fail-under=65
 ```
 
-### Web API endpoints
-
-When run with `--mode web`, malphas exposes a localhost-only FastAPI surface (default `127.0.0.1:8080`) with WebSocket push for real-time events. The same node is driven by either the CLI or the web API — pick one per process.
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/identity` | own peer_id + pubkeys + port |
-| GET | `/api/peers` | list peers in routing table |
-| POST | `/api/peers/connect` | connect to a peer (JSON body) |
-| POST | `/api/messages/send` | send a chat message (JSON body) |
-| GET | `/api/messages/{peer_id}` | conversation history with peer |
-| POST | `/api/files/send` | upload + send a file (multipart) |
-| GET | `/api/files` | pending offers + completed transfers |
-| POST | `/api/files/accept` | register an incoming file offer |
-| POST | `/api/files/reject` | drop a pending offer |
-| GET | `/api/files/{file_id}/download` | stream a completed file (single-shot, drops the in-RAM copy) |
-| WS | `/ws` | push events: `message`, `file_offer`, `file_complete` |
-
-CORS allows only `http://localhost` and `http://127.0.0.1` origins. The local control API requires a per-session bearer token (printed at startup) on every request and pins the `Host` header to loopback, defending against DNS-rebinding and CSRF attacks from a browser the user happens to have open. WebSocket connections must present the same token.
-
 ---
 
 ## Development
@@ -1206,7 +1190,7 @@ malphas/
 │   ├── files.py         chunked file transfer (offer/chunk/ack)
 │   ├── secure_buffer.py SecureBytes (mlock + zeroize) for key material
 │   ├── cli_ui.py        prompt_toolkit + rich interactive terminal
-│   ├── api.py           FastAPI + WebSocket (web mode)
+│   ├── gui_qt.py        PySide6 / Qt desktop GUI
 │   ├── splash.py        ASCII splash screen
 │   └── __main__.py      CLI entry point, argument parsing
 ├── frontend/showcase/
