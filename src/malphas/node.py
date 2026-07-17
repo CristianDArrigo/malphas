@@ -1725,8 +1725,24 @@ class MalphasNode:
             # Key pinning (TOFU): verify Ed25519 key matches the pinned key
             # for this peer_id. First contact pins the key; subsequent contacts
             # must match or the handshake is rejected.
+            #
+            # Persist the pin to disk only for peers we have a relationship
+            # with: an outbound dial to a specific invited/book peer
+            # (expected_peer set), or an inbound peer already in the address
+            # book. Unknown inbound peers are pinned ephemerally (in memory,
+            # capped) so a flood of fresh inbound identities cannot grow the
+            # on-disk pin store without bound.
+            if expected_peer is not None:
+                persist_pin = True
+            else:
+                persist_pin = bool(
+                    self._reconnect_book is not None
+                    and self._reconnect_book.get_by_peer_id(their_peer_id)
+                    is not None
+                )
             ok, pinned = self.pins.check_and_pin(
-                their_peer_id, their_ed25519, their_x25519)
+                their_peer_id, their_ed25519, their_x25519,
+                persist=persist_pin)
             if not ok:
                 for cb in self._pin_callbacks:
                     try:

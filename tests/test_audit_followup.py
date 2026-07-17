@@ -263,3 +263,42 @@ async def test_cover_traffic_uses_three_hop_circuit(identity_a, monkeypatch):
     # A 1-hop cover packet is distinguishable from a 3-hop real message by
     # size and hop count; cover must route like real traffic.
     assert recorded.get("hops") == 3
+
+
+# ── #10: unknown inbound pins stay in-memory + capped; known ones persist ─────
+def test_ephemeral_pins_not_persisted_and_capped(tmp_path):
+    from malphas.pinstore import MAX_EPHEMERAL_PINS, PinStore
+
+    key = os.urandom(32)
+    path = tmp_path / "pins"
+    store = PinStore(str(path), key)
+
+    # Flood with unknown inbound peers (persist=False).
+    for i in range(MAX_EPHEMERAL_PINS + 50):
+        store.check_and_pin(
+            f"peer{i}", os.urandom(32), os.urandom(32), persist=False
+        )
+
+    # Nothing persisted to disk, and the in-memory ephemeral set is capped.
+    assert not path.exists() or path.stat().st_size == 0
+    assert store._pins == {}
+    assert len(store._ephemeral_pins) <= MAX_EPHEMERAL_PINS
+
+    # A known/invited peer (persist=True) still pins durably.
+    store.check_and_pin("known1", os.urandom(32), os.urandom(32), persist=True)
+    assert path.exists() and path.stat().st_size > 0
+    assert "known1" in store._pins
+
+
+def test_ephemeral_pin_still_detects_mismatch_in_session(tmp_path):
+    from malphas.pinstore import PinStore
+
+    store = PinStore(str(tmp_path / "pins"), os.urandom(32))
+    ed = os.urandom(32)
+    x = os.urandom(32)
+    ok, _ = store.check_and_pin("peerE", ed, x, persist=False)
+    assert ok is True
+    # Same peer_id, different Ed25519 key later in the same session = MITM.
+    ok2, pinned = store.check_and_pin("peerE", os.urandom(32), x, persist=False)
+    assert ok2 is False
+    assert pinned == ed.hex()
