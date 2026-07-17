@@ -38,6 +38,7 @@ def generate_invite(
     port: int,
     onion: str | None = None,
     ttl_seconds: int | None = DEFAULT_INVITE_TTL,
+    spk: bytes | None = None,
 ) -> str:
     """
     Generate a malphas:// invite URL.
@@ -45,6 +46,11 @@ def generate_invite(
 
     `ttl_seconds` sets an expiry baked into the signed payload. Pass None
     to mint a non-expiring invite (not recommended).
+
+    `spk` is the node's signed-prekey public key (32 bytes). Carried in the
+    signed payload so the importer can send forward-secret X3DH messages
+    (issue #12) even when not directly connected. Bound to the identity by the
+    invite's own Ed25519 signature.
     """
     now = int(time.time())
     payload: dict[str, Any] = {
@@ -61,6 +67,8 @@ def generate_invite(
         payload["exp"] = now + int(ttl_seconds)
     if onion:
         payload["onion"] = onion
+    if spk is not None:
+        payload["spk"] = spk.hex()
 
     json_bytes = json.dumps(payload, separators=(",", ":")).encode()
     sig = identity.sign(json_bytes)
@@ -125,6 +133,16 @@ def parse_invite(url: str) -> dict[str, Any]:
     from .identity import peer_id_from_pubkey
     if payload["peer_id"] != peer_id_from_pubkey(ed_pub_bytes):
         raise ValueError("peer_id does not match ed25519_pub")
+
+    # The signed prekey (optional) is bound to the identity by the invite
+    # signature verified above; just sanity-check its length here.
+    spk = payload.get("spk")
+    if spk is not None:
+        try:
+            if len(bytes.fromhex(spk)) != 32:
+                raise ValueError
+        except (TypeError, ValueError) as e:
+            raise ValueError("invalid spk in invite") from e
 
     # Reject expired invites. `exp` is optional for backward compatibility
     # with pre-expiry invites, but when present it is signed, so it cannot

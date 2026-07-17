@@ -502,6 +502,7 @@ class MalphasCLI:
             self.node.public_address,
             self.node.port,
             onion=onion_addr,
+            spk=self.node.signed_prekey_pub,
         )
 
         self._print()
@@ -560,6 +561,18 @@ class MalphasCLI:
         if "onion" in data:
             host = data["onion"]
             port = 80
+
+        # Register the peer's signed prekey (if the invite carries one) so we
+        # can send forward-secret X3DH messages even before/without a live
+        # connection. connect_to_peer re-adds host/port/keys but preserves the
+        # SPK (discovery keeps a known SPK across updates that omit one).
+        if data.get("spk"):
+            self.node.discovery.add_peer(
+                data["peer_id"], host, port,
+                bytes.fromhex(data["x25519_pub"]),
+                bytes.fromhex(data["ed25519_pub"]),
+                spk_pub=bytes.fromhex(data["spk"]),
+            )
 
         self._info(f"connecting to {host}:{port}...", tag="...")
         ok = await self.node.connect_to_peer(

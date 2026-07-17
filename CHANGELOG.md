@@ -26,6 +26,14 @@ not readable under the new identity. Pre-1.0-adoption break; no migration.
 - **Tighter 8 KiB pre-auth handshake frame cap** (#11, partial).
 - **`panic()` clears per-connection session/HMAC keys**; docs corrected to say
   clearance is best-effort, not guaranteed zeroization (#13).
+- **Forward-secret, deniable multi-hop delivery via X3DH** (#12). Messages to a
+  peer we are not directly connected to used to authenticate cleartext JSON
+  with an HMAC or a non-deniable Ed25519 signature under the recipient's static
+  key. They now run reduced X3DH against the peer's signed prekey (published in
+  the invite) and seed a Double Ratchet, giving per-message forward secrecy and
+  deniability. New `prekey.py`, `AUTH_X3DH` wire type, invite `spk` field. The
+  legacy Ed25519 path remains only when no prekey is known. One-time prekeys
+  are a future enhancement.
 
 ### Changed
 
