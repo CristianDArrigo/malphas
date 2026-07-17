@@ -62,7 +62,7 @@ Standard-primitive trust.
 | At-rest confidentiality of ratchet      | —            | Not applicable: ratchet state is in-memory only.                       |
 | Network-level unlinkability             | A1–A4        | All traffic over Tor onion service when `--tor` is set.                |
 | Cover traffic                           | A2           | Optional padding+jitter packets (off by default). Limited.             |
-| Panic wipe of in-memory state           | A6 only      | `panic()` zeroizes all keys + book + ratchets + caches in RAM.         |
+| Panic wipe of in-memory state           | A6 only      | `panic()` clears logical state (stores, pins, ratchets, session keys) and terminates the process. Best-effort, not guaranteed zeroization: identity keys, book/pin encryption keys and immutable copies stay resident until exit (CPython limitation). |
 
 ### What malphas does **not** guarantee
 

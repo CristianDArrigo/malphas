@@ -148,6 +148,16 @@ class AddressBook:
             self._save()
         return True
 
+    def init_empty(self) -> None:
+        """Initialise an empty, loaded book without touching disk.
+
+        Used when constructing a fresh destination book (e.g. the legacy-salt
+        migration) that will be populated with `add()` before its first save.
+        Without this, `add()` -> `_save()` raises "Address book not loaded".
+        """
+        self._contacts = []
+        self._loaded = True
+
     def _save(self) -> None:
         """Encrypt and write contacts to disk atomically."""
         if not self._loaded:
@@ -171,7 +181,21 @@ class AddressBook:
             fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "wb") as f:
                 f.write(ciphertext)
+                # Durability: the book is a security-relevant store (peer
+                # labels, onion addresses, pinned keys). Match PinStore: flush
+                # + fsync the file and fsync the directory so a crash right
+                # after the rename cannot lose the last update.
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(str(tmp), str(self._path))
+            try:
+                dir_fd = os.open(str(self._path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
         except Exception:
             tmp.unlink(missing_ok=True)
             raise
