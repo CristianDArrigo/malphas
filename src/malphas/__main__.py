@@ -228,14 +228,9 @@ async def _run_cli(args) -> None:
 
     if args.tor:
         try:
-            from cryptography.hazmat.primitives.serialization import (
-                Encoding,
-                NoEncryption,
-                PrivateFormat,
-            )
-            priv_bytes = identity.ed25519_priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+            tor_pub, tor_priv = identity.tor_service_key()
             onion = await transport.start_hidden_service(
-                identity.ed25519_pub_bytes, priv_bytes, args.port
+                tor_pub, tor_priv, args.port
             )
             print(f"  onion    {onion}")
         except Exception as e:
@@ -325,17 +320,10 @@ def _run_gui(args) -> None:
         # Register the v3 hidden service so other peers can reach us
         # via .onion (mirrors the _run_cli flow).
         try:
-            from cryptography.hazmat.primitives.serialization import (
-                Encoding,
-                NoEncryption,
-                PrivateFormat,
-            )
-            priv_bytes = identity.ed25519_priv.private_bytes(
-                Encoding.Raw, PrivateFormat.Raw, NoEncryption()
-            )
+            tor_pub, tor_priv = identity.tor_service_key()
             onion = bridge.submit_coro(
                 transport.start_hidden_service(
-                    identity.ed25519_pub_bytes, priv_bytes, args.port
+                    tor_pub, tor_priv, args.port
                 )
             ).result(timeout=30.0)
             print(f"  onion    {onion}")
@@ -435,17 +423,10 @@ def _run_gui_qt(args) -> None:
         # _run_gui — the Qt path previously skipped this, so a Qt node was
         # only ever reachable outbound, and its invites had no onion).
         try:
-            from cryptography.hazmat.primitives.serialization import (
-                Encoding,
-                NoEncryption,
-                PrivateFormat,
-            )
-            priv_bytes = identity.ed25519_priv.private_bytes(
-                Encoding.Raw, PrivateFormat.Raw, NoEncryption()
-            )
+            tor_pub, tor_priv = identity.tor_service_key()
             onion = bridge.submit_coro(
                 transport.start_hidden_service(
-                    identity.ed25519_pub_bytes, priv_bytes, args.port
+                    tor_pub, tor_priv, args.port
                 )
             ).result(timeout=30.0)
             print(f"  onion    {onion}")

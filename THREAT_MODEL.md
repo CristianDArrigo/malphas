@@ -121,7 +121,7 @@ Code and dependencies that, if compromised, defeat the model:
 | `argon2-cffi`                          | Argon2id KDF                                  | Used for passphrase → seed.               |
 | `mnemonic`                             | BIP39 word list                               | Public dictionary, no secrets.            |
 | `stem`                                 | Tor ControlPort client                        | Used to register the hidden service via `ADD_ONION` (since 1.0.0 post-release). Cookie-authenticated. |
-| Tor HS setup (ControlPort `ADD_ONION`) | Registers an ephemeral v3 HS from our own key | No sudo, no files under `/var/lib/tor`, no torrc edits, no tor restart. The key never leaves the process; the onion is dropped (`DEL_ONION`) on exit. See PROTOCOL.md §11.4. |
+| Tor HS setup (ControlPort `ADD_ONION`) | Registers an ephemeral v3 HS from a dedicated Tor key | No sudo, no files under `/var/lib/tor`, no torrc edits, no tor restart. The onion service uses a SEPARATE Ed25519 key (HKDF-derived from the identity seed, `malphas-tor-identity-v1`), not the messaging key: a Tor/ControlPort compromise cannot forge messaging-identity signatures. The messaging Ed25519 key never leaves the process. The onion is dropped (`DEL_ONION`) on exit. See PROTOCOL.md §11.4. |
 | `cryptography` ed25519 → onion conversion | Derives `.onion` from Ed25519 pub          | Implementation matches Tor's.             |
 | The Python interpreter                 | All code runs here                            | Same-process attack surface as any app.   |
 | The OS keyring / filesystem permissions | Address-book file mode 0600                  | We rely on OS to enforce.                 |

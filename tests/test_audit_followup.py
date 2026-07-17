@@ -302,3 +302,38 @@ def test_ephemeral_pin_still_detects_mismatch_in_session(tmp_path):
     ok2, pinned = store.check_and_pin("peerE", os.urandom(32), x, persist=False)
     assert ok2 is False
     assert pinned == ed.hex()
+
+
+# ── #7: the Tor onion key must be separate from the messaging Ed25519 key ─────
+def test_tor_service_key_is_separate_from_messaging_key():
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+    )
+
+    from malphas.identity import create_identity, create_identity_with_book_key
+
+    idn = create_identity("tor-separation-pass")
+
+    # A dedicated Tor identity, distinct from the messaging identity.
+    assert idn.tor_ed25519_pub_bytes != idn.ed25519_pub_bytes
+
+    # Deterministic for the same passphrase + salt.
+    assert create_identity("tor-separation-pass").tor_ed25519_pub_bytes == (
+        idn.tor_ed25519_pub_bytes
+    )
+
+    # tor_service_key returns (pub, raw_priv); the raw priv handed to Tor is
+    # NOT the messaging signing key.
+    pub, priv = idn.tor_service_key()
+    assert pub == idn.tor_ed25519_pub_bytes
+    assert len(priv) == 32
+    msg_priv = idn.ed25519_priv.private_bytes(
+        Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+    )
+    assert priv != msg_priv
+
+    # Both identity constructors expose the Tor key.
+    idn2, _book = create_identity_with_book_key("tor-separation-pass")
+    assert idn2.tor_ed25519_pub_bytes == idn.tor_ed25519_pub_bytes
