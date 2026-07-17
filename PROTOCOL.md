@@ -85,7 +85,10 @@ identity (different `seed64`). The salt is recoverable from the
 The address-book key is independent:
 
 ```
-book_key = HKDF-SHA256(seed64, salt=b"", info=b"malphas-book-key", len=32)
+book_key = HKDF-SHA256(seed64,
+                       salt=b"malphas-addressbook-v1",
+                       info=b"addressbook-encryption-key",
+                       len=32)
 ```
 
 ---
@@ -142,13 +145,21 @@ After both messages:
 ```
 session_key = HKDF-SHA256(
   ECDH(my_eph_priv, their_eph_pub),
-  salt = sha256(my_peer_id || their_peer_id),
-  info = b"malphas-session-key",
+  salt = sorted(my_eph_pub, their_eph_pub)[0] || sorted(...)[1],
+  info = b"malphas-session-v1",
   len  = 32,
 )
-hmac_key    = HKDF-SHA256(session_key, b"", b"malphas-hmac-key", 32)
+hmac_key    = HKDF-SHA256(session_key,
+                          salt = b"malphas-hmac-v1",
+                          info = b"message-auth",
+                          len  = 32)
 ratchet_root = derive_root_key(session_key, ...)   # see ratchet.py
 ```
+
+The session salt is the two ephemeral X25519 public keys sorted
+byte-wise and concatenated (not the peer_ids): this makes both peers
+derive the identical key regardless of initiator/responder role, without
+needing to agree on peer_id ordering.
 
 Both peers verify `eph_sig` against the claimed `ed25519_pub` over
 `eph_pub || x25519_pub` (since `1.0.0-rc7` — previously over `eph_pub`
@@ -170,19 +181,32 @@ signal). Mismatch ⇒ pin violation, disconnect, surface to UI.
 
 ## 6 · Onion-wrapped frames
 
-`MSG_ONION` payload is a 3-hop onion. Each layer:
+`MSG_ONION` payload is a 3-hop onion. The whole packet is prefixed with
+`first_hop_id(20) || layer_len(4)`. Each layer on the wire:
 
 ```
 Layer:
   [32: ephemeral_pub_x25519]
-  [20: next_hop_id]                  // all-zeroes = final hop
-  [4:  encrypted_payload_len]
-  [N:  encrypted_payload]            // ChaCha20-Poly1305 over
-                                      //  HKDF(ECDH(eph, hop_static),
-                                      //       info="malphas-onion-v1")
+  [4:  encrypted_len]
+  [N:  encrypted]                    // ChaCha20-Poly1305, aad = ephemeral_pub,
+                                      //  key = HKDF(ECDH(eph, hop_static),
+                                      //            salt = sorted(eph_pub, hop_static),
+                                      //            info = "malphas-session-v1")
 ```
 
-The innermost encrypted_payload at the final hop is the
+The AEAD plaintext of each layer is:
+
+```
+  [20: next_hop_id]                  // all-zeroes = final hop
+  [4:  inner_payload_len]
+  [M:  inner_payload]                // the next layer, or the payload at the final hop
+```
+
+`next_hop_id` is carried **inside** the AEAD, not as a cleartext field:
+a passive relay cannot read where its layer forwards to. The onion layer
+key uses the same derivation as the session key (`derive_session_key`,
+`info="malphas-session-v1"`); there is no separate `malphas-onion-v1`
+context. The innermost inner_payload at the final hop is the
 **authenticated payload** (§7).
 
 Padding (§8) is applied **inside** the AEAD plaintext at every

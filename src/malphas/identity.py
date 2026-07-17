@@ -22,10 +22,30 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
 )
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
+    NoEncryption,
+    PrivateFormat,
     PublicFormat,
 )
 
 from .secure_buffer import SecureBytes
+
+# Domain separation for the dedicated Tor onion-service key. Derived from the
+# same identity seed but via HKDF so it is cryptographically independent of the
+# messaging Ed25519 key. Handing THIS key to the Tor daemon (ADD_ONION) means
+# the key that signs messages/handshakes/receipts/invites never leaves the
+# process, even though the onion key must.
+_TOR_IDENTITY_SALT = b"malphas-tor-identity-v1"
+_TOR_IDENTITY_INFO = b"tor-onion-key"
+
+
+def _derive_tor_key(seed_bytes: bytes) -> tuple["Ed25519PrivateKey", bytes]:
+    from .crypto import hkdf_derive
+    tor_seed = hkdf_derive(
+        seed_bytes, salt=_TOR_IDENTITY_SALT, info=_TOR_IDENTITY_INFO, length=32
+    )
+    priv = Ed25519PrivateKey.from_private_bytes(tor_seed)
+    pub_bytes = bytes(priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
+    return priv, pub_bytes
 
 # Argon2id parameters.
 # time_cost=3, memory_cost=65536 (64MB), parallelism=4
@@ -100,6 +120,11 @@ class Identity:
     x25519_priv: X25519PrivateKey
     x25519_pub: X25519PublicKey
     x25519_pub_bytes: bytes  # raw 32-byte X25519 public key for wire
+    # Dedicated Tor onion-service key (see _derive_tor_key). Separate from the
+    # messaging identity so a compromise of the Tor daemon/ControlPort cannot
+    # forge messaging-identity signatures.
+    tor_ed25519_priv: Ed25519PrivateKey
+    tor_ed25519_pub_bytes: bytes
 
     @property
     def ed25519_pub_bytes(self) -> bytes:
@@ -107,6 +132,17 @@ class Identity:
 
     def sign(self, data: bytes) -> bytes:
         return bytes(self.ed25519_priv.sign(data))
+
+    def tor_service_key(self) -> tuple[bytes, bytes]:
+        """Return (pub_bytes, raw_priv_bytes) for the Tor onion service.
+
+        This is the DEDICATED Tor key, never the messaging Ed25519 identity, so
+        handing it to the Tor daemon via ADD_ONION does not expose the key that
+        signs messages, handshakes, receipts and invites.
+        """
+        raw_priv = bytes(self.tor_ed25519_priv.private_bytes(
+            Encoding.Raw, PrivateFormat.Raw, NoEncryption()))
+        return self.tor_ed25519_pub_bytes, raw_priv
 
     def verify(self, signature: bytes, data: bytes) -> bool:
         try:
@@ -148,6 +184,7 @@ def create_identity(passphrase: str, salt: bytes | None = None) -> Identity:
         # (40 hex chars). BLAKE2s is collision-resistant and faster than
         # SHA-256 on small inputs.
         peer_id = hashlib.blake2s(ed_pub_bytes, digest_size=20).hexdigest()
+        tor_priv, tor_pub_bytes = _derive_tor_key(seed_bytes)
         # _derive_seed's SecureBytes is wiped on context exit below.
 
     return Identity(
@@ -157,6 +194,8 @@ def create_identity(passphrase: str, salt: bytes | None = None) -> Identity:
         x25519_priv=x_priv,
         x25519_pub=x_pub,
         x25519_pub_bytes=x_pub_bytes,
+        tor_ed25519_priv=tor_priv,
+        tor_ed25519_pub_bytes=tor_pub_bytes,
     )
 
 
@@ -211,6 +250,7 @@ def create_identity_with_book_key(
             info=b"addressbook-encryption-key",
             length=32,
         )
+        tor_priv, tor_pub_bytes = _derive_tor_key(seed_bytes)
         # SecureBytes seed is wiped on context exit.
 
     identity = Identity(
@@ -220,6 +260,8 @@ def create_identity_with_book_key(
         x25519_priv=x_priv,
         x25519_pub=x_pub,
         x25519_pub_bytes=x_pub_bytes,
+        tor_ed25519_priv=tor_priv,
+        tor_ed25519_pub_bytes=tor_pub_bytes,
     )
 
     return identity, book_key

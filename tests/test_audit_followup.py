@@ -244,3 +244,96 @@ async def test_non_creator_cannot_mutate_membership(
     # Membership must be untouched (no local fork).
     assert identity_c.peer_id not in group.members
     assert identity_b.peer_id in group.members
+
+
+# ── #21: cover traffic must use the same 3-hop circuit as real messages ───────
+async def test_cover_traffic_uses_three_hop_circuit(identity_a, monkeypatch):
+    from malphas.node import MalphasNode
+
+    node = MalphasNode(identity_a, "127.0.0.1", 17785, cover_traffic=False)
+    recorded = {}
+
+    def fake_circuit(dest, hops=None, relay_pool=None):
+        recorded["hops"] = hops
+        raise ValueError("no relays")  # short-circuit; we only inspect hops
+
+    monkeypatch.setattr(node.discovery, "select_relay_circuit", fake_circuit)
+    await node._send_cover_packet("peerCover")
+
+    # A 1-hop cover packet is distinguishable from a 3-hop real message by
+    # size and hop count; cover must route like real traffic.
+    assert recorded.get("hops") == 3
+
+
+# ── #10: unknown inbound pins stay in-memory + capped; known ones persist ─────
+def test_ephemeral_pins_not_persisted_and_capped(tmp_path):
+    from malphas.pinstore import MAX_EPHEMERAL_PINS, PinStore
+
+    key = os.urandom(32)
+    path = tmp_path / "pins"
+    store = PinStore(str(path), key)
+
+    # Flood with unknown inbound peers (persist=False).
+    for i in range(MAX_EPHEMERAL_PINS + 50):
+        store.check_and_pin(
+            f"peer{i}", os.urandom(32), os.urandom(32), persist=False
+        )
+
+    # Nothing persisted to disk, and the in-memory ephemeral set is capped.
+    assert not path.exists() or path.stat().st_size == 0
+    assert store._pins == {}
+    assert len(store._ephemeral_pins) <= MAX_EPHEMERAL_PINS
+
+    # A known/invited peer (persist=True) still pins durably.
+    store.check_and_pin("known1", os.urandom(32), os.urandom(32), persist=True)
+    assert path.exists() and path.stat().st_size > 0
+    assert "known1" in store._pins
+
+
+def test_ephemeral_pin_still_detects_mismatch_in_session(tmp_path):
+    from malphas.pinstore import PinStore
+
+    store = PinStore(str(tmp_path / "pins"), os.urandom(32))
+    ed = os.urandom(32)
+    x = os.urandom(32)
+    ok, _ = store.check_and_pin("peerE", ed, x, persist=False)
+    assert ok is True
+    # Same peer_id, different Ed25519 key later in the same session = MITM.
+    ok2, pinned = store.check_and_pin("peerE", os.urandom(32), x, persist=False)
+    assert ok2 is False
+    assert pinned == ed.hex()
+
+
+# ── #7: the Tor onion key must be separate from the messaging Ed25519 key ─────
+def test_tor_service_key_is_separate_from_messaging_key():
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+    )
+
+    from malphas.identity import create_identity, create_identity_with_book_key
+
+    idn = create_identity("tor-separation-pass")
+
+    # A dedicated Tor identity, distinct from the messaging identity.
+    assert idn.tor_ed25519_pub_bytes != idn.ed25519_pub_bytes
+
+    # Deterministic for the same passphrase + salt.
+    assert create_identity("tor-separation-pass").tor_ed25519_pub_bytes == (
+        idn.tor_ed25519_pub_bytes
+    )
+
+    # tor_service_key returns (pub, raw_priv); the raw priv handed to Tor is
+    # NOT the messaging signing key.
+    pub, priv = idn.tor_service_key()
+    assert pub == idn.tor_ed25519_pub_bytes
+    assert len(priv) == 32
+    msg_priv = idn.ed25519_priv.private_bytes(
+        Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+    )
+    assert priv != msg_priv
+
+    # Both identity constructors expose the Tor key.
+    idn2, _book = create_identity_with_book_key("tor-separation-pass")
+    assert idn2.tor_ed25519_pub_bytes == idn.tor_ed25519_pub_bytes

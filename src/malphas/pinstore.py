@@ -25,6 +25,15 @@ from .crypto import decrypt, encrypt
 # empty AAD; load() falls back and re-saves to upgrade.
 _PIN_AAD = b"malphas-pinstore-v1"
 
+# Cap on in-memory pins for UNKNOWN inbound peers (peers we never invited and
+# that are not in the address book). These are held ephemerally and never
+# written to disk, so an attacker who opens many inbound handshakes with fresh
+# identities cannot grow the on-disk pin file without bound (each disk write
+# re-encrypts the whole file, an O(n^2) amplifier). When the cap is exceeded
+# the oldest ephemeral pin is evicted. Pins for known/invited peers persist
+# normally and are not subject to this cap.
+MAX_EPHEMERAL_PINS = 256
+
 
 class PinStoreCorruptError(Exception):
     """Raised when the pin file exists but cannot be decrypted/parsed.
@@ -42,11 +51,15 @@ class PinStore:
         # for pins migrated from the legacy ed25519-only format; it is filled
         # in on the next contact with that peer.
         self._pins: dict[str, dict[str, str | None]] = {}
+        # Ephemeral, in-memory-only pins for unknown inbound peers. Insertion
+        # order is used to evict the oldest when MAX_EPHEMERAL_PINS is hit.
+        self._ephemeral_pins: dict[str, dict[str, str | None]] = {}
         self._path = Path(path) if path else None
         self._key = key
 
     def check_and_pin(self, peer_id: str, ed25519_pub: bytes,
-                      x25519_pub: bytes | None = None) -> tuple[bool, str | None]:
+                      x25519_pub: bytes | None = None,
+                      persist: bool = True) -> tuple[bool, str | None]:
         """
         Check a peer's keys against the store (TOFU).
 
@@ -57,6 +70,13 @@ class PinStore:
         sealed-sender-redirection MITM), not a legitimate rotation, and is
         rejected.
 
+        `persist` controls durability of a *first-contact* pin. Known/invited
+        peers (persist=True, the default) are pinned to disk as before. Unknown
+        inbound peers (persist=False) are pinned only in memory, capped at
+        MAX_EPHEMERAL_PINS, so a flood of fresh inbound identities cannot grow
+        the on-disk store without bound. Within a session an ephemeral pin
+        still enforces TOFU for that peer_id.
+
         Returns:
             (True, None) — keys match the existing pin, or newly pinned
             (False, pinned_ed25519_hex) — mismatch; returns the expected key
@@ -64,12 +84,20 @@ class PinStore:
         import hmac as _hmac
         ed_hex = ed25519_pub.hex()
         x_hex = x25519_pub.hex() if x25519_pub is not None else None
-        existing = self._pins.get(peer_id)
+        existing = self._pins.get(peer_id) or self._ephemeral_pins.get(peer_id)
 
         if existing is None:
             # First contact — pin both keys.
-            self._pins[peer_id] = {"ed25519": ed_hex, "x25519": x_hex}
-            self._save()
+            record = {"ed25519": ed_hex, "x25519": x_hex}
+            if persist:
+                self._pins[peer_id] = record
+                self._save()
+            else:
+                self._ephemeral_pins[peer_id] = record
+                # Evict oldest ephemeral pins beyond the cap (FIFO).
+                while len(self._ephemeral_pins) > MAX_EPHEMERAL_PINS:
+                    oldest = next(iter(self._ephemeral_pins))
+                    del self._ephemeral_pins[oldest]
             return True, None
 
         # Constant-time compare so a timing oracle can't fingerprint the

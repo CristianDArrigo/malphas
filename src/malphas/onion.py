@@ -3,16 +3,18 @@ Onion routing layer.
 
 Build:
   wrap_onion(message, [(relay1_x25519_pub, relay1_id), ..., (dest_x25519_pub, dest_id)])
-  Each layer adds: ephemeral_pub (32) || next_hop_id (20) || encrypted_inner
 
 Peel:
   peel_layer(my_x25519_priv, data) -> (next_hop_id | None, inner_data)
 
 Wire format per layer:
-  [ephemeral_pub: 32][next_hop_id: 20][payload_len: 4][encrypted_payload]
+  [ephemeral_pub: 32][encrypted_len: 4][encrypted]
+where `encrypted` = ChaCha20-Poly1305(key, aad=ephemeral_pub) over the plaintext
+  [next_hop_id: 20][inner_payload_len: 4][inner_payload]
 
-If next_hop_id == b'\x00' * 20: this is the final destination.
-The decrypted payload at the last layer is the plaintext message.
+next_hop_id is carried INSIDE the AEAD, so a relay cannot read where its
+layer forwards to. If next_hop_id == b'\x00' * 20: this is the final
+destination and inner_payload is the plaintext message.
 """
 
 
