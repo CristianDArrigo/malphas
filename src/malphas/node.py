@@ -1722,77 +1722,78 @@ class MalphasNode:
         expected_peer: tuple[str, bytes, bytes] | None = None,
     ) -> bool:
         try:
-            eph_priv, eph_pub = generate_ephemeral_keypair()
+            async def _send_our_hello() -> tuple:
+                # Sign the ephemeral pubkey AND our static X25519 key with our
+                # Ed25519 identity key: signing eph_pub proves we hold the
+                # identity key; binding x25519_pub stops an on-path attacker
+                # from swapping our static encryption key (which would redirect
+                # every sealed-sender envelope for us to the attacker).
+                eph_priv, eph_pub = generate_ephemeral_keypair()
+                eph_sig = self.identity.sign(
+                    eph_pub + self.identity.x25519_pub_bytes)
+                hello = json.dumps({
+                    "v": WIRE_VERSION,
+                    "eph_pub": eph_pub.hex(),
+                    "eph_sig": eph_sig.hex(),
+                    "peer_id": self.identity.peer_id,
+                    "x25519_pub": self.identity.x25519_pub_bytes.hex(),
+                    "ed25519_pub": self.identity.ed25519_pub_bytes.hex(),
+                    "port": self.port,
+                }).encode()
+                await conn.send(
+                    MSG_HANDSHAKE if outbound else MSG_HANDSHAKE_ACK, hello)
+                return eph_priv, eph_pub
 
-            # Sign the ephemeral pubkey AND our static X25519 key with our
-            # Ed25519 identity key. Signing eph_pub proves we hold the
-            # identity private key; binding x25519_pub stops an on-path
-            # attacker from swapping our static encryption key during the
-            # handshake (which would redirect every sealed-sender envelope
-            # for us to the attacker — sender deanonymisation + channel DoS).
-            # Both operands are fixed 32-byte keys, so the concatenation is
-            # unambiguous.
-            eph_sig = self.identity.sign(
-                eph_pub + self.identity.x25519_pub_bytes)
+            async def _recv_and_validate_their_hello() -> tuple | None:
+                expected_type = MSG_HANDSHAKE_ACK if outbound else MSG_HANDSHAKE
+                msg_type, their_hello = await asyncio.wait_for(
+                    conn.recv_raw(max_bytes=HANDSHAKE_MAX_FRAME_BYTES),
+                    timeout=10.0)
+                if msg_type != expected_type:
+                    return None
+                their_data = json.loads(their_hello.decode())
+                # `v` is mandatory and must equal WIRE_VERSION.
+                if their_data.get("v") != WIRE_VERSION:
+                    return None
+                t_eph = bytes.fromhex(their_data["eph_pub"])
+                t_eph_sig = bytes.fromhex(their_data["eph_sig"])
+                t_x25519 = bytes.fromhex(their_data["x25519_pub"])
+                t_ed25519 = bytes.fromhex(their_data["ed25519_pub"])
+                t_peer_id = their_data["peer_id"]
+                t_port = their_data.get("port", self.port)
+                # peer_id MUST be the BLAKE2s digest of the presented Ed25519
+                # key (PROTOCOL.md §5), else peer_id is an attacker-chosen label.
+                from .identity import peer_id_from_pubkey
+                if t_peer_id != peer_id_from_pubkey(t_ed25519):
+                    return None
+                # Verify the Ed25519 signature over (their eph || their x25519).
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                    Ed25519PublicKey,
+                )
+                try:
+                    Ed25519PublicKey.from_public_bytes(t_ed25519).verify(
+                        t_eph_sig, t_eph + t_x25519)
+                except Exception:
+                    return None
+                return t_eph, t_x25519, t_ed25519, t_peer_id, t_port
 
-            hello = json.dumps({
-                "v": WIRE_VERSION,
-                "eph_pub": eph_pub.hex(),
-                "eph_sig": eph_sig.hex(),
-                "peer_id": self.identity.peer_id,
-                "x25519_pub": self.identity.x25519_pub_bytes.hex(),
-                "ed25519_pub": self.identity.ed25519_pub_bytes.hex(),
-                "port": self.port,
-            }).encode()
-
-            await conn.send(
-                MSG_HANDSHAKE if outbound else MSG_HANDSHAKE_ACK, hello
-            )
-
-            expected = MSG_HANDSHAKE_ACK if outbound else MSG_HANDSHAKE
-            msg_type, their_hello = await asyncio.wait_for(
-                conn.recv_raw(max_bytes=HANDSHAKE_MAX_FRAME_BYTES), timeout=10.0
-            )
-            if msg_type != expected:
+            # DoS hardening (#11): the responder reads and fully validates the
+            # client hello BEFORE generating a key, signing, and replying — so
+            # an unauthenticated peer cannot extract free ephemeral-keygen +
+            # signature work (or our ephemeral/signature) per connection. The
+            # initiator still sends first, then reads, so there is no deadlock
+            # (initiator send -> responder recv -> responder send -> initiator recv).
+            if outbound:
+                eph_priv, eph_pub = await _send_our_hello()
+                got = await _recv_and_validate_their_hello()
+            else:
+                got = await _recv_and_validate_their_hello()
+                if got is None:
+                    return False
+                eph_priv, eph_pub = await _send_our_hello()
+            if got is None:
                 return False
-
-            their_data = json.loads(their_hello.decode())
-
-            # Wire-version check. Now strict: `v` is mandatory and must equal
-            # WIRE_VERSION. (Pre-rc1 peers that omitted it no longer exist, and
-            # rc7 bumped the wire to 2 over a breaking handshake/ratchet change
-            # — a mismatched or missing version must fail here, cleanly, rather
-            # than later as an opaque signature error.)
-            their_v = their_data.get("v")
-            if their_v != WIRE_VERSION:
-                return False
-
-            their_eph = bytes.fromhex(their_data["eph_pub"])
-            their_eph_sig = bytes.fromhex(their_data["eph_sig"])
-            their_x25519 = bytes.fromhex(their_data["x25519_pub"])
-            their_ed25519 = bytes.fromhex(their_data["ed25519_pub"])
-            their_peer_id = their_data["peer_id"]
-            their_port = their_data.get("port", self.port)
-
-            # peer_id MUST be the BLAKE2s digest of the presented Ed25519 key
-            # (PROTOCOL.md §5). Without this, peer_id is just an attacker-
-            # chosen label: a peer could present a validly-signed key under
-            # any peer_id, squatting identities and poisoning the
-            # peer_id->key mapping that every auth path trusts.
-            from .identity import peer_id_from_pubkey
-            if their_peer_id != peer_id_from_pubkey(their_ed25519):
-                return False
-
-            # Verify the peer's Ed25519 signature over (their ephemeral key
-            # || their static X25519 key). Without this, a MITM could present
-            # their own ephemeral key and intercept the session, or swap the
-            # static x25519_pub to redirect our sealed-sender envelopes.
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-            try:
-                peer_ed_pub = Ed25519PublicKey.from_public_bytes(their_ed25519)
-                peer_ed_pub.verify(their_eph_sig, their_eph + their_x25519)
-            except Exception:
-                return False  # signature invalid — reject handshake
+            their_eph, their_x25519, their_ed25519, their_peer_id, their_port = got
 
             # Invite/dial authentication: when the caller told us WHICH peer we
             # meant to reach (from an invite or an address-book entry), the

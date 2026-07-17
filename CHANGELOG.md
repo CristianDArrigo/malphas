@@ -40,9 +40,12 @@ not readable under the new identity. Pre-1.0-adoption break; no migration.
 - `WIRE_VERSION` in the node bumped 1 → 2 to match the package/spec (#8).
 - PROTOCOL.md now documents the shipped KDF and onion derivations, backed by
   known-answer tests (#9). Cover traffic uses the same 3-hop circuit as real
-  messages (#21). Only the group creator may mutate membership (#19, partial).
-- Docker: the entrypoint no longer world-exposes the Tor control cookie; base
-  image pinned to `slim-bookworm` (#20, partial).
+  messages (#21). Only the group creator may mutate membership; leaving a
+  group now notifies the other members (#19).
+- **Removed the runtime Docker image** (#20). Tor hidden services do not work
+  reliably inside a container (Tor self-rendezvous), so running malphas in
+  Docker was never a real deployment. The reproducible-build image
+  (`Dockerfile.build`, no Tor) is retained.
 
 ### Fixed
 

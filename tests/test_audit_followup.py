@@ -330,3 +330,33 @@ def test_tor_service_key_is_separate_from_messaging_key():
     # Both identity constructors expose the Tor key.
     idn2, _book = create_identity_with_book_key("tor-separation-pass")
     assert idn2.tor_ed25519_pub_bytes == idn.tor_ed25519_pub_bytes
+
+
+# ── #11: responder must validate the client hello BEFORE signing/responding ──
+async def test_responder_does_not_respond_before_validating(identity_a):
+    import json as _json
+
+    from malphas.node import MSG_HANDSHAKE, MalphasNode
+
+    node = MalphasNode(identity_a, "127.0.0.1", 17795, cover_traffic=False)
+    sends = []
+
+    class FakeConn:
+        peer_info = None
+
+        async def send(self, msg_type, payload):
+            sends.append(msg_type)
+
+        async def recv_raw(self, max_bytes=None):
+            # A client hello with a bad wire version: validation must fail.
+            return (MSG_HANDSHAKE, _json.dumps({
+                "v": 999, "eph_pub": "00" * 32, "eph_sig": "00" * 64,
+                "peer_id": "a" * 40, "x25519_pub": "00" * 32,
+                "ed25519_pub": "00" * 32, "port": 1,
+            }).encode())
+
+    ok = await node._perform_handshake(FakeConn(), outbound=False)
+    assert ok is False
+    # The responder must NOT have generated a key + signed + sent an ACK to an
+    # unvalidated client (that was the free pre-auth crypto work in #11).
+    assert sends == []
