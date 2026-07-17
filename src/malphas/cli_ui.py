@@ -76,6 +76,7 @@ COMMANDS = [
     "/export", "/import", "/trust", "/wipe", "/panic", "/help", "/github", "/quit", "/exit",
     "/sendfile", "/accept", "/reject", "/savefile", "/files",
     "/backup",
+    "/passwd",
     "/group",
 ]
 
@@ -126,14 +127,19 @@ class MalphasCLI:
         self,
         node: MalphasNode,
         book: AddressBook,
-        salt_path: "Path | None" = None,
+        recovery_mnemonic: "str | None" = None,
+        identity_path: "Path | None" = None,
     ):
         self.node = node
         self.book = book
         self.active_peer: str | None = None
         self._running = True
         self._console = _make_console()
-        self._salt_path = salt_path
+        # 24-word recovery mnemonic of the identity root (shown by /backup) and
+        # the on-disk identity file (used by /passwd to re-wrap under a new
+        # passphrase). Both are set at startup by __main__.
+        self._recovery_mnemonic = recovery_mnemonic
+        self._identity_path = identity_path
         # File transfer UI state — keyed by file_id.
         # _pending_offers: offers received and awaiting /accept or /reject.
         # _completed_files: payloads ready for /savefile to flush to disk.
@@ -920,36 +926,49 @@ class MalphasCLI:
             )
 
     async def _cmd_backup(self, args: list) -> None:
-        """Print the 12-word BIP39 mnemonic of the per-user salt.
+        """Print the 24-word BIP39 mnemonic of the identity root.
 
-        The mnemonic is the only way to recover the identity if
-        ~/.malphas/salt is lost. Treat the printed words like a
-        passphrase: write them down, do not screenshot, do not paste
-        into a chat.
+        The mnemonic is the only way to recover the identity if the identity
+        file is lost. Treat the printed words like a passphrase: write them
+        down, do not screenshot, do not paste into a chat.
         """
-        if self._salt_path is None:
-            self._err("salt path not configured (running without --salt?)")
+        if not self._recovery_mnemonic:
+            self._err("recovery mnemonic not available in this session")
             return
-        try:
-            from .mnemonic import salt_to_mnemonic
-            from .salt_store import SALT_LEN
-        except ImportError as e:
-            self._err(f"backup unavailable: {e}")
-            return
-        try:
-            data = self._salt_path.read_bytes()
-        except OSError as e:
-            self._err(f"cannot read salt at {self._salt_path}: {e}")
-            return
-        if len(data) != SALT_LEN:
-            self._err(f"salt at {self._salt_path} has wrong length ({len(data)})")
-            return
-        words = salt_to_mnemonic(data).split()
+        words = self._recovery_mnemonic.split()
         self._print()
-        self._warn("write these 12 words down — they recover your identity")
+        self._warn("write these 24 words down; they recover your identity")
         for i, word in enumerate(words, start=1):
             self._print(f"  [{C_DIM}]{i:>2}.[/{C_DIM}] [{C_LABEL}]{word}[/{C_LABEL}]")
         self._print()
+
+    async def _cmd_passwd(self, args: list) -> None:
+        """Change the passphrase that encrypts the identity at rest.
+
+        Re-wraps the same identity root under a new passphrase; the identity
+        (peer_id, keys, onion) is unchanged.
+        """
+        if self._identity_path is None:
+            self._err("identity path not configured; cannot change passphrase")
+            return
+        import getpass
+
+        from . import identity_store
+        old = getpass.getpass("  current passphrase: ")
+        new = getpass.getpass("  new passphrase: ")
+        confirm = getpass.getpass("  confirm new passphrase: ")
+        if not new:
+            self._err("new passphrase cannot be empty")
+            return
+        if new != confirm:
+            self._err("new passphrases do not match")
+            return
+        try:
+            identity_store.rotate_passphrase(str(self._identity_path), old, new)
+        except ValueError:
+            self._err("current passphrase is wrong; passphrase not changed")
+            return
+        self._warn("passphrase changed. your identity is unchanged.")
 
     async def _on_file_offer(self, from_id: str, offer: dict) -> None:
         """Hook fired by the node when a new file offer arrives."""
@@ -1113,6 +1132,8 @@ class MalphasCLI:
                         await self._cmd_files(args)
                     elif cmd == "backup":
                         await self._cmd_backup(args)
+                    elif cmd == "passwd":
+                        await self._cmd_passwd(args)
                     elif cmd == "group":
                         await self._cmd_group(args)
                     elif cmd == "help":

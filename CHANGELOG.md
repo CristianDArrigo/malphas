@@ -3,6 +3,49 @@
 All notable changes to malphas are tracked here. Format roughly Keep-a-Changelog;
 versioning is SemVer with the caveat that wire-format-breaking changes always bump minor or major.
 
+## [1.1.0] — 2026-07-17
+
+Security-audit follow-up. **Breaking:** the identity scheme changed (see below),
+so identities from `<= 1.0.x` are superseded and existing address books/pins are
+not readable under the new identity. Pre-1.0-adoption break; no migration.
+
+### Security
+
+- **Identity is now a random 32-byte root, not derived from the passphrase**
+  (#6). The root is HKDF-expanded into all long-term keys and stored wrapped
+  under an Argon2id passphrase-KEK at `~/.malphas/identity`. This removes the
+  offline "brute-force the passphrase from a public peer_id" oracle and enables
+  passphrase rotation (`/passwd`) without changing identity. Recovery is now a
+  **24-word** mnemonic of the root (`--from-mnemonic`).
+- **Dedicated Tor onion key** (#7): the hidden service uses a separate
+  HKDF-derived Ed25519 key, so a Tor/ControlPort compromise cannot forge
+  messaging-identity signatures. The messaging key never leaves the process.
+- **Handshake verifies the expected invite identity before pinning** (#5).
+- **Unknown inbound peers are pinned ephemerally (capped, in-memory)** (#10),
+  so a connection flood cannot grow the on-disk pin store without bound.
+- **Tighter 8 KiB pre-auth handshake frame cap** (#11, partial).
+- **`panic()` clears per-connection session/HMAC keys**; docs corrected to say
+  clearance is best-effort, not guaranteed zeroization (#13).
+
+### Changed
+
+- `WIRE_VERSION` in the node bumped 1 → 2 to match the package/spec (#8).
+- PROTOCOL.md now documents the shipped KDF and onion derivations, backed by
+  known-answer tests (#9). Cover traffic uses the same 3-hop circuit as real
+  messages (#21). Only the group creator may mutate membership (#19, partial).
+- Docker: the entrypoint no longer world-exposes the Tor control cookie; base
+  image pinned to `slim-bookworm` (#20, partial).
+
+### Fixed
+
+- Legacy-salt address-book migration crash (#14; the migration path itself was
+  later removed by the #6 identity redesign).
+- Duplicate-connection race that could evict the newer live connection (#15).
+- Resolved read receipts leaking in memory with a plaintext preview (#16).
+- `_flush_queue` dropping messages whose send failed (#17).
+- Address book `_save` now fsyncs file + directory for durability parity with
+  the pin store (#18).
+
 ## [1.0.1] — 2026-06-16
 
 No wire-format change (the onion address is identical), so `1.0.1`

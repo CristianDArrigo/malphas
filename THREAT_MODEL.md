@@ -59,6 +59,7 @@ Standard-primitive trust.
 | Pinned identity                         | A3           | TOFU on first contact, then pinned. Subsequent key change is rejected. A corrupt/tampered pin file is now fatal (the node refuses to start) rather than silently resetting to empty pins, closing the prior MITM re-pin window. |
 | Replay protection                       | A3           | (`from_id`, `msg_id`) cache, sliding 1-hour window, 10k entries.       |
 | At-rest confidentiality of address book | A5           | Argon2id + ChaCha20-Poly1305 with per-user salt. Padded JSON.          |
+| At-rest confidentiality of identity     | A5           | Random 32-byte identity root wrapped under an Argon2id passphrase-KEK (`~/.malphas/identity`, 0600). peer_id/keys are independent of the passphrase, so a stolen salt + public peer_id give NO offline passphrase oracle. Passphrase rotatable via `/passwd`. |
 | At-rest confidentiality of ratchet      | —            | Not applicable: ratchet state is in-memory only.                       |
 | Network-level unlinkability             | A1–A4        | All traffic over Tor onion service when `--tor` is set.                |
 | Cover traffic                           | A2           | Optional padding+jitter packets (off by default). Limited.             |
@@ -75,7 +76,7 @@ Standard-primitive trust.
 | Timing-channel resistance                        | Cover traffic is best-effort. Padding aligns to a fixed block, but message arrival timing leaks. |
 | Constant-time comparisons everywhere             | We use `hmac.compare_digest` in obvious spots, but a full audit (§5) is pending.              |
 | Resistance to denial of service                  | A peer can flood the input queue or send many connection attempts. Bounded by replay window + per-peer connection cap, but no rate limiting beyond that. The two single-frame amplification vectors are now closed: a frame's declared length is capped at 16 MiB before the body is read (no OOM from one length prefix), and ratchet skipped-message work is bounded by `MAX_SKIP` (no CPU exhaustion from one crafted header). |
-| Recovery if you lose **both** salt + passphrase  | The address book cannot be recomputed. The mnemonic backs up the salt; the passphrase you must remember. |
+| Recovery if you lose the identity file           | The 24-word mnemonic backs up the identity **root** (`--from-mnemonic` restores it, then pick any passphrase). Lose the file AND the words and the identity is unrecoverable. Losing only the passphrase is fine: restore from the mnemonic. |
 | Reproducible builds                              | Yes (iter-056). `scripts/build-reproducible.sh` + `Dockerfile.build` produce byte-identical wheels. |
 | External cryptographic audit                     | Not yet performed.                                                                            |
 
@@ -95,7 +96,8 @@ Each cell: ✅ defended, ⚠️ partial, ❌ not defended, — = N/A.
 | Map social graph by IP correlation                                                                                     | ⚠️ | ⚠️ | ⚠️ | ⚠️ | — |
 | Demote crypto by stripping `auth_type` prefix to revert to weaker scheme                                               | ✅ | — | ✅ | ✅ | — |
 | Steal address book file                                                                                                | — | — | — | — | ✅ argon2id |
-| Steal salt + brute force passphrase offline                                                                            | — | — | — | — | ⚠️ depends on passphrase strength + Argon2 cost |
+| Steal identity file + brute force passphrase offline (to unwrap the root)                                              | — | — | — | — | ⚠️ depends on passphrase strength + Argon2 cost |
+| Steal salt + public peer_id, brute force passphrase (old oracle)                                                       | — | — | — | — | ✅ closed: peer_id no longer derives from the passphrase |
 | Read past messages after a ratchet key compromise                                                                      | — | — | — | — | ✅ Double Ratchet |
 | Read future messages after a ratchet key compromise (until reconnect)                                                  | — | — | — | — | ✅ Double Ratchet ratcheting |
 | Continue to receive group messages after being removed                                                                 | — | — | — | — | ❌ no MLS |
@@ -118,7 +120,7 @@ Code and dependencies that, if compromised, defeat the model:
 | Component                              | What it provides                              | Trust note                                |
 |----------------------------------------|-----------------------------------------------|-------------------------------------------|
 | `cryptography` (PyCA)                  | All primitives (X25519, Ed25519, ChaCha20-Poly1305, HKDF, BLAKE2s, Argon2id is via `argon2-cffi`) | Industry-standard, audited.               |
-| `argon2-cffi`                          | Argon2id KDF                                  | Used for passphrase → seed.               |
+| `argon2-cffi`                          | Argon2id KDF                                  | Used for the passphrase-KEK that wraps the identity root. |
 | `mnemonic`                             | BIP39 word list                               | Public dictionary, no secrets.            |
 | `stem`                                 | Tor ControlPort client                        | Used to register the hidden service via `ADD_ONION` (since 1.0.0 post-release). Cookie-authenticated. |
 | Tor HS setup (ControlPort `ADD_ONION`) | Registers an ephemeral v3 HS from a dedicated Tor key | No sudo, no files under `/var/lib/tor`, no torrc edits, no tor restart. The onion service uses a SEPARATE Ed25519 key (HKDF-derived from the identity seed, `malphas-tor-identity-v1`), not the messaging key: a Tor/ControlPort compromise cannot forge messaging-identity signatures. The messaging Ed25519 key never leaves the process. The onion is dropped (`DEL_ONION`) on exit. See PROTOCOL.md §11.4. |

@@ -17,150 +17,121 @@ import signal
 import sys
 from pathlib import Path
 
+from . import identity_store
 from .addressbook import AddressBook
-from .identity import create_identity_with_book_key
-from .mnemonic import mnemonic_to_salt, salt_to_mnemonic
+from .identity import Identity
+from .mnemonic import mnemonic_to_root, root_to_mnemonic
 from .node import MalphasNode
 from .pinstore import PinStore, PinStoreCorruptError
-from .salt_store import SALT_LEN, load_or_create_salt
 from .splash import print_splash
 from .transport import DirectTransport, TorTransport, tor_is_available
 
 DEFAULT_BOOK_PATH = str(Path.home() / ".malphas" / "book")
-DEFAULT_SALT_PATH = str(Path.home() / ".malphas" / "salt")
+DEFAULT_IDENTITY_PATH = str(Path.home() / ".malphas" / "identity")
 
 
-def _resolve_salt(args) -> bytes:
+def _print_first_run_mnemonic(mnemonic: str, identity_path: Path) -> None:
+    words = mnemonic.split()
+    print()
+    print("  +-- first run on this machine ------------------------------+")
+    print("  | a random identity has been generated and encrypted under  |")
+    print("  | your passphrase. write down these 24 words: they are the  |")
+    print("  | ONLY way to recover this identity if the file is lost.    |")
+    print("  +-----------------------------------------------------------+")
+    print()
+    for i, word in enumerate(words, start=1):
+        print(f"    {i:2d}. {word}")
+    print()
+    print("  to restore on another machine:  malphas --from-mnemonic")
+    print("  to change your passphrase:      /passwd  (in the app)")
+    print()
+
+
+def _open_book(book_path: Path, book_key: bytes, fresh: bool) -> AddressBook:
+    """Open the encrypted address book under `book_key`.
+
+    On a freshly-created/restored identity, a pre-existing book that cannot be
+    decrypted under the new key is expected (it belonged to a different
+    identity); start empty rather than crash. Otherwise a decryption failure is
+    a real error and propagates.
     """
-    Decide where the per-user salt comes from, in priority order:
-      1. `--from-mnemonic` — restore from a 12-word BIP39 backup. The
-         words are prompted interactively (never read from argv, which
-         is world-readable via /proc and the process list). The salt is
-         written to args.salt if absent; otherwise verified to match.
-      2. `args.salt` file — read if present, generate if absent
-         (the existing v0.7.0 flow).
+    book = AddressBook(str(book_path), book_key)
+    try:
+        book.load()
+    except ValueError:
+        if fresh:
+            print("  note: an existing address book could not be read under "
+                  "this identity; starting with an empty book.")
+            book.init_empty()
+        else:
+            raise
+    return book
 
-    On a fresh generation (path didn't exist), prints the mnemonic
-    once, big and visible, so the user can write it down. The
-    same is shown by the `/backup` CLI command on demand.
+
+def _setup_identity_and_book(
+    args,
+) -> tuple[Identity, AddressBook, bytes, str, Path]:
     """
-    salt_path = Path(args.salt)
+    Resolve the identity (random root wrapped under a passphrase-KEK) and open
+    the address book. Handles first run, restore-from-mnemonic, and normal
+    unlock. Returns (identity, book, book_key, recovery_mnemonic, identity_path).
+    """
+    identity_path = Path(args.identity)
+    book_path = Path(args.book)
+    book_path.parent.mkdir(parents=True, exist_ok=True)
+
+    exists = identity_store.identity_file_exists(str(identity_path))
 
     if args.from_mnemonic:
-        words = getpass.getpass("  recovery mnemonic (12 words): ").strip()
+        if exists:
+            print(f"  error: {identity_path} already exists.\n"
+                  "  Refusing to overwrite an existing identity. Remove it "
+                  "deliberately first if you really mean to restore over it.",
+                  file=sys.stderr)
+            sys.exit(2)
+        words = getpass.getpass("  recovery mnemonic (24 words): ").strip()
         try:
-            salt = mnemonic_to_salt(words)
+            restored = mnemonic_to_root(words)
         except ValueError as e:
             print(f"  error: {e}", file=sys.stderr)
             sys.exit(2)
-
-        if salt_path.exists():
-            existing = salt_path.read_bytes()
-            if existing != salt:
-                print(
-                    f"  error: {salt_path} already exists with a different "
-                    "salt.\n  Refusing to overwrite — this would replace "
-                    "your existing identity.",
-                    file=sys.stderr,
-                )
-                sys.exit(2)
-            print(f"  mnemonic matches existing salt at {salt_path}.")
-        else:
-            salt_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = salt_path.with_suffix(".salt-tmp")
-            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as f:
-                f.write(salt)
-            os.replace(str(tmp), str(salt_path))
-            print(f"  salt restored from mnemonic into {salt_path}.")
-        return salt
-
-    # Standard flow — load_or_create. Detect "we just generated it"
-    # by checking existence before the call.
-    fresh = not salt_path.exists()
-    salt = load_or_create_salt(salt_path)
-    if fresh:
-        words = salt_to_mnemonic(salt)
-        print()
-        print("  ┌─ first run on this machine ──────────────────────────────┐")
-        print("  │ a per-user salt has been generated and saved.            │")
-        print("  │ write down these 12 words — they are the ONLY way to     │")
-        print(f"  │ recover this identity if {salt_path} is lost. │")
-        print("  └──────────────────────────────────────────────────────────┘")
-        print()
-        for i, word in enumerate(words.split(), start=1):
-            print(f"    {i:2d}. {word}")
-        print()
-        print("  to restore on another machine:  malphas --from-mnemonic"
-              "   (you'll be prompted for the words)")
-        print()
-    return salt
-
-
-def _open_book_with_migration(
-    book_path: Path,
-    passphrase: str,
-    salt: bytes,
-) -> tuple[AddressBook, bytes, "object"]:
-    """
-    Resolve identity + open the address book, with auto-migration from
-    the pre-0.7.0 fixed-salt format.
-
-    Pre-0.7.0 the Argon2 salt was the constant `b"malphas-kdf-salt"`.
-    A user upgrading from <=0.6.x has a `~/.malphas/book` cipher
-    file encrypted under a `book_key` derived from THAT salt; passing
-    the new per-user random salt produces a different `book_key` and
-    decryption fails. We detect the failure, retry with the legacy
-    salt, and if that succeeds we re-emit the book under the new key
-    so the next run is clean.
-
-    Returns (book, book_key, identity).
-    """
-    identity, book_key = create_identity_with_book_key(passphrase, salt)
-    book = AddressBook(str(book_path), book_key)
-
-    if not book_path.exists() or book_path.stat().st_size == 0:
-        # Fresh install — no migration needed.
-        book.load()
-        return book, book_key, identity
-
-    try:
-        book.load()
-        return book, book_key, identity
-    except ValueError:
-        # Try legacy salt (pre-0.7.0).
-        legacy_id, legacy_key = create_identity_with_book_key(passphrase, salt=None)
-        legacy_book = AddressBook(str(book_path), legacy_key)
+        passphrase = _get_passphrase()
+        root, identity, book_key = identity_store.create_and_store_identity(
+            str(identity_path), passphrase, root=restored)
+        print(f"  identity restored from mnemonic into {identity_path}.")
+        fresh = True
+    elif exists:
+        passphrase = _get_passphrase()
         try:
-            legacy_book.load()
+            root, identity, book_key = identity_store.load_identity(
+                str(identity_path), passphrase)
         except ValueError:
-            # Genuinely the wrong passphrase or corrupted file.
-            raise
+            print("\n  error: wrong passphrase (could not unwrap the identity).",
+                  file=sys.stderr)
+            sys.exit(1)
+        fresh = False
+    else:
+        passphrase = _get_passphrase()
+        root, identity, book_key = identity_store.create_and_store_identity(
+            str(identity_path), passphrase)
+        _print_first_run_mnemonic(root_to_mnemonic(root), identity_path)
+        fresh = True
 
-        # Migration succeeded under the legacy key. Re-emit the contacts
-        # under the new (per-user-salt-derived) key. The destination book's
-        # load() failed above (wrong key), so it is not marked loaded, so mark
-        # it as a fresh empty book before add()/_save() or the migration
-        # crashes with "Address book not loaded".
-        print("  address book: migrating from pre-0.7.0 fixed-salt format…")
-        book.init_empty()
-        for c in legacy_book.all():
-            book.add(c)
-        legacy_book.wipe_memory()
-        print(f"  address book migrated ({len(book)} contact(s)). "
-              "consider running /book to verify, then /backup to save "
-              "the 12-word recovery mnemonic.")
-        return book, book_key, identity
+    recovery_mnemonic = root_to_mnemonic(root)
+    passphrase = ""  # drop the passphrase reference
+    del passphrase
+
+    book = _open_book(book_path, book_key, fresh)
+    return identity, book, book_key, recovery_mnemonic, identity_path
 
 
 def _get_passphrase() -> str:
-    print("  your identity is derived deterministically from this passphrase.")
-    print("  it is never stored. the same passphrase always produces the same identity.")
+    print("  this passphrase encrypts your identity at rest (it does NOT derive")
+    print("  it; the identity is a random key you can back up as 24 words).")
+    print("  it is never stored. you can change it later with /passwd.")
     print()
-    print("  weak passphrases (e.g. 'admin', 'password') make your peer_id")
-    print("  precalculable by anyone who knows the algorithm. use at least")
-    print("  4 random words or a long unpredictable phrase.")
-    print("  example: corvo-vetro-martello-1987-luna")
+    print("  use a strong passphrase: at least 4 random words or a long")
+    print("  unpredictable phrase. example: corvo-vetro-martello-1987-luna")
     print()
     passphrase = getpass.getpass("  passphrase: ")
     if not passphrase:
@@ -173,23 +144,10 @@ async def _run_cli(args) -> None:
     from .cli_ui import MalphasCLI
 
     print_splash()
-    passphrase = _get_passphrase()
-    salt = _resolve_salt(args)
-
-    # Ensure book directory exists
+    identity, book, book_key, recovery_mnemonic, identity_path = (
+        _setup_identity_and_book(args)
+    )
     book_path = Path(args.book)
-    book_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        book, book_key, identity = _open_book_with_migration(
-            book_path, passphrase, salt
-        )
-    except ValueError as e:
-        print(f"\n  error: {e}", file=sys.stderr)
-        print("  wrong passphrase or corrupted address book.", file=sys.stderr)
-        sys.exit(1)
-    passphrase = ""
-    del passphrase
     if len(book) > 0:
         print(f"  address book loaded ({len(book)} contact(s))")
 
@@ -238,7 +196,8 @@ async def _run_cli(args) -> None:
             print("  continuing without hidden service (outbound Tor only)", file=sys.stderr)
 
     loop = asyncio.get_running_loop()
-    cli = MalphasCLI(node, book, salt_path=Path(args.salt))
+    cli = MalphasCLI(node, book, recovery_mnemonic=recovery_mnemonic,
+                     identity_path=identity_path)
 
     def _shutdown():
         cli._running = False
@@ -262,20 +221,10 @@ def _run_gui(args) -> None:
     from .gui import AsyncBridge, launch_gui
 
     print_splash()
-    passphrase = _get_passphrase()
-    salt = _resolve_salt(args)
-
+    identity, book, book_key, recovery_mnemonic, identity_path = (
+        _setup_identity_and_book(args)
+    )
     book_path = Path(args.book)
-    book_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        book, book_key, identity = _open_book_with_migration(
-            book_path, passphrase, salt
-        )
-    except ValueError as e:
-        print(f"\n  error: {e}", file=sys.stderr)
-        sys.exit(1)
-    passphrase = ""  # noqa: S105 — overwriting the local for hygiene
-    del passphrase
     if len(book) > 0:
         print(f"  address book loaded ({len(book)} contact(s))")
 
@@ -338,7 +287,7 @@ def _run_gui(args) -> None:
     print("  launching GUI...")
 
     try:
-        launch_gui(node, book, bridge, salt_path=Path(args.salt))
+        launch_gui(node, book, bridge, recovery_mnemonic=recovery_mnemonic)
     finally:
         # mainloop returned — make sure the background loop is down.
         try:
@@ -366,20 +315,10 @@ def _run_gui_qt(args) -> None:
         sys.exit(1)
 
     print_splash()
-    passphrase = _get_passphrase()
-    salt = _resolve_salt(args)
-
+    identity, book, book_key, recovery_mnemonic, identity_path = (
+        _setup_identity_and_book(args)
+    )
     book_path = Path(args.book)
-    book_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        book, book_key, identity = _open_book_with_migration(
-            book_path, passphrase, salt
-        )
-    except ValueError as e:
-        print(f"\n  error: {e}", file=sys.stderr)
-        sys.exit(1)
-    passphrase = ""  # noqa: S105
-    del passphrase
     if len(book) > 0:
         print(f"  address book loaded ({len(book)} contact(s))")
 
@@ -441,7 +380,7 @@ def _run_gui_qt(args) -> None:
     print("  launching Qt GUI...")
 
     try:
-        launch_qt_gui(node, book, bridge, salt_path=Path(args.salt))
+        launch_qt_gui(node, book, bridge, recovery_mnemonic=recovery_mnemonic)
     finally:
         try:
             bridge.submit_coro(node.stop()).result(timeout=3.0)
@@ -500,17 +439,18 @@ def main():
         help=f"Address book file path (default: {DEFAULT_BOOK_PATH})"
     )
     parser.add_argument(
-        "--salt", default=DEFAULT_SALT_PATH,
+        "--identity", default=DEFAULT_IDENTITY_PATH,
         help=(
-            f"Per-user Argon2 salt file (default: {DEFAULT_SALT_PATH}). "
-            "Generated on first run, mode 0600. Lose it = lose the identity."
+            f"Identity file (default: {DEFAULT_IDENTITY_PATH}). Holds your "
+            "random identity root, encrypted under your passphrase (mode 0600). "
+            "Back it up as 24 words; lose it and the backup = lose the identity."
         ),
     )
     parser.add_argument(
         "--from-mnemonic",
         action="store_true",
         help=(
-            "Restore the per-user salt from a 12-word BIP39 mnemonic. The "
+            "Restore the identity root from a 24-word BIP39 mnemonic. The "
             "words are prompted interactively (never passed on the command "
             "line, which would leak them via the process list). The salt "
             "file is written if absent; if it exists it is verified to "

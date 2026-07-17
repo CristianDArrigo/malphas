@@ -8,28 +8,28 @@ constants, which silently enshrined a code/spec divergence.
 """
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-from malphas.addressbook import derive_book_key
 from malphas.crypto import derive_hmac_key, derive_session_key, hkdf_derive
+from malphas.identity import derive_book_key_from_root
 from malphas.onion import peel_layer, wrap_onion
 
-SEED = bytes(range(64))
+ROOT = bytes(range(32))
 SHARED = bytes(range(32))
 PUB_A = bytes([1]) * 32
 PUB_B = bytes([2]) * 32
 
 
 def test_book_key_matches_protocol_md():
-    # PROTOCOL.md §3:
-    #   book_key = HKDF-SHA256(seed64, salt=b"malphas-addressbook-v1",
+    # PROTOCOL.md §3.1:
+    #   book_key = HKDF-SHA256(root32, salt=b"malphas-addressbook-v1",
     #                          info=b"addressbook-encryption-key", len=32)
     documented = hkdf_derive(
-        SEED, salt=b"malphas-addressbook-v1",
+        ROOT, salt=b"malphas-addressbook-v1",
         info=b"addressbook-encryption-key", length=32,
     )
-    assert derive_book_key(SEED) == documented
+    assert derive_book_key_from_root(ROOT) == documented
     assert (
-        derive_book_key(SEED).hex()
-        == "54bd9f7af00f047dfe52cc4901d18d42d990ad405518fdab8331d65ad07b1480"
+        derive_book_key_from_root(ROOT).hex()
+        == "a73cc068399bb68eaf22dc4e9869815a5240627017002f257c20063c196edcda"
     )
 
 
