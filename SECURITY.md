@@ -40,8 +40,10 @@ compatible with `1.0.0`.
 
 - ~~SHA1 used for `peer_id` (160-bit identifier, not security-critical).~~
   Replaced with `BLAKE2s(ed25519_pub, digest_size=20)` in 0.5.0 (wire-breaking).
-- Argon2id salt is a public constant. Per-user salt would require disk state;
-  trade-off currently weighted toward zero-disk policy.
+- Identity is a random 32-byte root (not passphrase-derived), stored wrapped
+  under a passphrase Argon2id-KEK with a per-identity random salt in
+  `~/.malphas/identity`. peer_id does not depend on the passphrase, so there is
+  no offline passphrase-from-peer_id oracle, and the passphrase is rotatable.
 - The Argon2 seed is mlock'd best-effort via `malphas.secure_buffer` and
   zeroized after the keypairs are derived. Other sensitive material
   (session keys, ratchet roots, address book master key) is not yet

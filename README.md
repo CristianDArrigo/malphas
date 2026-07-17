@@ -171,13 +171,13 @@ malphas is designed to protect against the following adversaries:
 - Service providers and infrastructure operators — there are no servers to subpoena
 - Remote forensics — no data is written to disk except the encrypted address book and key pin store
 - Man-in-the-middle attacks — all connections are authenticated via Ed25519 signatures on ephemeral keys, and keys are pinned on first contact (TOFU)
-- Impersonation after first contact — key pinning detects if a peer's Ed25519 key changes, which indicates either a passphrase change or an attacker
+- Impersonation after first contact: key pinning detects if a peer's Ed25519 key changes, which indicates an attacker or a peer who re-created their identity from scratch (a passphrase change does NOT change keys)
 - Brute force attacks on the address book — Argon2id makes offline dictionary attacks computationally prohibitive (64MB RAM + ~200ms per attempt)
 - Proof of authorship — deniable authentication (HMAC) prevents cryptographic attribution of messages to a specific sender
 - Replay attacks on the application layer — every successfully delivered message records `(from_peer_id, msg_id)` in a bounded sliding window; a re-injected onion packet is dropped silently, with no second user-visible delivery, no second store entry, and no second receipt
 - Argon2 seed in swap — the derived seed is wrapped in a `SecureBytes` buffer that is `mlock`'d (best-effort) and zeroized as soon as the keypairs are extracted
 - Post-compromise sender disclosure — since v0.6.0, the `from` field in the inner JSON payload is sealed against the recipient's X25519 pubkey. An attacker who later recovers a hop's session key sees only opaque bytes where the sender's peer_id used to be
-- Rainbow tables across users — since v0.7.0 the Argon2 salt is a per-user 16-byte random value persisted to `~/.malphas/salt` (mode 0600), not a global constant. A precomputed table built against one install does not help against any other install
+- Rainbow tables across users: identity keys derive from a per-user random 32-byte root (not from the passphrase), so there is no cross-user precomputation surface. The only Argon2 input is the per-identity random KEK salt inside `~/.malphas/identity` (mode 0600), which wraps the root at rest
 
 **Partially protected against:**
 
@@ -200,8 +200,8 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 
 | Primitive | Algorithm | Purpose |
 |---|---|---|
-| Password hashing | Argon2id | Passphrase to 64-byte master seed (64MB, ~200ms) |
-| Key derivation | HKDF-SHA256 | Seed to address book key, session to HMAC key |
+| Password hashing | Argon2id | Passphrase to a 32-byte KEK that wraps the random identity root (64MB, ~200ms) |
+| Key derivation | HKDF-SHA256 | Identity root to signing/DH/Tor/book keys, session to HMAC key |
 | Key exchange | X25519 (ECDH) | Ephemeral session key establishment |
 | Authenticated encryption | ChaCha20-Poly1305 | All message and storage encryption |
 | Signing | Ed25519 | Handshake authentication, read receipts, invites, Tor identity |
@@ -630,7 +630,7 @@ After the handshake, **both peers know each other's credentials** and can send m
 
 ## Tor Hidden Services
 
-When launched with `--tor`, malphas registers a Tor v3 hidden service using the node's Ed25519 identity key. The `.onion` address is derived from the Ed25519 public key using the standard Tor v3 algorithm:
+When launched with `--tor`, malphas registers a Tor v3 hidden service using a **dedicated** Ed25519 key HKDF-derived from the identity root (separate from the messaging key). The `.onion` address is derived from that Tor key's public key using the standard Tor v3 algorithm:
 
 ```
 onion = base32( ed25519_pub(32) || SHA3-256(".onion checksum" || pub || version)[0:2] || 0x03 ) + ".onion"
@@ -740,7 +740,7 @@ When running with `--tor`, the invite includes the `.onion` address and `/import
 
 The address book is stored encrypted on disk at `~/.malphas/book` (configurable via `--book`).
 
-**Encryption:** ChaCha20-Poly1305 with the address book key derived from the passphrase via HKDF. The key never appears on disk.
+**Encryption:** ChaCha20-Poly1305 with the address book key HKDF-derived from the identity root. The key never appears on disk.
 
 **On-disk format:**
 
@@ -1081,8 +1081,11 @@ pytest tests/test_tor_e2e.py -v
 | `test_secure_buffer.py` | mlock + zeroize, slice/iter/contains semantics, ctx-mgr wipe-on-exit | 13 |
 | `test_fuzz_parsers.py` | Hypothesis fuzz on peel_layer, unpad_payload, parse_invite, FileOffer | 8 |
 | `test_sealed_sender.py` | Sealed envelope round-trip, format invariants, ephemeral key freshness | 9 |
-| `test_mnemonic.py` | BIP39 12-word salt round-trip, vector pinning, invalid input | 9 |
-| `test_salt_store.py` | Per-user salt persistence, file mode, rotation | 8 |
+| `test_mnemonic.py` | BIP39 12-word round-trip + vectors (legacy salt helpers) | 9 |
+| `test_identity_store.py` | Random-root wrap/unwrap, wrong-passphrase, passphrase rotation, 24-word mnemonic | 5 |
+| `test_x3dh.py` | X3DH agree, SPK sig, fresh ephemeral, ratchet seeding, E2E forward-secret delivery | 6 |
+| `test_protocol_kat.py` | Known-answer tests pinning KDF constants to PROTOCOL.md (book/session/hmac/sealed/ratchet/onion) | 6 |
+| `test_audit_followup.py` | Regression tests for the security-audit fixes | 16 |
 | `test_ratchet.py` | Symmetric chain step, DH ratchet, MAX_SKIP, header serialize | 13 |
 | `test_groups.py` | N-way fanout, member add/remove notifications, outsider rejection | 15 |
 | `test_constant_time.py` | Source-grep guards on `compare_digest`, behavioural smokes (TM-05) | 9 |
@@ -1108,7 +1111,7 @@ pytest tests/test_tor_e2e.py -v
 - Invite blobs with tampered signatures are rejected
 - REST API validates all inputs and rejects malformed requests
 - CLI commands parse correctly and produce expected state changes
-- Tor hidden service registration succeeds with the node's Ed25519 key
+- Tor hidden service registration succeeds with the dedicated Tor key
 
 ### CI quality gates
 
@@ -1126,7 +1129,7 @@ Every push and pull request runs through a stack of blocking gates:
 Modules in the mypy strict bucket (18, the entire crypto + protocol surface):
 `replay`, `crypto`, `memory`, `obfuscation`, `pinstore`, `invite`, `files`,
 `secure_buffer`, `discovery`, `receipts`, `ratchet`, `identity`, `onion`,
-`addressbook`, `sealed_sender`, `salt_store`, `mnemonic`, `groups`. The
+`addressbook`, `sealed_sender`, `identity_store`, `prekey`, `mnemonic`, `groups`. The
 bucket grows iteration by iteration — see `docs/auto-loop/` for the
 rolling log.
 

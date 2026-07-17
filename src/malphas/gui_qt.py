@@ -1688,7 +1688,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             sigil_lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             v.addWidget(sigil_lbl)
 
-        title = QtWidgets.QLabel("Write these 12 words down.")
+        title = QtWidgets.QLabel("Write these 24 words down.")
         title.setStyleSheet(
             f"color: {T.WARN_AMBER}; font-weight: 600; font-size: 12pt;")
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)

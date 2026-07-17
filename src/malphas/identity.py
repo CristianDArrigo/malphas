@@ -56,11 +56,9 @@ _ARGON2_TIME_COST    = 3
 _ARGON2_MEMORY_COST  = 65536  # KB = 64 MB
 _ARGON2_PARALLELISM  = 4
 _ARGON2_HASH_LEN     = 64
-# Legacy fallback salt — used when no per-user salt is provided.
-# Pre-0.7.0 this was the only salt; tests still rely on it for
-# deterministic identity derivation. Production CLI code passes a
-# per-user 16-byte salt loaded from `~/.malphas/salt` instead, see
-# malphas.salt_store.
+# Argon2 salt for the DETERMINISTIC (test/legacy) identity path. Production
+# identities are random roots wrapped under a passphrase-KEK (identity_store),
+# so this only feeds create_identity(passphrase) used by the test fixtures.
 _ARGON2_SALT_LEGACY  = b"malphas-kdf-salt"  # 16 bytes
 
 
@@ -267,9 +265,9 @@ def create_identity_with_book_key(
     Derive Identity + address book encryption key from the same passphrase + salt.
     Returns (Identity, book_key: bytes).
 
-    `salt` should be a per-user 16-byte value (see malphas.salt_store).
-    If None, falls back to the legacy global salt for backward-
-    compatible test paths only.
+    Deterministic test/legacy helper. Production identities are random roots
+    (see identity_store); `salt` (if given) is a 16-byte value, else a legacy
+    constant, used only to keep test derivations reproducible.
 
     Both derivations come from a single Argon2 seed wrapped in a
     SecureBytes that is wiped (and unlocked from RAM) before this

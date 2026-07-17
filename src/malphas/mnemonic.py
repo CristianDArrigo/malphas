@@ -1,15 +1,11 @@
 """
-BIP39 12-word mnemonic for the per-user salt.
+BIP39 mnemonics.
 
-Phase 2 (v0.7.0) introduced a 16-byte random salt at
-`~/.malphas/salt`. Lose that file and the same passphrase produces a
-fresh identity — every previously-paired contact becomes unreachable.
-
-12 BIP39 words encode exactly 128 bits of entropy + 4 bits of
-checksum, which lines up with our 16-byte salt. The mnemonic is
-therefore a human-recordable backup of the salt material, nothing
-more. It is **not** the passphrase — that one stays a free-form
-string chosen and memorized by the user.
+`root_to_mnemonic` / `mnemonic_to_root` (24 words, 256 bits) back up the
+random identity ROOT and are the current identity backup (see
+identity_store). `salt_to_mnemonic` / `mnemonic_to_salt` (12 words, 128
+bits) are generic BIP39 helpers kept for the legacy/test salt path; they do
+NOT back up a production identity. The mnemonic is never the passphrase.
 
 The encoding is the standard English BIP39, so a mnemonic produced
 here can also be read by any other BIP39 tool, and vice versa.

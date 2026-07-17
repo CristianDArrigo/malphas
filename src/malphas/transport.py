@@ -6,9 +6,10 @@ TorTransport:    routes all connections through Tor SOCKS5 proxy and registers
                  a v3 hidden service so the node is reachable from anywhere,
                  behind any NAT, without exposing the real IP.
 
-The .onion address is derived deterministically from the Ed25519 public key
-using the same algorithm Tor uses for v3 hidden services. This means the
-.onion address is stable across restarts as long as the passphrase is the same.
+The .onion address is derived deterministically from a DEDICATED Ed25519 key
+(HKDF-derived from the identity root, separate from the messaging key) using
+the same algorithm Tor uses for v3 hidden services. The .onion is stable per
+identity across restarts, independent of the passphrase.
 
 SOCKS5 client is implemented from scratch (asyncio, no external deps beyond stem).
 stem is required only for TorTransport (hidden service registration).

@@ -58,7 +58,7 @@ Standard-primitive trust.
 | Sender anonymity vs. relay              | A4           | Sealed sender (v0.6.0). Outer relay sees only `from_eph`, not peer_id. |
 | Pinned identity                         | A3           | TOFU on first contact, then pinned. Subsequent key change is rejected. A corrupt/tampered pin file is now fatal (the node refuses to start) rather than silently resetting to empty pins, closing the prior MITM re-pin window. |
 | Replay protection                       | A3           | (`from_id`, `msg_id`) cache, sliding 1-hour window, 10k entries.       |
-| At-rest confidentiality of address book | A5           | Argon2id + ChaCha20-Poly1305 with per-user salt. Padded JSON.          |
+| At-rest confidentiality of address book | A5           | ChaCha20-Poly1305 under a book key HKDF-derived from the identity root. Padded JSON. |
 | At-rest confidentiality of identity     | A5           | Random 32-byte identity root wrapped under an Argon2id passphrase-KEK (`~/.malphas/identity`, 0600). peer_id/keys are independent of the passphrase, so a stolen salt + public peer_id give NO offline passphrase oracle. Passphrase rotatable via `/passwd`. |
 | At-rest confidentiality of ratchet      | —            | Not applicable: ratchet state is in-memory only.                       |
 | Network-level unlinkability             | A1–A4        | All traffic over Tor onion service when `--tor` is set.                |
