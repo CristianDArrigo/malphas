@@ -30,6 +30,10 @@ class PeerInfo:
     # forward-secret X3DH delivery when we are not directly connected. None for
     # peers learned only via the authenticated handshake.
     spk_pub: bytes | None = None
+    # Peer's published one-time prekeys (X25519 pubs). We consume one per new
+    # X3DH session (pop) for stronger first-message forward secrecy; when empty
+    # we fall back to SPK-only X3DH.
+    opks: list[bytes] = field(default_factory=list)
 
     def is_stale(self, timeout: float = 300.0) -> bool:
         return (time.time() - self.last_seen) > timeout
@@ -95,6 +99,10 @@ class RoutingTable:
             # handshake path has no SPK; don't clobber one learned via invite).
             if peer.spk_pub is not None:
                 existing.spk_pub = peer.spk_pub
+            # Replace the OPK pool only when a fresh invite carries one (don't
+            # let a handshake update wipe the OPKs we still have to consume).
+            if peer.opks:
+                existing.opks = list(peer.opks)
             existing.last_seen = time.time()
             return
 
@@ -163,6 +171,7 @@ class PeerDiscovery:
         x25519_pub: bytes,
         ed25519_pub: bytes,
         spk_pub: bytes | None = None,
+        opks: list[bytes] | None = None,
     ) -> PeerInfo:
         peer = PeerInfo(
             peer_id=peer_id,
@@ -171,6 +180,7 @@ class PeerDiscovery:
             x25519_pub=x25519_pub,
             ed25519_pub=ed25519_pub,
             spk_pub=spk_pub,
+            opks=list(opks) if opks else [],
         )
         self.table.add(peer)
         # RoutingTable.add stores its own PeerInfo object (or updates an

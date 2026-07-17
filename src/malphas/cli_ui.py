@@ -503,6 +503,7 @@ class MalphasCLI:
             self.node.port,
             onion=onion_addr,
             spk=self.node.signed_prekey_pub,
+            opks=self.node.one_time_prekeys_pub,
         )
 
         self._print()
@@ -572,6 +573,7 @@ class MalphasCLI:
                 bytes.fromhex(data["x25519_pub"]),
                 bytes.fromhex(data["ed25519_pub"]),
                 spk_pub=bytes.fromhex(data["spk"]),
+                opks=[bytes.fromhex(o) for o in data.get("opks", [])] or None,
             )
 
         self._info(f"connecting to {host}:{port}...", tag="...")

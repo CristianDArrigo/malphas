@@ -39,6 +39,7 @@ def generate_invite(
     onion: str | None = None,
     ttl_seconds: int | None = DEFAULT_INVITE_TTL,
     spk: bytes | None = None,
+    opks: list[bytes] | None = None,
 ) -> str:
     """
     Generate a malphas:// invite URL.
@@ -69,6 +70,8 @@ def generate_invite(
         payload["onion"] = onion
     if spk is not None:
         payload["spk"] = spk.hex()
+    if opks:
+        payload["opks"] = [o.hex() for o in opks]
 
     json_bytes = json.dumps(payload, separators=(",", ":")).encode()
     sig = identity.sign(json_bytes)
@@ -143,6 +146,17 @@ def parse_invite(url: str) -> dict[str, Any]:
                 raise ValueError
         except (TypeError, ValueError) as e:
             raise ValueError("invalid spk in invite") from e
+
+    opks = payload.get("opks")
+    if opks is not None:
+        if not isinstance(opks, list) or len(opks) > 256:
+            raise ValueError("invalid opks in invite")
+        try:
+            for o in opks:
+                if len(bytes.fromhex(o)) != 32:
+                    raise ValueError
+        except (TypeError, ValueError) as e:
+            raise ValueError("invalid opk in invite") from e
 
     # Reject expired invites. `exp` is optional for backward compatibility
     # with pre-expiry invites, but when present it is signed, so it cannot
