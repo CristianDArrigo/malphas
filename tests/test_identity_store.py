@@ -74,3 +74,32 @@ def test_restore_from_mnemonic_reproduces_identity(tmp_path):
     # Simulate restore on another machine: root -> identity.
     restored = derive_identity_from_root(mnemonic_to_root(words))
     assert restored.peer_id == idn.peer_id
+
+
+def test_main_startup_flow_first_run_reload_and_wrong_passphrase(tmp_path, monkeypatch):
+    """Exercise the real __main__ startup wiring (first run, unlock, wrong pass)."""
+    import types
+
+    import malphas.__main__ as m
+
+    args = types.SimpleNamespace(
+        identity=str(tmp_path / "identity"),
+        book=str(tmp_path / "book"),
+        from_mnemonic=False,
+    )
+
+    # First run: creates a random identity, returns a 24-word mnemonic.
+    monkeypatch.setattr(m, "_get_passphrase", lambda: "first-pass")
+    identity, book, book_key, mnemonic, id_path = m._setup_identity_and_book(args)
+    assert (tmp_path / "identity").exists()
+    assert len(mnemonic.split()) == 24
+    peer_id = identity.peer_id
+
+    # Reopen with the correct passphrase: same identity.
+    identity2, _b2, _k2, _m2, _p2 = m._setup_identity_and_book(args)
+    assert identity2.peer_id == peer_id
+
+    # Wrong passphrase: exits (does not silently produce a different identity).
+    monkeypatch.setattr(m, "_get_passphrase", lambda: "wrong-pass")
+    with pytest.raises(SystemExit):
+        m._setup_identity_and_book(args)

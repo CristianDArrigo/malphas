@@ -1353,8 +1353,8 @@ class MalphasGUI:
         tk.Label(title_box, text="The only way to recover this identity",
                   bg=BG_BASE, fg=FG_MUTED, font=self.f_small).pack(anchor="w")
 
-        tk.Label(dlg, text="Write these 12 words down, in order. "
-                            "Lose them and ~/.malphas/salt and you "
+        tk.Label(dlg, text="Write these 24 words down, in order. "
+                            "Lose them and ~/.malphas/identity and you "
                             "lose this identity forever.",
                   bg=BG_BASE, fg=FG_MUTED, font=self.f_small,
                   wraplength=520, justify="left").pack(
@@ -1410,7 +1410,7 @@ class MalphasGUI:
         ok = messagebox.askyesno(
             "PANIC",
             "This wipes ALL in-memory state and exits immediately.\n"
-            "The address book and salt files on disk are NOT touched.\n\n"
+            "The address book, identity and pin files on disk are NOT touched.\n\n"
             "Continue?",
             parent=self.root, icon="warning",
         )

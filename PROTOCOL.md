@@ -173,7 +173,17 @@ hmac_key    = HKDF-SHA256(session_key,
                           salt = b"malphas-hmac-v1",
                           info = b"message-auth",
                           len  = 32)
-ratchet_root = derive_root_key(session_key, ...)   # see ratchet.py
+
+# The Double Ratchet is seeded from the RAW ECDH shared secret (not
+# session_key) via RatchetState.from_shared_secret:
+ratchet_root = HKDF-SHA256(shared,
+                           salt = b"malphas-ratchet-root-v1",
+                           info = b"root-key",
+                           len  = 32)
+# Per-DH-step root+chain: HKDF-SHA256(dh_output, salt=root_key,
+#   info=b"malphas-ratchet-dh-v1", len=64) -> (new_root, chain_key).
+# Symmetric chain step: HKDF-SHA256(chain_key, salt=b"malphas-ratchet-v1",
+#   info=b"chain"|b"message", len=32). See ratchet.py.
 ```
 
 The session salt is the two ephemeral X25519 public keys sorted
@@ -351,7 +361,7 @@ ephemeral X25519 keypair generated fresh per message:
   eph_priv, eph_pub
 
 shared = ECDH(eph_priv, recipient_x25519_pub)
-key    = HKDF-SHA256(shared, b"", b"malphas-sealed-sender-v1", 32)
+key    = HKDF-SHA256(shared, salt=b"malphas-sealed-sender-v1", info=b"from", 32)
 ct     = ChaCha20-Poly1305(key, nonce=12 random, plaintext=peer_id_utf8)
 
 from_eph    = hex(eph_pub)
@@ -426,13 +436,15 @@ A 1.x receiver MUST:
 
 ## 11 · On-disk formats
 
-### 11.1 · `~/.malphas/salt`
+### 11.1 · `~/.malphas/identity`
 
 ```
-[16: salt]
+{ "v": 1, "kdf": "argon2id", "salt": <hex 16>, "wrapped_root": <hex nonce||ct> }
 ```
 
-Mode 0600. Created at first run if absent.
+Mode 0600. Created at first run. Holds the random 32-byte identity root
+wrapped under a passphrase-derived Argon2id KEK (see §3.1). `salt` is the
+per-identity KEK salt, not an identity input.
 
 ### 11.2 · `~/.malphas/book` (address book)
 
@@ -493,27 +505,29 @@ membership in the `debian-tor`/`tor` group) or a control password. If
 authentication fails, the node logs the reason and runs outbound-only
 (it can still dial peers' onions; it just isn't reachable inbound).
 
-Backed up via the BIP39 mnemonic? **No** — Tor HS keys are derived
-from Ed25519 separately. Reconstructing from passphrase + salt +
-Argon2 → Ed25519 → onion is deterministic, so the .onion address
-is stable across re-installs of the same identity.
+The Tor key is a **dedicated** Ed25519 key HKDF-derived from the identity
+root (`info="tor-onion-key"`), separate from the messaging identity, so a
+Tor/ControlPort compromise cannot forge messaging-identity signatures.
+Because it derives from the root, restoring the root (from the mnemonic)
+reproduces the same `.onion` across re-installs; it is independent of the
+passphrase.
 
 ---
 
 ## 12 · BIP39 mnemonic backup
 
 ```
-mnemonic_words = bip39_encode(salt_16)        # 12 words from English wordlist
-salt_16        = bip39_decode(mnemonic_words)
+mnemonic_words = bip39_encode(root_32)        # 24 words from English wordlist
+root_32        = bip39_decode(mnemonic_words)
 ```
 
-Standard BIP39 with 128 bits of entropy ⇒ 12 words. The mnemonic
-backs up **only** the salt. The passphrase is unrecoverable by
-design. To restore an identity:
+Standard BIP39 with 256 bits of entropy ⇒ 24 words. The mnemonic backs up
+the identity **root**. The passphrase only encrypts the root at rest and can
+be chosen freely on restore (or changed later with `/passwd`). To restore an
+identity:
 
-1. Recover the salt from the mnemonic.
-2. Run `malphas` with `--salt /path/to/restored-salt`.
-3. Enter the same passphrase you used originally.
+1. Run `malphas --from-mnemonic` and enter the 24 words when prompted.
+2. Choose a passphrase (it wraps the restored root; it need not match the old one).
 
 ---
 

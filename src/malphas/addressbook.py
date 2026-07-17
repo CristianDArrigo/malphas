@@ -7,8 +7,8 @@ The file is indistinguishable from random bytes without the key.
 Padding: plaintext is padded to the nearest multiple of BLOCK_SIZE
 before encryption to obscure the number of contacts.
 
-book_key is derived from the same passphrase seed as the identity,
-but with a different HKDF info string — cryptographically independent.
+book_key is HKDF-derived from the same identity root as the keypairs,
+but with a different info string, so it is cryptographically independent.
 
 Never stores the passphrase or the book_key. Both exist only in RAM
 for the duration of the process.
@@ -137,8 +137,8 @@ class AddressBook:
     def init_empty(self) -> None:
         """Initialise an empty, loaded book without touching disk.
 
-        Used when constructing a fresh destination book (e.g. the legacy-salt
-        migration) that will be populated with `add()` before its first save.
+        Used when constructing a fresh destination book that will be populated
+        with `add()` before its first save (e.g. a new random identity).
         Without this, `add()` -> `_save()` raises "Address book not loaded".
         """
         self._contacts = []
@@ -160,7 +160,7 @@ class AddressBook:
         # Atomic write with restrictive perms (0o600). Path.write_bytes uses
         # the umask default (typically 0o644 — world-readable). The book holds
         # peer labels, onion addresses and public keys; on a shared host that
-        # leaks the ciphertext for offline attack. pinstore/salt_store already
+        # leaks the ciphertext for offline attack. pinstore already
         # do this; the book is the higher-value target and must match.
         tmp = self._path.with_suffix(".tmp")
         try:

@@ -511,7 +511,7 @@ class MalphasCLI:
         if onion_addr:
             self._print(Panel(
                 "[dim]your peer will connect via your .onion address.\n"
-                "the .onion is permanent — same passphrase, same address.\n"
+                "the .onion is permanent for this identity.\n"
                 "host:port in the invite is a fallback for LAN/direct connections.[/dim]",
                 border_style=C_BORDER,
                 title=f"[{C_DIM}]tor[/{C_DIM}]",

@@ -76,3 +76,35 @@ def test_onion_layer_wire_format_matches_protocol_md():
     next_hop, inner = peel_layer(hop_priv, layer)
     assert next_hop is None
     assert inner == b"payload"
+
+
+def test_sealed_sender_key_matches_protocol_md():
+    # PROTOCOL.md §8.2:
+    #   key = HKDF-SHA256(shared, salt=b"malphas-sealed-sender-v1", info=b"from", 32)
+    from malphas.sealed_sender import _INFO, _SALT
+    assert _SALT == b"malphas-sealed-sender-v1"
+    assert _INFO == b"from"
+    documented = hkdf_derive(
+        SHARED, salt=b"malphas-sealed-sender-v1", info=b"from", length=32)
+    assert (
+        documented.hex()
+        == "b40a9721fd6b01a8856aeb7384a5fae52d32877355fafd13e763882339009030"
+    )
+
+
+def test_ratchet_kdf_constants_match_protocol_md():
+    # PROTOCOL.md §5 ratchet block.
+    from malphas.crypto import kdf_chain
+
+    # Root seeding from the raw ECDH shared secret.
+    root = hkdf_derive(
+        SHARED, salt=b"malphas-ratchet-root-v1", info=b"root-key", length=32)
+    assert (
+        root.hex()
+        == "a3cfe5077dd370b23fe726b4958f595bea27efdec3674d4513fd2a797703b1c7"
+    )
+    # Symmetric chain step uses salt=malphas-ratchet-v1, info=chain|message.
+    ck = b"\x07" * 32
+    new_ck, mk = kdf_chain(ck)
+    assert new_ck == hkdf_derive(ck, salt=b"malphas-ratchet-v1", info=b"chain", length=32)
+    assert mk == hkdf_derive(ck, salt=b"malphas-ratchet-v1", info=b"message", length=32)
