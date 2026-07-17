@@ -645,24 +645,31 @@ class MalphasNode:
             await asyncio.sleep(0.05)  # avoid flooding
 
     async def _send_cover_packet(self, peer_id: str) -> None:
-        """Send a cover traffic packet to a peer. Routed as onion if possible."""
-        conn = self._connections.get(peer_id)
-        if not conn or not conn.authenticated:
+        """Send a cover-traffic packet, routed exactly like a real message.
+
+        Cover packets must be indistinguishable from real ones on the wire.
+        A real message uses a 3-hop onion circuit (see _try_send); a 1-hop
+        cover packet is smaller (fewer onion layers) and is delivered rather
+        than relayed at the first hop, which leaks which packets are cover.
+        Build the same 3-hop circuit here; if we cannot (not enough relays),
+        skip rather than emit a distinguishable short packet.
+        """
+        try:
+            circuit = self.discovery.select_relay_circuit(
+                peer_id, hops=3, relay_pool=self._relay_pool())
+        except ValueError:
             return
 
         cover_payload = make_cover_payload()
+        packet = wrap_onion(cover_payload, circuit)
 
-        # Try to build a 1-hop onion (direct to peer)
-        peer = self.discovery.get_peer(peer_id)
-        if not peer:
-            return
-
-        try:
-            circuit = [(peer.x25519_pub, peer_id)]
-            packet = wrap_onion(cover_payload, circuit)
-            await conn.send_encrypted(MSG_ONION, packet[24:])  # strip first_hop_id(20)+len(4)
-        except Exception:
-            pass
+        first_hop_id = circuit[0][1]
+        conn = self._connections.get(first_hop_id)
+        if conn and conn.authenticated:
+            try:
+                await conn.send_encrypted(MSG_ONION, packet[24:])
+            except Exception:
+                pass
 
     async def _send_receipt(self, from_id: str, msg_id: str, nonce: bytes) -> None:
         """Send a read receipt back to the sender."""

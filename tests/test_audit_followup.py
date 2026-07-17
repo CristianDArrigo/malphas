@@ -244,3 +244,22 @@ async def test_non_creator_cannot_mutate_membership(
     # Membership must be untouched (no local fork).
     assert identity_c.peer_id not in group.members
     assert identity_b.peer_id in group.members
+
+
+# ── #21: cover traffic must use the same 3-hop circuit as real messages ───────
+async def test_cover_traffic_uses_three_hop_circuit(identity_a, monkeypatch):
+    from malphas.node import MalphasNode
+
+    node = MalphasNode(identity_a, "127.0.0.1", 17785, cover_traffic=False)
+    recorded = {}
+
+    def fake_circuit(dest, hops=None, relay_pool=None):
+        recorded["hops"] = hops
+        raise ValueError("no relays")  # short-circuit; we only inspect hops
+
+    monkeypatch.setattr(node.discovery, "select_relay_circuit", fake_circuit)
+    await node._send_cover_packet("peerCover")
+
+    # A 1-hop cover packet is distinguishable from a 3-hop real message by
+    # size and hop count; cover must route like real traffic.
+    assert recorded.get("hops") == 3
