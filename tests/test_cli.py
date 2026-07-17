@@ -120,6 +120,7 @@ def mock_node(identity_cli_a):
     node.host = "127.0.0.1"
     node.port = 19100
     node.public_address = "127.0.0.1"
+    node.signed_prekey_pub = b"\x02" * 32  # X3DH signed prekey (invite field)
     node.discovery = PeerDiscovery(identity_cli_a.peer_id)
     node.store = MessageStore()
     node.receipts = ReceiptTracker()
@@ -1040,6 +1041,7 @@ class TestExportCommand:
         """The generated invite URL should match what generate_invite produces."""
         expected_url = generate_invite(
             identity_cli_a, cli.node.public_address, cli.node.port,
+            spk=cli.node.signed_prekey_pub,
         )
         output = await _run_capture_async(cli, cli._cmd_export())
         # The URL may be line-wrapped by rich, so strip whitespace and compare

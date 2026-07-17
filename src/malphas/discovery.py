@@ -26,6 +26,10 @@ class PeerInfo:
     x25519_pub: bytes     # 32-byte X25519 public key
     ed25519_pub: bytes    # 32-byte Ed25519 public key
     last_seen: float = field(default_factory=time.time)
+    # Peer's signed prekey (X25519 pub), if known (from an invite). Enables
+    # forward-secret X3DH delivery when we are not directly connected. None for
+    # peers learned only via the authenticated handshake.
+    spk_pub: bytes | None = None
 
     def is_stale(self, timeout: float = 300.0) -> bool:
         return (time.time() - self.last_seen) > timeout
@@ -87,6 +91,10 @@ class RoutingTable:
             existing.port = peer.port
             existing.x25519_pub = peer.x25519_pub
             existing.ed25519_pub = peer.ed25519_pub
+            # Keep a known signed prekey if this update doesn't carry one (the
+            # handshake path has no SPK; don't clobber one learned via invite).
+            if peer.spk_pub is not None:
+                existing.spk_pub = peer.spk_pub
             existing.last_seen = time.time()
             return
 
@@ -154,6 +162,7 @@ class PeerDiscovery:
         port: int,
         x25519_pub: bytes,
         ed25519_pub: bytes,
+        spk_pub: bytes | None = None,
     ) -> PeerInfo:
         peer = PeerInfo(
             peer_id=peer_id,
@@ -161,9 +170,13 @@ class PeerDiscovery:
             port=port,
             x25519_pub=x25519_pub,
             ed25519_pub=ed25519_pub,
+            spk_pub=spk_pub,
         )
         self.table.add(peer)
-        return peer
+        # RoutingTable.add stores its own PeerInfo object (or updates an
+        # existing one); return the authoritative stored instance so callers
+        # see merged fields (e.g. a preserved SPK).
+        return self.table.get(peer_id) or peer
 
     def get_peer(self, peer_id: str) -> PeerInfo | None:
         return self.table.get(peer_id)

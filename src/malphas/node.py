@@ -119,10 +119,17 @@ _TS_PAST_WINDOW = 3600
 AUTH_RATCHET = b"R"   # b"R" || header(40) || ratchet ciphertext
 AUTH_HMAC    = b"H"   # b"H" || tag(32)    || JSON payload bytes
 AUTH_ED25519 = b"E"   # b"E" || sig(64)    || JSON payload bytes
+# b"X" || IK_A(32) || EK_A(32) || SPK_B(32) || ratchet_header(40) || ratchet ct
+# X3DH session opener (issue #12): forward-secret + deniable delivery to a peer
+# we are not directly connected to. IK_A/EK_A are the sender's identity and
+# ephemeral X25519 pubs; SPK_B is which of our signed prekeys was used. Visible
+# only to the final recipient (inside the innermost onion layer).
+AUTH_X3DH    = b"X"
 
 HMAC_TAG_LEN     = 32
 ED25519_SIG_LEN  = 64
 RATCHET_HEADER_LEN = 40
+X3DH_HEADER_LEN  = 96  # IK_A(32) || EK_A(32) || SPK_B(32)
 
 # Payload kinds (inside decrypted onion)
 KIND_MESSAGE     = "msg"
@@ -170,32 +177,6 @@ def _resolve_sealed_from(
         return ""
     data["from"] = from_id
     return from_id
-
-
-def _wrap_authenticated(
-    payload_bytes: bytes,
-    dest_conn: "PeerConnection | None",
-    identity: Identity,
-) -> bytes:
-    """
-    Authenticate `payload_bytes` with the strongest method available
-    on the connection and prepend the auth-type prefix.
-
-    Selection order: ratchet → HMAC → Ed25519 (last-resort, fallback
-    when no symmetric session has been negotiated, e.g. immediately
-    after a fresh handshake handed off into a paired-but-pre-DH state).
-
-    Returns: AUTH_TAG (1B) || material || payload (or for ratchet,
-    AUTH_RATCHET || header(40) || ciphertext — the JSON is encrypted).
-    """
-    if dest_conn and dest_conn.ratchet and dest_conn.ratchet._send_chain_key:
-        header, ciphertext = dest_conn.ratchet.encrypt(payload_bytes)
-        return AUTH_RATCHET + header.serialize() + ciphertext
-    if dest_conn and dest_conn.hmac_key:
-        tag = hmac_sign(dest_conn.hmac_key, payload_bytes)
-        return AUTH_HMAC + tag + payload_bytes
-    sig = identity.sign(payload_bytes)
-    return AUTH_ED25519 + sig + payload_bytes
 
 
 def _snapshot_ratchet(r: "RatchetState") -> dict:
@@ -324,6 +305,17 @@ class MalphasNode:
         self._reconnect_tasks: dict[str, asyncio.Task] = {}
         self._message_queue: dict[str, list] = {}  # peer_id -> [(content, msg_id)]
         self._queue_limit = 100  # max queued messages per peer
+
+        # X3DH (issue #12): a per-node signed prekey, published in invites, lets
+        # peers open a forward-secret, deniable session with us when they are
+        # not directly connected (multi-hop delivery). Sessions are one-way
+        # ratchets keyed by peer_id: initiator sessions for what we send,
+        # responder sessions for what we receive.
+        from .prekey import generate_signed_prekey
+        self._spk_priv, self.signed_prekey_pub, self.signed_prekey_sig = (
+            generate_signed_prekey(identity.ed25519_priv))
+        self._x3dh_send_sessions: dict[str, RatchetState] = {}
+        self._x3dh_recv_sessions: dict[str, RatchetState] = {}
 
         # Cover traffic engine
         self._cover = CoverTrafficEngine(
@@ -577,6 +569,55 @@ class MalphasNode:
             task.cancel()
         self._message_queue.pop(peer_id, None)
 
+    def _wrap_for_dest(
+        self, payload_bytes: bytes, dest_peer_id: str, dest_peer: "PeerInfo | None"
+    ) -> bytes:
+        """
+        Authenticate/encrypt `payload_bytes` for a destination, strongest first.
+
+        1. Live connection with a ratchet -> Double Ratchet (AUTH_RATCHET).
+        2. Live connection pre-ratchet     -> HMAC (AUTH_HMAC).
+        3. Not connected but we know the peer's signed prekey -> X3DH: a
+           forward-secret, deniable session (AUTH_X3DH to open, AUTH_RATCHET to
+           continue). This replaces the old non-forward-secret Ed25519 fallback.
+        4. Otherwise (no SPK, e.g. a peer imported via an old invite) -> the
+           legacy Ed25519 signature fallback.
+        """
+        dest_conn = self._connections.get(dest_peer_id)
+        if dest_conn and dest_conn.ratchet and dest_conn.ratchet._send_chain_key:
+            header, ciphertext = dest_conn.ratchet.encrypt(payload_bytes)
+            return AUTH_RATCHET + header.serialize() + ciphertext
+        if dest_conn and dest_conn.hmac_key:
+            return AUTH_HMAC + hmac_sign(dest_conn.hmac_key, payload_bytes) + payload_bytes
+        if dest_peer is not None and dest_peer.spk_pub is not None:
+            return self._wrap_x3dh(payload_bytes, dest_peer_id, dest_peer)
+        return AUTH_ED25519 + self.identity.sign(payload_bytes) + payload_bytes
+
+    def _wrap_x3dh(
+        self, payload_bytes: bytes, dest_peer_id: str, dest_peer: "PeerInfo"
+    ) -> bytes:
+        """Open or advance a forward-secret X3DH session to `dest_peer`."""
+        from .prekey import x3dh_initiator
+
+        session = self._x3dh_send_sessions.get(dest_peer_id)
+        if session is not None and session._send_chain_key:
+            # Session already established: advance the ratchet.
+            header, ciphertext = session.encrypt(payload_bytes)
+            return AUTH_RATCHET + header.serialize() + ciphertext
+
+        # Fresh session: X3DH with the peer's signed prekey, seed the ratchet
+        # as initiator (the peer's SPK is the initial ratchet key).
+        assert dest_peer.spk_pub is not None
+        sk, ek_pub = x3dh_initiator(
+            self.identity.x25519_priv, dest_peer.x25519_pub, dest_peer.spk_pub)
+        ratchet = RatchetState.from_shared_secret(
+            sk, our_dh_priv=self.identity.x25519_priv,
+            remote_dh_pub=dest_peer.spk_pub, is_initiator=True)
+        self._x3dh_send_sessions[dest_peer_id] = ratchet
+        header, ciphertext = ratchet.encrypt(payload_bytes)
+        return (AUTH_X3DH + self.identity.x25519_pub_bytes + ek_pub
+                + dest_peer.spk_pub + header.serialize() + ciphertext)
+
     async def _try_send(self, dest_peer_id: str, content: str, msg_id: str) -> bool:
         """Attempt to send a message immediately. Returns True if sent."""
         try:
@@ -605,10 +646,7 @@ class MalphasNode:
         }
         payload_bytes = json.dumps(payload_dict).encode()
 
-        dest_conn = self._connections.get(dest_peer_id)
-        authenticated = _wrap_authenticated(
-            payload_bytes, dest_conn, self.identity
-        )
+        authenticated = self._wrap_for_dest(payload_bytes, dest_peer_id, dest_peer)
 
         padded = pad_payload(authenticated)
         packet = wrap_onion(padded, circuit)
@@ -695,10 +733,7 @@ class MalphasNode:
         # Ratchet preferred (forward secrecy), then HMAC (deniable), then Ed25519.
         # The inner Ed25519 sig (in the JSON "sig" field) provides
         # non-repudiation for the receipt itself.
-        sender_conn = self._connections.get(from_id)
-        authenticated = _wrap_authenticated(
-            payload_bytes, sender_conn, self.identity
-        )
+        authenticated = self._wrap_for_dest(payload_bytes, from_id, dest_peer)
         padded = pad_payload(authenticated)
 
         # Route back to sender if we have them in routing table
@@ -841,13 +876,17 @@ class MalphasNode:
             ciphertext = signed[1 + RATCHET_HEADER_LEN:]
             header = MessageHeader.deserialize(header_bytes)
 
-            # Trial-decrypt across each connection's ratchet. State is
-            # snapshotted before each attempt so a wrong-connection try
-            # cannot corrupt the receiver-state of the right one.
-            for _peer_id, conn in list(self._connections.items()):
-                if not conn.ratchet:
-                    continue
-                ratchet = conn.ratchet
+            # Trial-decrypt across each connection's ratchet AND each
+            # established X3DH responder session (issue #12). State is
+            # snapshotted before each attempt so a wrong-session try cannot
+            # corrupt the receiver-state of the right one.
+            candidates = [
+                (pid, conn.ratchet)
+                for pid, conn in list(self._connections.items())
+                if conn.ratchet
+            ]
+            candidates += list(self._x3dh_recv_sessions.items())
+            for _peer_id, ratchet in candidates:
                 snap = _snapshot_ratchet(ratchet)
                 try:
                     payload_bytes = ratchet.decrypt(header, ciphertext)
@@ -891,6 +930,10 @@ class MalphasNode:
                 return
             # No ratchet could decrypt — drop
             logger.debug("dropped ratchet frame: no connection ratchet decrypted it")
+            return
+
+        if prefix == AUTH_X3DH:
+            await self._handle_x3dh_open(signed)
             return
 
         if prefix == AUTH_HMAC:
@@ -939,6 +982,54 @@ class MalphasNode:
             except Exception:
                 return
 
+        await self._dispatch_kind(data, from_id, peer)
+
+    async def _handle_x3dh_open(self, signed: bytes) -> None:
+        """Open a forward-secret X3DH responder session (issue #12) and deliver
+        the first message. `signed` = X || IK_A(32) || EK_A(32) || SPK_B(32) ||
+        ratchet_header(40) || ratchet_ciphertext."""
+        if len(signed) <= 1 + X3DH_HEADER_LEN + RATCHET_HEADER_LEN:
+            return
+        ik_a = signed[1:33]
+        ek_a = signed[33:65]
+        spk_b = signed[65:97]
+        header_bytes = signed[97:97 + RATCHET_HEADER_LEN]
+        ciphertext = signed[97 + RATCHET_HEADER_LEN:]
+
+        # Only our current signed prekey is supported (no SPK rotation history).
+        if not hmac.compare_digest(spk_b, self.signed_prekey_pub):
+            return
+
+        from .prekey import x3dh_responder
+        try:
+            sk = x3dh_responder(self.identity.x25519_priv, self._spk_priv, ik_a, ek_a)
+            ratchet = RatchetState.from_shared_secret(
+                sk, our_dh_priv=self._spk_priv,
+                remote_dh_pub=self.signed_prekey_pub, is_initiator=False)
+            header = MessageHeader.deserialize(header_bytes)
+            payload_bytes = ratchet.decrypt(header, ciphertext)
+        except Exception:
+            return
+
+        try:
+            data = json.loads(payload_bytes.decode())
+        except Exception:
+            return
+
+        from_id = _resolve_sealed_from(data, self.identity.x25519_priv)
+        kind = data.get("kind")
+        if not from_id or not kind:
+            return
+
+        # Bind: the sealed sender must be a known peer whose static X25519 key
+        # equals the IK_A used in the X3DH, or a peer could open a session
+        # under someone else's identity key.
+        peer = self.discovery.get_peer(from_id)
+        if not peer or not hmac.compare_digest(peer.x25519_pub, ik_a):
+            return
+
+        # Keep the responder session so subsequent AUTH_RATCHET frames advance it.
+        self._x3dh_recv_sessions[from_id] = ratchet
         await self._dispatch_kind(data, from_id, peer)
 
     async def _dispatch_kind(
@@ -1600,10 +1691,7 @@ class MalphasNode:
         }
         payload_bytes = json.dumps(payload_dict).encode()
 
-        dest_conn = self._connections.get(dest_peer_id)
-        authenticated = _wrap_authenticated(
-            payload_bytes, dest_conn, self.identity
-        )
+        authenticated = self._wrap_for_dest(payload_bytes, dest_peer_id, dest_peer)
 
         padded = pad_payload(authenticated)
         packet = wrap_onion(padded, circuit)
@@ -1858,6 +1946,10 @@ class MalphasNode:
             ev.set()  # unblock any waiting send_file()
         self._resume_events.clear()
         self._groups.wipe()
+
+        # Wipe X3DH sessions (forward-secret fallback ratchets, issue #12).
+        self._x3dh_send_sessions.clear()
+        self._x3dh_recv_sessions.clear()
 
         # Wipe message queue
         self._message_queue.clear()

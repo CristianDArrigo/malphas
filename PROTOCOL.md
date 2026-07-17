@@ -251,11 +251,37 @@ auth_data`:
 |-------------|-----|---------------------------------------------|----------------------------------------------------------|
 | `R` (0x52)  | 52  | Double Ratchet ciphertext (preferred)       | `[40: header] [N: ratchet_ciphertext]`                   |
 | `H` (0x48)  | 48  | HMAC-authenticated JSON                     | `[32: HMAC-SHA256(hmac_key, json)] [N: json_bytes]`      |
-| `E` (0x45)  | 45  | Ed25519-signed JSON (fallback / first msg)  | `[64: Ed25519(json)] [N: json_bytes]`                    |
+| `X` (0x58)  | 58  | X3DH session opener (forward-secret fallback) | `[32: IK_A] [32: EK_A] [32: SPK_B] [40: header] [N: ratchet_ciphertext]` |
+| `E` (0x45)  | 45  | Ed25519-signed JSON (legacy fallback)       | `[64: Ed25519(json)] [N: json_bytes]`                    |
 
-**Selection order at the sender:** ratchet (if a session is
-established) → HMAC → Ed25519. The `auth_type` byte was introduced
-in v0.4.0; before that there was no prefix and `H` was implicit.
+**Selection order at the sender:** ratchet on a live connection → HMAC
+on a live connection → **X3DH** when not connected but the peer's signed
+prekey is known → Ed25519 only when no prekey is known. The `auth_type`
+byte was introduced in v0.4.0; before that there was no prefix and `H`
+was implicit.
+
+### 7.0 · X3DH prekey delivery (issue #12)
+
+To deliver to a peer we are not directly connected to (multi-hop) with
+forward secrecy and deniability, the sender runs reduced X3DH against the
+peer's signed prekey `SPK_B` (published, Ed25519-signed, in the invite):
+
+```
+DH1 = X25519(IK_A_priv, SPK_B_pub)
+DH2 = X25519(EK_A_priv, IK_B_pub)     # EK_A is a fresh per-session ephemeral
+DH3 = X25519(EK_A_priv, SPK_B_pub)
+SK  = HKDF-SHA256(0xFF*32 || DH1 || DH2 || DH3,
+                  salt=b"malphas-x3dh-v1", info=b"x3dh-shared-secret", len=32)
+```
+
+`SK` seeds a Double Ratchet (initiator uses `SPK_B` as the initial ratchet
+key). The first message is sent as `X` carrying `IK_A/EK_A/SPK_B`; the
+recipient reproduces `SK`, seeds a responder ratchet, decrypts, and keeps
+the session so subsequent messages continue as `R`. Deniability holds
+because `SK` is symmetric; the Ed25519 signature only authenticates the
+prekey, never a message. No one-time prekeys yet (reduced X3DH): first-
+message forward secrecy relies on `SPK_B` being ephemeral relative to the
+identity; the ratchet provides per-message forward secrecy thereafter.
 
 **Why three:** ratchet gives PFS, HMAC is fast and deniable, Ed25519
 is the only option before the ratchet bootstraps. A receiver
