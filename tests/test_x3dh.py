@@ -149,3 +149,65 @@ async def test_x3dh_forward_secret_delivery_over_fallback(identity_a, identity_b
     await node_b._deliver(pad_payload(wrapped2))
     await asyncio.sleep(0.05)
     assert any(c == "second" for _f, c in got)
+
+
+def test_x3dh_with_one_time_prekey_agrees_and_differs():
+    ik_b_priv, ik_b_pub = _x25519()
+    spk_b_priv, spk_b_pub, _ = generate_signed_prekey(Ed25519PrivateKey.generate())
+    opk_b_priv, opk_b_pub = _x25519()
+    ik_a_priv, ik_a_pub = _x25519()
+
+    sk_a, ek_a = x3dh_initiator(ik_a_priv, ik_b_pub, spk_b_pub, their_opk_pub=opk_b_pub)
+    sk_b = x3dh_responder(
+        ik_b_priv, spk_b_priv, ik_a_pub, ek_a, my_opk_priv=opk_b_priv)
+    assert sk_a == sk_b
+
+    # Including a one-time prekey yields a DIFFERENT secret than SPK-only, and a
+    # responder without the OPK (already consumed) cannot reproduce it.
+    sk_no_opk, _ = x3dh_initiator(ik_a_priv, ik_b_pub, spk_b_pub)
+    assert sk_a != sk_no_opk
+    sk_b_missing = x3dh_responder(ik_b_priv, spk_b_priv, ik_a_pub, ek_a)
+    assert sk_b_missing != sk_a
+
+
+async def test_x3dh_consumes_one_time_prekey_end_to_end(identity_a, identity_b):
+    """When the peer published OPKs, the sender uses one and the recipient
+    deletes it after a validated delivery (one-time forward secrecy)."""
+    from malphas.node import MalphasNode
+    from malphas.obfuscation import pad_payload
+    from malphas.sealed_sender import seal as seal_from
+
+    node_a = MalphasNode(identity_a, "127.0.0.1", 17796, cover_traffic=False)
+    node_b = MalphasNode(identity_b, "127.0.0.1", 17797, cover_traffic=False)
+
+    node_a.discovery.add_peer(
+        identity_b.peer_id, "127.0.0.1", 17797,
+        identity_b.x25519_pub_bytes, identity_b.ed25519_pub_bytes,
+        spk_pub=node_b.signed_prekey_pub,
+        opks=list(node_b.one_time_prekeys_pub))
+    node_b.discovery.add_peer(
+        identity_a.peer_id, "127.0.0.1", 17796,
+        identity_a.x25519_pub_bytes, identity_a.ed25519_pub_bytes)
+
+    got = []
+    node_b.on_message(lambda frm, content: got.append(content))
+    n_before = len(node_b._opk_privs)
+
+    dest_peer = node_a.discovery.get_peer(identity_b.peer_id)
+    from_eph, from_sealed = seal_from(identity_a.peer_id, identity_b.x25519_pub_bytes)
+    payload = json.dumps({
+        "kind": "msg", "from_eph": from_eph, "from_sealed": from_sealed,
+        "content": "opk secret", "msg_id": "o1",
+        "nonce": "22" * 16, "ts": int(time.time()),
+    }).encode()
+
+    wrapped = node_a._wrap_for_dest(payload, identity_b.peer_id, dest_peer)
+    assert wrapped[0:1] == b"X"
+    # A one-time prekey was included (OPK_B field is non-zero).
+    assert wrapped[97:129] != b"\x00" * 32
+
+    await node_b._deliver(pad_payload(wrapped))
+    await asyncio.sleep(0.05)
+    assert "opk secret" in got
+    # Exactly one OPK consumed (deleted) by the recipient.
+    assert len(node_b._opk_privs) == n_before - 1

@@ -119,17 +119,21 @@ _TS_PAST_WINDOW = 3600
 AUTH_RATCHET = b"R"   # b"R" || header(40) || ratchet ciphertext
 AUTH_HMAC    = b"H"   # b"H" || tag(32)    || JSON payload bytes
 AUTH_ED25519 = b"E"   # b"E" || sig(64)    || JSON payload bytes
-# b"X" || IK_A(32) || EK_A(32) || SPK_B(32) || ratchet_header(40) || ratchet ct
+# b"X" || IK_A(32) || EK_A(32) || SPK_B(32) || OPK_B(32) || header(40) || ct
 # X3DH session opener (issue #12): forward-secret + deniable delivery to a peer
 # we are not directly connected to. IK_A/EK_A are the sender's identity and
-# ephemeral X25519 pubs; SPK_B is which of our signed prekeys was used. Visible
-# only to the final recipient (inside the innermost onion layer).
+# ephemeral X25519 pubs; SPK_B is which signed prekey was used; OPK_B is the
+# one-time prekey used (all-zeros = none, SPK-only). Visible only to the final
+# recipient (inside the innermost onion layer).
 AUTH_X3DH    = b"X"
 
 HMAC_TAG_LEN     = 32
 ED25519_SIG_LEN  = 64
 RATCHET_HEADER_LEN = 40
-X3DH_HEADER_LEN  = 96  # IK_A(32) || EK_A(32) || SPK_B(32)
+X3DH_HEADER_LEN  = 128  # IK_A(32) || EK_A(32) || SPK_B(32) || OPK_B(32)
+# Number of one-time prekeys minted per node (published in the invite).
+N_ONE_TIME_PREKEYS = 32
+_ZERO_OPK = b"\x00" * 32  # OPK_B sentinel meaning "no one-time prekey used"
 
 # Payload kinds (inside decrypted onion)
 KIND_MESSAGE     = "msg"
@@ -311,9 +315,23 @@ class MalphasNode:
         # not directly connected (multi-hop delivery). Sessions are one-way
         # ratchets keyed by peer_id: initiator sessions for what we send,
         # responder sessions for what we receive.
+        from cryptography.hazmat.primitives.asymmetric.x25519 import (
+            X25519PrivateKey as _X25519PrivateKey,
+        )
+
         from .prekey import generate_signed_prekey
         self._spk_priv, self.signed_prekey_pub, self.signed_prekey_sig = (
             generate_signed_prekey(identity.ed25519_priv))
+        # One-time prekeys (issue #12 hardening): a batch of single-use X25519
+        # keys published in the invite. Mixing one into X3DH and DELETING its
+        # private after use gives the first message forward secrecy even against
+        # a later compromise of our identity + signed prekey. Optional: when the
+        # batch is exhausted, senders fall back to SPK-only X3DH.
+        self._opk_privs: dict[bytes, _X25519PrivateKey] = {}
+        for _ in range(N_ONE_TIME_PREKEYS):
+            _p = _X25519PrivateKey.generate()
+            self._opk_privs[_p.public_key().public_bytes_raw()] = _p
+        self.one_time_prekeys_pub: list[bytes] = list(self._opk_privs.keys())
         self._x3dh_send_sessions: dict[str, RatchetState] = {}
         self._x3dh_recv_sessions: dict[str, RatchetState] = {}
 
@@ -606,17 +624,24 @@ class MalphasNode:
             return AUTH_RATCHET + header.serialize() + ciphertext
 
         # Fresh session: X3DH with the peer's signed prekey, seed the ratchet
-        # as initiator (the peer's SPK is the initial ratchet key).
+        # as initiator (the peer's SPK is the initial ratchet key). If the peer
+        # published one-time prekeys, consume one for stronger first-message
+        # forward secrecy; otherwise fall back to SPK-only (OPK_B = zeros).
         assert dest_peer.spk_pub is not None
+        opk_pub = None
+        if dest_peer.opks:
+            opk_pub = dest_peer.opks.pop()  # one-time: don't reuse it locally
         sk, ek_pub = x3dh_initiator(
-            self.identity.x25519_priv, dest_peer.x25519_pub, dest_peer.spk_pub)
+            self.identity.x25519_priv, dest_peer.x25519_pub, dest_peer.spk_pub,
+            their_opk_pub=opk_pub)
         ratchet = RatchetState.from_shared_secret(
             sk, our_dh_priv=self.identity.x25519_priv,
             remote_dh_pub=dest_peer.spk_pub, is_initiator=True)
         self._x3dh_send_sessions[dest_peer_id] = ratchet
         header, ciphertext = ratchet.encrypt(payload_bytes)
         return (AUTH_X3DH + self.identity.x25519_pub_bytes + ek_pub
-                + dest_peer.spk_pub + header.serialize() + ciphertext)
+                + dest_peer.spk_pub + (opk_pub or _ZERO_OPK)
+                + header.serialize() + ciphertext)
 
     async def _try_send(self, dest_peer_id: str, content: str, msg_id: str) -> bool:
         """Attempt to send a message immediately. Returns True if sent."""
@@ -987,22 +1012,36 @@ class MalphasNode:
     async def _handle_x3dh_open(self, signed: bytes) -> None:
         """Open a forward-secret X3DH responder session (issue #12) and deliver
         the first message. `signed` = X || IK_A(32) || EK_A(32) || SPK_B(32) ||
-        ratchet_header(40) || ratchet_ciphertext."""
+        OPK_B(32) || ratchet_header(40) || ratchet_ciphertext."""
         if len(signed) <= 1 + X3DH_HEADER_LEN + RATCHET_HEADER_LEN:
             return
         ik_a = signed[1:33]
         ek_a = signed[33:65]
         spk_b = signed[65:97]
-        header_bytes = signed[97:97 + RATCHET_HEADER_LEN]
-        ciphertext = signed[97 + RATCHET_HEADER_LEN:]
+        opk_b = signed[97:129]
+        header_bytes = signed[129:129 + RATCHET_HEADER_LEN]
+        ciphertext = signed[129 + RATCHET_HEADER_LEN:]
 
         # Only our current signed prekey is supported (no SPK rotation history).
         if not hmac.compare_digest(spk_b, self.signed_prekey_pub):
             return
 
+        # Resolve the one-time prekey the sender used. All-zeros = none. A
+        # non-zero OPK we no longer hold was already consumed (or is invalid):
+        # drop, which also gives one-time replay protection. Do NOT delete it
+        # yet; only after the message fully validates, so an unknown peer
+        # cannot exhaust our OPK pool by replaying valid public OPKs.
+        opk_priv = None
+        if opk_b != _ZERO_OPK:
+            opk_priv = self._opk_privs.get(opk_b)
+            if opk_priv is None:
+                return
+
         from .prekey import x3dh_responder
         try:
-            sk = x3dh_responder(self.identity.x25519_priv, self._spk_priv, ik_a, ek_a)
+            sk = x3dh_responder(
+                self.identity.x25519_priv, self._spk_priv, ik_a, ek_a,
+                my_opk_priv=opk_priv)
             ratchet = RatchetState.from_shared_secret(
                 sk, our_dh_priv=self._spk_priv,
                 remote_dh_pub=self.signed_prekey_pub, is_initiator=False)
@@ -1027,6 +1066,11 @@ class MalphasNode:
         peer = self.discovery.get_peer(from_id)
         if not peer or not hmac.compare_digest(peer.x25519_pub, ik_a):
             return
+
+        # Fully validated: consume the one-time prekey (delete its private so it
+        # can never be reused) for first-message forward secrecy.
+        if opk_priv is not None:
+            self._opk_privs.pop(opk_b, None)
 
         # Keep the responder session so subsequent AUTH_RATCHET frames advance it.
         self._x3dh_recv_sessions[from_id] = ratchet
@@ -1948,9 +1992,10 @@ class MalphasNode:
         self._resume_events.clear()
         self._groups.wipe()
 
-        # Wipe X3DH sessions (forward-secret fallback ratchets, issue #12).
+        # Wipe X3DH sessions + one-time prekey privates (issue #12).
         self._x3dh_send_sessions.clear()
         self._x3dh_recv_sessions.clear()
+        self._opk_privs.clear()
 
         # Wipe message queue
         self._message_queue.clear()

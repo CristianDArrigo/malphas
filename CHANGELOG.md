@@ -32,8 +32,11 @@ not readable under the new identity. Pre-1.0-adoption break; no migration.
   key. They now run reduced X3DH against the peer's signed prekey (published in
   the invite) and seed a Double Ratchet, giving per-message forward secrecy and
   deniability. New `prekey.py`, `AUTH_X3DH` wire type, invite `spk` field. The
-  legacy Ed25519 path remains only when no prekey is known. One-time prekeys
-  are a future enhancement.
+  legacy Ed25519 path remains only when no prekey is known. Each node also
+  publishes a batch of **one-time prekeys** in its invite; the sender mixes one
+  into X3DH and the recipient deletes it after use, so the first message is
+  forward-secret even against a later compromise of the identity + signed
+  prekey. When the OPK pool is exhausted the sender falls back to SPK-only X3DH.
 
 ### Changed
 

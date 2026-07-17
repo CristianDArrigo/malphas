@@ -83,14 +83,17 @@ def x3dh_initiator(
     my_ik_priv: X25519PrivateKey,
     their_ik_pub: bytes,
     their_spk_pub: bytes,
+    their_opk_pub: bytes | None = None,
 ) -> tuple[bytes, bytes]:
     """
     Sender side. Derive the X3DH shared secret with a fresh ephemeral key.
 
     The caller MUST have already verified `their_spk_pub` via
-    `verify_signed_prekey`. Returns (shared_secret, ephemeral_pub_bytes); send
-    the ephemeral public alongside the message so the responder can reproduce
-    the secret.
+    `verify_signed_prekey`. If `their_opk_pub` (a one-time prekey) is supplied,
+    a fourth DH is mixed in, which strengthens forward secrecy of the first
+    message: the responder deletes the OPK after use, so even a later
+    compromise of its identity + signed prekey cannot recover this session.
+    Returns (shared_secret, ephemeral_pub_bytes).
     """
     ek_priv = X25519PrivateKey.generate()
     ek_pub = ek_priv.public_key().public_bytes_raw()
@@ -98,7 +101,10 @@ def x3dh_initiator(
     dh1 = ecdh_shared_secret(my_ik_priv, their_spk_pub)  # IK_A · SPK_B
     dh2 = ecdh_shared_secret(ek_priv, their_ik_pub)      # EK_A · IK_B
     dh3 = ecdh_shared_secret(ek_priv, their_spk_pub)     # EK_A · SPK_B
-    return _kdf(dh1 + dh2 + dh3), ek_pub
+    dh_concat = dh1 + dh2 + dh3
+    if their_opk_pub is not None:
+        dh_concat += ecdh_shared_secret(ek_priv, their_opk_pub)  # EK_A · OPK_B
+    return _kdf(dh_concat), ek_pub
 
 
 def x3dh_responder(
@@ -106,12 +112,17 @@ def x3dh_responder(
     my_spk_priv: X25519PrivateKey,
     their_ik_pub: bytes,
     their_ek_pub: bytes,
+    my_opk_priv: X25519PrivateKey | None = None,
 ) -> bytes:
     """
-    Recipient side. Reproduce the X3DH shared secret from the sender's identity
-    and ephemeral public keys plus our own identity + signed-prekey privates.
+    Recipient side. Reproduce the X3DH shared secret. `my_opk_priv` must be the
+    one-time prekey private the sender selected (looked up by its public); after
+    a successful decrypt the caller MUST delete it (one-time use).
     """
     dh1 = ecdh_shared_secret(my_spk_priv, their_ik_pub)  # SPK_B · IK_A
     dh2 = ecdh_shared_secret(my_ik_priv, their_ek_pub)   # IK_B · EK_A
     dh3 = ecdh_shared_secret(my_spk_priv, their_ek_pub)  # SPK_B · EK_A
-    return _kdf(dh1 + dh2 + dh3)
+    dh_concat = dh1 + dh2 + dh3
+    if my_opk_priv is not None:
+        dh_concat += ecdh_shared_secret(my_opk_priv, their_ek_pub)  # OPK_B · EK_A
+    return _kdf(dh_concat)
