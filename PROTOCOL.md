@@ -55,18 +55,20 @@ documented inline.
 
 ## 3 · Identity derivation
 
-```
-seed64 = Argon2id(
-    password    = passphrase,
-    salt        = salt_16,        # per-user, persisted in ~/.malphas/salt
-    time_cost   = 3,
-    memory_cost = 65536,          # KiB
-    parallelism = 4,
-    hash_len    = 64,
-)
+Identity is derived from a **random 32-byte root**, not from the passphrase.
+The root is generated once at first run and stored wrapped under a passphrase-
+derived Key-Encryption-Key (see §3.1). All long-term keys are HKDF-derived from
+the root with distinct domain-separation labels:
 
-ed25519_seed = seed64[:32]
-x25519_seed  = seed64[32:]
+```
+root32       = 32 random bytes (first run) | restored from mnemonic
+
+ed25519_seed = HKDF-SHA256(root32, salt=b"malphas-identity-root-v2",
+                           info=b"ed25519-signing-key", len=32)
+x25519_seed  = HKDF-SHA256(root32, salt=b"malphas-identity-root-v2",
+                           info=b"x25519-dh-key", len=32)
+tor_seed     = HKDF-SHA256(root32, salt=b"malphas-tor-identity-v1",
+                           info=b"tor-onion-key", len=32)   # dedicated Tor key
 
 ed25519_priv = Ed25519PrivateKey.from_private_bytes(ed25519_seed)
 x25519_priv  = X25519PrivateKey.from_private_bytes(x25519_seed)
@@ -77,15 +79,33 @@ x25519_pub   = x25519_priv.public_key().public_bytes(Raw, Raw)
 peer_id      = hex( BLAKE2s(ed25519_pub, digest_size=20) )    # 40 hex chars
 ```
 
-The salt is 16 random bytes generated at first run, persisted at
-mode 0600 to `~/.malphas/salt`. Loss of the salt is loss of
-identity (different `seed64`). The salt is recoverable from the
-12-word BIP39 mnemonic.
+Because the root is **random**, `peer_id` and the keys are independent of the
+passphrase. This closes the offline oracle of the old scheme (where an attacker
+holding the salt could brute-force the passphrase by re-deriving `peer_id`), and
+lets the passphrase be rotated without changing identity.
 
-The address-book key is independent:
+### 3.1 · Identity at rest and recovery
+
+The 32-byte root is the only long-term secret. It is stored at
+`~/.malphas/identity` (mode 0600, JSON) wrapped under a passphrase-KEK:
 
 ```
-book_key = HKDF-SHA256(seed64,
+kek          = Argon2id(passphrase, salt_16, t=3, m=65536, p=4, hash_len=32)
+wrapped_root = ChaCha20-Poly1305(kek, root32, aad=b"malphas-identity-root-kek-v1")
+
+identity file = { "v":1, "kdf":"argon2id", "salt":hex(16), "wrapped_root":hex(nonce||ct) }
+```
+
+* **Recovery:** the root is backed up as a **24-word** BIP39 mnemonic. Restore
+  with `--from-mnemonic`, then choose any passphrase.
+* **Passphrase rotation:** re-wrap the same root under a new KEK (fresh salt).
+  Identity is unchanged. Exposed in the app as `/passwd`.
+
+The address-book key is HKDF-derived from the same root, cryptographically
+independent of the identity keys:
+
+```
+book_key = HKDF-SHA256(root32,
                        salt=b"malphas-addressbook-v1",
                        info=b"addressbook-encryption-key",
                        len=32)

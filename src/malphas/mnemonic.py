@@ -25,6 +25,46 @@ from mnemonic import Mnemonic
 _LANG = "english"
 _SALT_LEN = 16
 _WORD_COUNT = 12
+_ROOT_LEN = 32
+_ROOT_WORD_COUNT = 24
+
+
+def root_to_mnemonic(root: bytes) -> str:
+    """Encode a 32-byte identity root as a 24-word BIP39 mnemonic.
+
+    Raises ValueError if `root` is not exactly 32 bytes.
+    """
+    if len(root) != _ROOT_LEN:
+        raise ValueError(
+            f"root must be exactly {_ROOT_LEN} bytes for a "
+            f"{_ROOT_WORD_COUNT}-word mnemonic, got {len(root)} bytes"
+        )
+    return str(Mnemonic(_LANG).to_mnemonic(root))
+
+
+def mnemonic_to_root(words: str) -> bytes:
+    """Decode a 24-word BIP39 mnemonic back to a 32-byte identity root.
+
+    Raises ValueError on wrong word count (must be 24), unknown words, or a
+    failed checksum.
+    """
+    cleaned = " ".join(words.split())
+    actual = len(cleaned.split())
+    if actual != _ROOT_WORD_COUNT:
+        raise ValueError(f"expected {_ROOT_WORD_COUNT} words, got {actual}")
+
+    m = Mnemonic(_LANG)
+    if not m.check(cleaned):
+        raise ValueError(
+            "invalid BIP39 mnemonic: checksum failed (one or more words "
+            "are mistyped, mis-ordered, or not in the English wordlist)"
+        )
+    root = m.to_entropy(cleaned)
+    if len(root) != _ROOT_LEN:
+        raise ValueError(
+            f"decoded entropy is {len(root)} bytes, expected {_ROOT_LEN}"
+        )
+    return bytes(root)
 
 
 def salt_to_mnemonic(salt: bytes) -> str:
@@ -58,7 +98,7 @@ def mnemonic_to_salt(words: str) -> bytes:
     m = Mnemonic(_LANG)
     if not m.check(cleaned):
         raise ValueError(
-            "invalid BIP39 mnemonic — checksum failed (one or more words "
+            "invalid BIP39 mnemonic: checksum failed (one or more words "
             "are mistyped, mis-ordered, or not in the English wordlist)"
         )
     salt = m.to_entropy(cleaned)

@@ -9,7 +9,7 @@ The asyncio loop that drives MalphasNode runs in a background daemon
 thread (`AsyncBridge`). The Tk thread keeps the mainloop and polls a
 `queue.Queue` every 50 ms to consume node-side callbacks.
 
-Entry point: `launch_gui(node, book, bridge, salt_path)`.
+Entry point: `launch_gui(node, book, bridge, recovery_mnemonic)`.
 """
 
 from __future__ import annotations
@@ -69,9 +69,7 @@ from .gui_theme import (
     WARN_AMBER,
 )
 from .invite import generate_invite, parse_invite
-from .mnemonic import salt_to_mnemonic
 from .node import MalphasNode
-from .salt_store import SALT_LEN
 
 # Avatar palette — distinct, well-saturated, hashed by peer_id.
 AVATAR_PALETTE = [
@@ -489,12 +487,12 @@ class MalphasGUI:
         node: MalphasNode,
         book: AddressBook,
         bridge: AsyncBridge,
-        salt_path: Path | None = None,
+        recovery_mnemonic: str | None = None,
     ) -> None:
         self.node = node
         self.book = book
         self.bridge = bridge
-        self.salt_path = salt_path
+        self.recovery_mnemonic = recovery_mnemonic
         self.active: str | None = None
         # Per-conversation list of (kind, sender, body, color, ts) tuples,
         # so we can re-render the chat pane on selection switch.
@@ -1329,21 +1327,11 @@ class MalphasGUI:
                           f"(file_id {file_id[:16]}…)")
 
     def _action_backup(self) -> None:
-        if self.salt_path is None:
+        if not self.recovery_mnemonic:
             messagebox.showerror("Backup unavailable",
-                                  "Salt path not configured.", parent=self.root)
+                                  "Recovery mnemonic not available.", parent=self.root)
             return
-        try:
-            data = self.salt_path.read_bytes()
-        except OSError as e:
-            messagebox.showerror("Backup failed", f"Cannot read salt: {e}", parent=self.root)
-            return
-        if len(data) != SALT_LEN:
-            messagebox.showerror("Backup failed",
-                                  f"Salt has wrong length: {len(data, parent=self.root)}")
-            return
-        words = salt_to_mnemonic(data).split()
-        self._show_mnemonic_dialog(words)
+        self._show_mnemonic_dialog(self.recovery_mnemonic.split())
 
     def _show_mnemonic_dialog(self, words: list[str]) -> None:
         dlg = tk.Toplevel(self.root)
@@ -1586,8 +1574,8 @@ class MalphasGUI:
 
 
 def launch_gui(node: MalphasNode, book: AddressBook,
-                bridge: AsyncBridge, salt_path: Path | None = None) -> None:
+                bridge: AsyncBridge, recovery_mnemonic: str | None = None) -> None:
     """Build the GUI and enter the Tk mainloop. Blocks until the
     window closes or panic fires."""
-    gui = MalphasGUI(node, book, bridge, salt_path=salt_path)
+    gui = MalphasGUI(node, book, bridge, recovery_mnemonic=recovery_mnemonic)
     gui.run()

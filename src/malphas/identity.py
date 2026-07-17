@@ -152,40 +152,46 @@ class Identity:
             return False
 
 
-def create_identity(passphrase: str, salt: bytes | None = None) -> Identity:
+ID_ROOT_LEN = 32
+# Domain separation for deriving long-term keys from the 32-byte identity root.
+# Every long-term key comes from this root via HKDF, so the root is the single
+# secret to protect (wrapped under a passphrase-derived KEK on disk; see
+# identity_store.py). Because a production root is RANDOM (not passphrase-
+# derived), peer_id and keys are independent of the passphrase, which closes the
+# offline "brute-force the passphrase from a public peer_id" oracle and lets the
+# passphrase be rotated without changing identity.
+_ID_ROOT_SALT = b"malphas-identity-root-v2"
+_ID_ED_INFO = b"ed25519-signing-key"
+_ID_X_INFO = b"x25519-dh-key"
+_ID_DETERMINISTIC_INFO = b"deterministic-root"
+
+
+def derive_identity_from_root(root: bytes) -> Identity:
     """
-    Derive a deterministic Identity from a passphrase + salt.
-    The passphrase is never stored. Call this once at startup.
+    Deterministically derive an Identity from a 32-byte root secret.
 
-    `salt` should be a per-user 16-byte value (see malphas.salt_store).
-    If None, falls back to the legacy global salt — kept for test
-    determinism only.
-
-    The intermediate Argon2 seed is held in a SecureBytes that is
-    explicitly wiped (and unlocked from RAM) before this function
-    returns.
+    All long-term keys (Ed25519 signing, X25519 DH, dedicated Tor key) are
+    HKDF-derived from the root with distinct domain-separation labels, so they
+    are cryptographically independent of one another.
     """
-    with _derive_seed(passphrase, salt) as seed:
-        seed_bytes = bytes(seed)
-        ed_seed = seed_bytes[:32]
-        x_seed = seed_bytes[32:]
+    from .crypto import hkdf_derive
+    if len(root) != ID_ROOT_LEN:
+        raise ValueError(f"identity root must be {ID_ROOT_LEN} bytes, got {len(root)}")
 
-        # Ed25519 signing keypair
-        ed_priv = Ed25519PrivateKey.from_private_bytes(ed_seed)
-        ed_pub = ed_priv.public_key()
-        ed_pub_bytes = ed_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+    ed_seed = hkdf_derive(root, salt=_ID_ROOT_SALT, info=_ID_ED_INFO, length=32)
+    x_seed = hkdf_derive(root, salt=_ID_ROOT_SALT, info=_ID_X_INFO, length=32)
 
-        # X25519 key exchange keypair
-        x_priv = X25519PrivateKey.from_private_bytes(x_seed)
-        x_pub = x_priv.public_key()
-        x_pub_bytes = x_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+    ed_priv = Ed25519PrivateKey.from_private_bytes(ed_seed)
+    ed_pub = ed_priv.public_key()
+    ed_pub_bytes = ed_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
 
-        # Peer ID: BLAKE2s of ed25519 pubkey, truncated to 20 bytes
-        # (40 hex chars). BLAKE2s is collision-resistant and faster than
-        # SHA-256 on small inputs.
-        peer_id = hashlib.blake2s(ed_pub_bytes, digest_size=20).hexdigest()
-        tor_priv, tor_pub_bytes = _derive_tor_key(seed_bytes)
-        # _derive_seed's SecureBytes is wiped on context exit below.
+    x_priv = X25519PrivateKey.from_private_bytes(x_seed)
+    x_pub = x_priv.public_key()
+    x_pub_bytes = x_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+
+    # Peer ID: BLAKE2s of the Ed25519 pubkey, truncated to 20 bytes (40 hex).
+    peer_id = hashlib.blake2s(ed_pub_bytes, digest_size=20).hexdigest()
+    tor_priv, tor_pub_bytes = _derive_tor_key(root)
 
     return Identity(
         peer_id=peer_id,
@@ -197,6 +203,57 @@ def create_identity(passphrase: str, salt: bytes | None = None) -> Identity:
         tor_ed25519_priv=tor_priv,
         tor_ed25519_pub_bytes=tor_pub_bytes,
     )
+
+
+def derive_book_key_from_root(root: bytes) -> bytes:
+    """Derive the address-book encryption key from the identity root."""
+    from .crypto import hkdf_derive
+    return hkdf_derive(
+        root, salt=b"malphas-addressbook-v1",
+        info=b"addressbook-encryption-key", length=32,
+    )
+
+
+def _deterministic_root(passphrase: str, salt: bytes | None) -> bytes:
+    """
+    Derive a deterministic 32-byte root from passphrase + salt via Argon2id.
+
+    Used by the legacy/test `create_identity` path so identities stay
+    reproducible across runs and tests. PRODUCTION identities use a random
+    root (see `create_random_identity`), which is what removes the offline
+    peer_id oracle and enables passphrase rotation.
+    """
+    from .crypto import hkdf_derive
+    with _derive_seed(passphrase, salt) as seed:
+        return hkdf_derive(
+            bytes(seed), salt=_ID_ROOT_SALT,
+            info=_ID_DETERMINISTIC_INFO, length=ID_ROOT_LEN,
+        )
+
+
+def create_random_identity() -> tuple[bytes, Identity, bytes]:
+    """
+    Generate a fresh identity from a random 32-byte root.
+
+    Returns (root, identity, book_key). The caller is responsible for wrapping
+    `root` under a passphrase-derived KEK for storage (see identity_store.py)
+    and for backing it up as a mnemonic. Because the root is random, peer_id
+    and keys do not depend on any passphrase.
+    """
+    import secrets as _secrets
+    root = _secrets.token_bytes(ID_ROOT_LEN)
+    return root, derive_identity_from_root(root), derive_book_key_from_root(root)
+
+
+def create_identity(passphrase: str, salt: bytes | None = None) -> Identity:
+    """
+    Derive a deterministic Identity from a passphrase + salt.
+
+    Legacy/test convenience: production identities are created with a random
+    root via `create_random_identity`. `salt` should be a per-user 16-byte
+    value; if None, falls back to the legacy global salt for test determinism.
+    """
+    return derive_identity_from_root(_deterministic_root(passphrase, salt))
 
 
 def peer_id_from_pubkey(ed25519_pub_bytes: bytes) -> str:
@@ -223,45 +280,5 @@ def create_identity_with_book_key(
     AddressBook / PinStore call sites; tightening that surface is a
     future iteration.
     """
-    from .crypto import hkdf_derive
-
-    with _derive_seed(passphrase, salt) as seed:
-        seed_bytes = bytes(seed)
-
-        # Identity keypairs (uses first 64 bytes of seed directly)
-        ed_seed = seed_bytes[:32]
-        x_seed = seed_bytes[32:]
-
-        ed_priv = Ed25519PrivateKey.from_private_bytes(ed_seed)
-        ed_pub = ed_priv.public_key()
-        ed_pub_bytes = ed_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
-
-        x_priv = X25519PrivateKey.from_private_bytes(x_seed)
-        x_pub = x_priv.public_key()
-        x_pub_bytes = x_pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
-
-        peer_id = hashlib.blake2s(ed_pub_bytes, digest_size=20).hexdigest()
-
-        # Address book key — derived from same seed, different context.
-        # Cryptographically independent from the keypairs above.
-        book_key = hkdf_derive(
-            seed_bytes,
-            salt=b"malphas-addressbook-v1",
-            info=b"addressbook-encryption-key",
-            length=32,
-        )
-        tor_priv, tor_pub_bytes = _derive_tor_key(seed_bytes)
-        # SecureBytes seed is wiped on context exit.
-
-    identity = Identity(
-        peer_id=peer_id,
-        ed25519_priv=ed_priv,
-        ed25519_pub=ed_pub,
-        x25519_priv=x_priv,
-        x25519_pub=x_pub,
-        x25519_pub_bytes=x_pub_bytes,
-        tor_ed25519_priv=tor_priv,
-        tor_ed25519_pub_bytes=tor_pub_bytes,
-    )
-
-    return identity, book_key
+    root = _deterministic_root(passphrase, salt)
+    return derive_identity_from_root(root), derive_book_key_from_root(root)

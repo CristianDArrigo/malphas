@@ -38,30 +38,23 @@ def test_wire_version_matches_package():
     assert node.WIRE_VERSION == malphas.WIRE_VERSION == 2
 
 
-# ── #14: legacy-salt migration must not crash and must keep contacts ──────────
-def test_legacy_salt_migration_preserves_contacts(tmp_path):
-    from malphas.__main__ import _open_book_with_migration
+# NOTE: the #14 legacy-salt migration test was removed when #6 replaced the
+# passphrase-derived identity with a random-root scheme (identity_store); the
+# pre-0.7.0 fixed-salt book migration path no longer exists. The #14 fix
+# (AddressBook.init_empty marks a fresh book loaded so add()/_save() work) is
+# still needed for the new-identity book path and is guarded here.
+def test_init_empty_allows_add_without_load(tmp_path):
     from malphas.addressbook import AddressBook, Contact
-    from malphas.identity import create_identity, create_identity_with_book_key
+    from malphas.identity import create_identity
 
-    passphrase = "legacy-migrate-pass"
-    book_path = tmp_path / "book"
-
-    # Simulate a pre-0.7.0 book encrypted under the legacy fixed salt.
-    _, legacy_key = create_identity_with_book_key(passphrase, salt=None)
-    legacy = AddressBook(str(book_path), legacy_key)
-    legacy.load()
-    idb = create_identity("migrate-bob")
-    legacy.add(Contact(
-        label="bob", peer_id=idb.peer_id, host="127.0.0.1", port=17778,
+    book = AddressBook(str(tmp_path / "book"), os.urandom(32))
+    book.init_empty()  # no load() call
+    idb = create_identity("init-empty-bob")
+    book.add(Contact(
+        label="bob", peer_id=idb.peer_id, host="h", port=1,
         x25519_pub=idb.x25519_pub_bytes.hex(),
         ed25519_pub=idb.ed25519_pub_bytes.hex(),
     ))
-
-    # New per-user random salt -> new key -> load() fails -> migration path.
-    new_salt = os.urandom(16)
-    book, book_key, identity = _open_book_with_migration(book_path, passphrase, new_salt)
-
     assert "bob" in [c.label for c in book.all()]
 
 

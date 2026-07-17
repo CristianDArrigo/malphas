@@ -25,9 +25,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import gui_theme as T
 from .addressbook import AddressBook, Contact
 from .invite import generate_invite, parse_invite
-from .mnemonic import salt_to_mnemonic
 from .node import MalphasNode
-from .salt_store import SALT_LEN
 
 if TYPE_CHECKING:
     from .gui import AsyncBridge
@@ -588,13 +586,13 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         node: MalphasNode | None = None,
         book: AddressBook | None = None,
         bridge: AsyncBridge | None = None,
-        salt_path: Path | None = None,
+        recovery_mnemonic: str | None = None,
     ) -> None:
         super().__init__()
         self.node = node
         self.book = book
         self.bridge = bridge
-        self.salt_path = salt_path
+        self.recovery_mnemonic = recovery_mnemonic
 
         self.active: str | None = None
         self.conversations: dict[str, list[tuple]] = {}
@@ -1667,27 +1665,12 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
         fut.add_done_callback(_done)
 
     def _action_backup(self) -> None:
-        if self.salt_path is None:
+        if not self.recovery_mnemonic:
             QtWidgets.QMessageBox.warning(
                 self, "Backup unavailable",
-                "Salt path is not known.")
+                "Recovery mnemonic is not available.")
             return
-        try:
-            data = self.salt_path.read_bytes()
-        except OSError as e:
-            QtWidgets.QMessageBox.critical(
-                self, "Backup failed", f"Cannot read salt: {e}")
-            return
-        if len(data) != SALT_LEN:
-            QtWidgets.QMessageBox.critical(
-                self, "Backup failed",
-                f"Salt size mismatch: {len(data)} != {SALT_LEN}")
-            return
-        # salt_to_mnemonic returns a single space-separated string,
-        # not a list. Splitting was missing here, which is what
-        # produced the "100+ one-character cells" the user reported.
-        words = salt_to_mnemonic(data).split()
-        self._show_mnemonic_dialog(words)
+        self._show_mnemonic_dialog(self.recovery_mnemonic.split())
 
     def _show_mnemonic_dialog(self, words: list[str]) -> None:
         dlg = QtWidgets.QDialog(self)
@@ -2031,11 +2014,11 @@ def launch_qt_gui(
     node: MalphasNode | None = None,
     book: AddressBook | None = None,
     bridge: AsyncBridge | None = None,
-    salt_path: Path | None = None,
+    recovery_mnemonic: str | None = None,
 ) -> int:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     win = MalphasQtWindow(node=node, book=book, bridge=bridge,
-                            salt_path=salt_path)
+                            recovery_mnemonic=recovery_mnemonic)
     win.show()
     if node is None:
         # Standalone preview content

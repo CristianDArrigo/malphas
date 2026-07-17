@@ -58,20 +58,6 @@ class Contact:
         )
 
 
-def derive_book_key(passphrase_seed: bytes) -> bytes:
-    """
-    Derive a 32-byte symmetric key for the address book.
-    Uses a different HKDF info string than the identity derivation,
-    so this key is cryptographically independent from the keypairs.
-    """
-    return hkdf_derive(
-        passphrase_seed,
-        salt=b"malphas-addressbook-v1",
-        info=b"addressbook-encryption-key",
-        length=32,
-    )
-
-
 def _pad(data: bytes, block_size: int) -> bytes:
     """Pad to nearest block_size multiple using 4-byte length prefix."""
     import struct

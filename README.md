@@ -186,7 +186,7 @@ malphas is designed to protect against the following adversaries:
 
 **Not protected against:**
 
-- Loss of `~/.malphas/salt` AND of the BIP39 backup — since v0.7.1 the user is shown a 12-word BIP39 mnemonic on first run and on demand via `/backup`. The mnemonic encodes the salt and is the only way to reconstruct it on another machine. Lose the file *and* the words and the same passphrase produces a fresh identity that no existing peer recognizes
+- Loss of `~/.malphas/identity` AND of the BIP39 backup; the user is shown a 24-word BIP39 mnemonic on first run and on demand via `/backup`. The mnemonic encodes the identity **root** and is the only way to reconstruct it on another machine (with `--from-mnemonic`, then any passphrase). Lose the file *and* the words and the identity is gone; no passphrase can regenerate it
 - Physical device compromise while malphas is running — messages in RAM are accessible via memory dump (the `mlock`'d `SecureBytes` covers the Argon2 seed only, and only against swap; an attacker with `/proc/$pid/mem` reads everything)
 - Compromised operating system (keyloggers, malware) — any software with kernel access can intercept the passphrase at entry time
 - Social engineering of the peer — malphas secures the channel, not the human at the other end
@@ -213,7 +213,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 
 - All session keys are ephemeral — derived fresh from X25519 ECDH for each connection
 - Nonces are 12-byte random values generated per encryption operation — no nonce reuse possible
-- Ed25519 is the same key used for Tor v3 hidden service identity, making the `.onion` address stable and derived from the passphrase
+- The Tor v3 hidden service uses a **dedicated** Ed25519 key (HKDF-derived from the identity root), separate from the messaging Ed25519 key, so a Tor/ControlPort compromise cannot forge messaging-identity signatures. The `.onion` is stable per identity
 - The HMAC key for deniable message authentication is derived from the session key via HKDF with a dedicated context string (`malphas-hmac-v1`), making it cryptographically independent from the encryption key
 - The address book key is derived from the Argon2id seed via HKDF with a context string different from the identity derivation — both derived from the same seed but cryptographically independent
 
@@ -294,11 +294,12 @@ pip install -e ".[gui-qt]"        # drop [gui-qt] for CLI-only
 malphas --mode gui-qt --tor       # or --mode cli
 ```
 
-On first launch malphas prompts for a **passphrase** in the terminal (yes,
-even for the GUI — launch it from a terminal), derives your identity from
-it, and prints a **12-word recovery phrase once**. Write the words down:
-together with the passphrase they are the only way to recover the identity
-on another machine. See [Onboarding](#quickstart) below.
+On first launch malphas generates a **random identity**, prompts for a
+**passphrase** in the terminal (yes, even for the GUI, launch it from a
+terminal) to encrypt that identity at rest, and prints a **24-word recovery
+phrase once**. Write the words down: they alone (via `--from-mnemonic`) recover
+the identity on another machine. The passphrase can be changed later with
+`/passwd`. See [Onboarding](#quickstart) below.
 
 To remove all malphas traces from the system (Tor config, hidden service keys, address book, pins):
 
@@ -393,13 +394,12 @@ malphas --port 7778
 At startup malphas shows the ASCII splash, then asks for a passphrase:
 
 ```
-  your identity is derived deterministically from this passphrase.
-  it is never stored. the same passphrase always produces the same identity.
+  this passphrase encrypts your identity at rest (it does NOT derive
+  it; the identity is a random key you can back up as 24 words).
+  it is never stored. you can change it later with /passwd.
 
-  weak passphrases (e.g. 'admin', 'password') make your peer_id
-  precalculable by anyone who knows the algorithm. use at least
-  4 random words or a long unpredictable phrase.
-  example: corvo-vetro-martello-1987-luna
+  use a strong passphrase: at least 4 random words or a long
+  unpredictable phrase. example: corvo-vetro-martello-1987-luna
 
   passphrase:
 ```
@@ -637,8 +637,8 @@ onion = base32( ed25519_pub(32) || SHA3-256(".onion checksum" || pub || version)
 ```
 
 This means:
-- The `.onion` address is deterministic — same passphrase always produces the same address
-- The `.onion` address is stable across restarts — it is mathematically derived from the key
+- The `.onion` address is deterministic per identity: the same identity root always produces the same address
+- The `.onion` address is stable across restarts: it is mathematically derived from the (dedicated) Tor key
 - No registration required — the address exists as soon as the key exists
 - The `.onion` address serves as the node's permanent identifier
 
@@ -652,7 +652,7 @@ This means:
 
 ### Hidden service implementation
 
-malphas registers an **ephemeral v3 hidden service over the Tor ControlPort** (`ADD_ONION`), keyed with the node's own Ed25519 identity so the `.onion` is the same deterministic address every launch. There are no key files on disk, no `torrc` edits, no `tor` restart, and **no sudo**. (Versions up to `1.0.0` used a file-based approach — writing v3 key files into `/var/lib/tor/malphas_hs` and restarting tor — which needed root; `1.0.1` replaced it.)
+malphas registers an **ephemeral v3 hidden service over the Tor ControlPort** (`ADD_ONION`), keyed with a **dedicated** Ed25519 key (HKDF-derived from the identity root, separate from the messaging key) so the `.onion` is the same deterministic address every launch while the messaging signing key never leaves the process. There are no key files on disk, no `torrc` edits, no `tor` restart, and **no sudo**. (Versions up to `1.0.0` used a file-based approach — writing v3 key files into `/var/lib/tor/malphas_hs` and restarting tor — which needed root; `1.0.1` replaced it.)
 
 The service is **connection-scoped**: bound to the control connection (not detached), so Tor drops it (`DEL_ONION`) the moment the node stops or the process dies — no stale registration, no cleanup. If the onion is already being served (a host still carrying the legacy file-based HS in `torrc`, or a second instance), `ADD_ONION` reports an address collision; malphas treats that as success, since the node is in fact reachable.
 
@@ -682,27 +682,26 @@ Key findings from testing:
 
 ## Identity System
 
-Identity in malphas is entirely derived from a passphrase. Nothing is stored on disk except the encrypted address book and key pin store.
+Identity in malphas is a **random 32-byte root**, not something derived from the passphrase. The root is generated once at first run and stored on disk encrypted under a passphrase-derived key. All long-term keys are HKDF-derived from the root.
 
 ```
-passphrase
-    │
-    ▼
-Argon2id(time=3, memory=64MB, parallelism=4)
-    │
-    ▼
-64-byte seed
-    ├─── seed[:32] ───────────────────────────► Ed25519 private key → peer_id = BLAKE2s(ed25519_pub, 20)
-    ├─── seed[32:] ───────────────────────────► X25519 private key
-    │
-    └─── HKDF(info="addressbook-encryption-key") ──► 32-byte ChaCha20 key (address book + pin store)
+random 32-byte root  ── stored wrapped under a passphrase-KEK at ~/.malphas/identity
+    │                    (backed up as a 24-word BIP39 mnemonic)
+    ├─ HKDF(info="ed25519-signing-key") ─► Ed25519 private key → peer_id = BLAKE2s(ed25519_pub, 20)
+    ├─ HKDF(info="x25519-dh-key") ───────► X25519 private key
+    ├─ HKDF(info="tor-onion-key") ───────► dedicated Tor onion key (separate from messaging)
+    └─ HKDF(info="addressbook-encryption-key") ─► 32-byte ChaCha20 key (address book + pin store)
+
+passphrase ─► Argon2id(t=3, m=64MB, p=4) ─► KEK ─► ChaCha20-Poly1305 wraps/unwraps the root
 ```
 
-**peer_id** is `BLAKE2s(ed25519_pub, digest_size=20)`, expressed as a 40-character lowercase hex string. It is the primary identifier shared with other peers. (Pre-0.5.0 builds used SHA1 — same length, different value.)
+**Why a random root (v1.1).** When the identity was derived directly from the passphrase, `peer_id` was a function of the passphrase, so anyone holding the (local) salt could brute-force the passphrase offline by re-deriving `peer_id`, and changing the passphrase changed your whole identity. With a random root: `peer_id`/keys are independent of the passphrase (no offline oracle), and the passphrase can be **rotated** (`/passwd`) without changing identity.
 
-**Passphrase security.** Argon2id requires 64MB of RAM and approximately 200ms per derivation attempt. An attacker attempting to brute-force the passphrase from the encrypted address book file faces this cost for every attempt, making dictionary attacks against common passphrases computationally expensive and attacks against strong passphrases effectively impossible.
+**peer_id** is `BLAKE2s(ed25519_pub, digest_size=20)`, a 40-character lowercase hex string, the primary identifier shared with other peers. (Pre-0.5.0 builds used SHA1: same length, different value.)
 
-**Passphrase choice.** Use at least four random unrelated words or a phrase of similar entropy. The passphrase is never transmitted, never stored, and never logged. The same passphrase always produces the same identity, the same keys, and the same `.onion` address.
+**Passphrase security.** Argon2id (64MB, ~200ms) protects the wrapped root at rest: brute-forcing the passphrase from the identity file costs an Argon2 pass per attempt, so dictionary attacks against weak passphrases are expensive and strong passphrases are effectively immune.
+
+**Passphrase choice and rotation.** Use at least four random unrelated words or a phrase of similar entropy. The passphrase is never transmitted, stored, or logged. Change it any time with `/passwd`; your identity, keys and `.onion` address are unchanged.
 
 ---
 
