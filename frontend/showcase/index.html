@@ -569,7 +569,7 @@
     <img src="assets/malphas_sigil.png" alt="Malphas sigil" class="hero-sigil">
     <h1>malphas</h1>
     <div class="hero-subtitle">privacy-first p2p messenger</div>
-    <div class="hero-version">1.0.1 &nbsp;·&nbsp; stable &nbsp;·&nbsp; wire format frozen</div>
+    <div class="hero-version">1.1.0 &nbsp;·&nbsp; stable &nbsp;·&nbsp; wire format frozen (v2)</div>
     <div class="hero-tagline">
       No servers. No accounts. No logs.<br>
       End-to-end encrypted. Onion routed. Tor integrated.
@@ -601,7 +601,7 @@
       <div class="feature reveal">
         <span class="feature-icon">.onion</span>
         <h3>Tor hidden services</h3>
-        <p>Your node registers a Tor v3 hidden service derived from your passphrase, over the Tor ControlPort (<code>ADD_ONION</code>) — no sudo, no files on disk, no torrc edits. No port forwarding, no public IP. Your .onion address is permanent and stable across restarts.</p>
+        <p>Your node registers a Tor v3 hidden service over the Tor ControlPort (<code>ADD_ONION</code>), keyed with a dedicated Ed25519 key separate from your messaging identity. No sudo, no files on disk, no torrc edits. No port forwarding, no public IP. Your .onion address is permanent and stable across restarts.</p>
       </div>
       <div class="feature reveal">
         <span class="feature-icon">#!</span>
@@ -666,8 +666,8 @@
       <div class="step reveal">
         <div class="step-number">1</div>
         <div class="step-content">
-          <h3>Launch and derive identity</h3>
-          <p>Enter a passphrase. Argon2id (64MB RAM, ~200ms) derives a 64-byte seed. From that seed: Ed25519 and X25519 keypairs, a .onion address, and an encrypted storage key. Same passphrase always produces the same identity. Nothing is stored.</p>
+          <h3>Generate your identity</h3>
+          <p>A random 32-byte identity root is generated and HKDF-expanded into your Ed25519, X25519, Tor and storage keys. The root is stored encrypted under a passphrase-derived key (Argon2id, 64MB, ~200ms) and backed up as a 24-word phrase. Because the identity is random, your keys never depend on the passphrase, so you can change it anytime with <code>/passwd</code>, and no one can brute-force it from your public peer_id.</p>
         </div>
       </div>
 
@@ -771,12 +771,12 @@
         <tr>
           <td>Password hashing</td>
           <td>Argon2id</td>
-          <td>Passphrase to seed (64MB, ~200ms per attempt)</td>
+          <td>Passphrase to a KEK wrapping the random identity root (64MB, ~200ms)</td>
         </tr>
         <tr>
           <td>Key derivation</td>
           <td>HKDF-SHA256</td>
-          <td>Seed to keys, session to HMAC key</td>
+          <td>Identity root to signing/DH/Tor/storage keys; session to HMAC key</td>
         </tr>
         <tr>
           <td>Key exchange</td>
@@ -791,12 +791,17 @@
         <tr>
           <td>Signing</td>
           <td>Ed25519</td>
-          <td>Handshake auth, receipts, invites, Tor identity</td>
+          <td>Handshake auth, receipts, invites, signed prekeys (dedicated Tor key is separate)</td>
         </tr>
         <tr>
           <td>Message auth</td>
           <td>HMAC-SHA256</td>
           <td>Deniable message authentication</td>
+        </tr>
+        <tr>
+          <td>Async sessions</td>
+          <td>X3DH + one-time prekeys</td>
+          <td>Forward-secret, deniable delivery to peers you're not connected to</td>
         </tr>
         <tr>
           <td>Ratchet</td>
@@ -811,17 +816,15 @@
       </tbody>
     </table>
 
-    <div class="arch-diagram reveal"><span class="hl">passphrase</span>
-    |
-    v
-<span class="hl">Argon2id</span>(time=3, memory=64MB, parallelism=4)
-    |
-    v
-64-byte seed
-    |--- seed[:32] ----> <span class="hl">Ed25519</span> private key ---> peer_id = SHA1(ed25519_pub)
-    |--- seed[32:] ----> <span class="hl">X25519</span> private key      ed25519_pub ---> .onion address
-    |
-    '--- HKDF(info="addressbook-encryption-key") ---> <span class="hl">ChaCha20</span> key (book + pins)</div>
+    <div class="arch-diagram reveal"><span class="hl">random 32-byte identity root</span>
+    |--- <span class="hl">HKDF</span>(info="ed25519-signing-key") --> <span class="hl">Ed25519</span> key --> peer_id = BLAKE2s(ed25519_pub, 20)
+    |--- <span class="hl">HKDF</span>(info="x25519-dh-key") -------> <span class="hl">X25519</span> key
+    |--- <span class="hl">HKDF</span>(info="tor-onion-key") ------> dedicated Tor key --> .onion address
+    '--- <span class="hl">HKDF</span>(info="addressbook-encryption-key") --> <span class="hl">ChaCha20</span> key (book + pins)
+
+<span class="hl">passphrase</span> --> <span class="hl">Argon2id</span>(time=3, memory=64MB, parallelism=4) --> KEK
+    '--> <span class="hl">ChaCha20-Poly1305</span> wraps the root at rest  (change it with /passwd)
+         backup: 24-word BIP39 phrase of the root</div>
   </div>
 </section>
 
