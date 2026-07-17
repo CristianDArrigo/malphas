@@ -1074,9 +1074,9 @@ pytest tests/test_tor_e2e.py -v
 | `test_sealed_sender.py` | Sealed envelope round-trip, format invariants, ephemeral key freshness | 9 |
 | `test_mnemonic.py` | BIP39 12-word round-trip + vectors (legacy salt helpers) | 9 |
 | `test_identity_store.py` | Random-root wrap/unwrap, wrong-passphrase, passphrase rotation, 24-word mnemonic | 5 |
-| `test_x3dh.py` | X3DH agree, SPK sig, fresh ephemeral, ratchet seeding, E2E forward-secret delivery | 6 |
+| `test_x3dh.py` | X3DH + one-time prekeys: agreement, SPK sig, ratchet seeding, E2E forward-secret delivery | 8 |
 | `test_protocol_kat.py` | Known-answer tests pinning KDF constants to PROTOCOL.md (book/session/hmac/sealed/ratchet/onion) | 6 |
-| `test_audit_followup.py` | Regression tests for the security-audit fixes | 16 |
+| `test_audit_followup.py` | Regression tests for the security-audit fixes | 17 |
 | `test_ratchet.py` | Symmetric chain step, DH ratchet, MAX_SKIP, header serialize | 13 |
 | `test_groups.py` | N-way fanout, member add/remove notifications, outsider rejection | 15 |
 | `test_constant_time.py` | Source-grep guards on `compare_digest`, behavioural smokes (TM-05) | 9 |
