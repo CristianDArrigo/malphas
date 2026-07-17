@@ -270,16 +270,7 @@ Every primitive is from the `cryptography` library (backed by OpenSSL/libssl). N
 
 ## Installation
 
-**Requirements:** Python 3.10+ (or Docker)
-
-### Docker (WIP)
-
-```bash
-docker build -t malphas https://github.com/CristianDArrigo/malphas.git
-docker run -it -v malphas-data:/root/.malphas malphas
-```
-
-Tor hidden services do not work reliably inside Docker containers due to Tor self-rendezvous limitations. Use Docker for direct TCP messaging only. For Tor support, use the native setup below.
+**Requirements:** Python 3.10+
 
 ### Automated setup (Linux)
 
@@ -1197,7 +1188,6 @@ malphas/
 │   └── __main__.py      CLI entry point, argument parsing
 ├── frontend/showcase/
 │   └── index.html       project landing page
-├── Dockerfile           containerized malphas + Tor
 ├── scripts/
 │   ├── setup.sh         automated Tor setup (Linux)
 │   ├── cleanup.sh       remove all malphas traces from the system
