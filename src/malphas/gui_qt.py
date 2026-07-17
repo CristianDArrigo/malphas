@@ -1905,7 +1905,7 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            self.node.leave_group(group.group_id)
+            self.bridge.submit_coro(self.node.leave_group_async(group.group_id))
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Leave failed", str(e))
             return

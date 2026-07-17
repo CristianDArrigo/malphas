@@ -1481,11 +1481,11 @@ class MalphasGUI:
         if group is None:
             return
         ok = messagebox.askyesno("Leave group",
-            f"Leave '{group.name}' locally?\n\n"
-            "Other members will not be notified.", parent=self.root)
+            f"Leave '{group.name}'?\n\n"
+            "Other members will be notified.", parent=self.root)
         if not ok:
             return
-        self.node.leave_group(group.group_id)
+        self.bridge.submit_coro(self.node.leave_group_async(group.group_id))
         if self.active == group.group_id:
             self.active = None
             self._render_active()

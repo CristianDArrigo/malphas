@@ -899,7 +899,7 @@ class MalphasCLI:
             if group is None:
                 self._err(f"unknown group: {args[1]}")
                 return
-            self.node.leave_group(group.group_id)
+            await self.node.leave_group_async(group.group_id)
             self._ok(f"left {self._rsafe(group.name)}")
             if self.active_peer == group.group_id:
                 self.active_peer = None
