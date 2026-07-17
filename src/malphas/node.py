@@ -11,6 +11,7 @@ No logging to disk. No persistence.
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import secrets
@@ -61,11 +62,13 @@ from .transport import BaseTransport, DirectTransport
 # explicitly opt in, instead of vanishing.
 logger = logging.getLogger(__name__)
 
-# Wire-protocol version. Bumped when the byte-level layout of
-# anything in PROTOCOL.md sections 4-9 changes. Frozen at 1 from
-# release `1.0.0-rc1` onward; further changes go through the
-# additive-only rules in PROTOCOL.md §10.
-WIRE_VERSION = 1
+# Wire-protocol version. Bumped when the byte-level layout of anything in
+# PROTOCOL.md sections 4-9 changes. Bumped 1 -> 2 at `1.0.0-rc7` for the
+# security-audit fixes already implemented below (eph_sig covers the static
+# X25519 key, both keys pinned, ratchet header bound as AAD). This constant
+# is the single source of truth and must equal `malphas.WIRE_VERSION`;
+# further changes go through the additive-only rules in PROTOCOL.md §10.
+WIRE_VERSION = 2
 
 # Wire message types
 MSG_HANDSHAKE     = 0x01
@@ -82,6 +85,11 @@ HEADER_LEN = 5   # type(1) + length(4)
 # killing the process pre-authentication. PROTOCOL.md §4 already specifies
 # this 16 MiB limit — it just wasn't enforced.
 MAX_FRAME_BYTES = 16 * 1024 * 1024
+# Tighter cap for pre-authentication handshake frames. A legitimate hello is
+# ~500 bytes; there is no reason to let an unauthenticated peer announce a
+# 16 MiB body before it has proven anything. Bounding the handshake read
+# shrinks the pre-auth buffering an attacker can force per connection.
+HANDSHAKE_MAX_FRAME_BYTES = 8 * 1024
 # Cap on simultaneous inbound connections (incl. in-flight handshakes). An
 # unbounded accept loop lets an attacker exhaust file descriptors / tasks and
 # inflate the O(connections) ratchet trial-decrypt. Outbound (user-initiated)
@@ -254,12 +262,12 @@ class PeerConnection:
         ct = encrypt(self.session_key, payload)
         await self.send(msg_type, ct)
 
-    async def recv_raw(self) -> tuple:
+    async def recv_raw(self, max_bytes: int = MAX_FRAME_BYTES) -> tuple:
         header = await self.reader.readexactly(HEADER_LEN)
         msg_type, length = _unpack_header(header)
-        if length is None or length > MAX_FRAME_BYTES:
+        if length is None or length > max_bytes:
             raise ConnectionError(
-                f"frame length {length} exceeds {MAX_FRAME_BYTES} cap"
+                f"frame length {length} exceeds {max_bytes} cap"
             )
         payload = await self.reader.readexactly(length)
         return msg_type, payload
@@ -499,7 +507,10 @@ class MalphasNode:
                 self.transport.connect(host, port), timeout=30.0
             )
             conn = PeerConnection(reader, writer)
-            ok = await self._perform_handshake(conn, outbound=True)
+            ok = await self._perform_handshake(
+                conn, outbound=True,
+                expected_peer=(peer_id, ed25519_pub, x25519_pub),
+            )
             if ok and conn.peer_info:
                 self._connections[conn.peer_info.peer_id] = conn
                 self.discovery.add_peer(peer_id, host, port, x25519_pub, ed25519_pub)
@@ -620,10 +631,17 @@ class MalphasNode:
             queue.append((content, msg_id))
 
     async def _flush_queue(self, peer_id: str) -> None:
-        """Send all queued messages for a peer after reconnection."""
+        """Send all queued messages for a peer after reconnection.
+
+        A send that fails mid-flush (circuit/connection dropped again) is
+        re-queued rather than silently dropped, so the message survives to the
+        next reconnect instead of being lost.
+        """
         queue = self._message_queue.pop(peer_id, [])
         for content, msg_id in queue:
-            await self._try_send(peer_id, content, msg_id)
+            ok = await self._try_send(peer_id, content, msg_id)
+            if not ok:
+                self._enqueue(peer_id, content, msg_id)
             await asyncio.sleep(0.05)  # avoid flooding
 
     async def _send_cover_packet(self, peer_id: str) -> None:
@@ -716,6 +734,21 @@ class MalphasNode:
         finally:
             self._inflight_inbound -= 1
 
+    def _forget_connection_if_current(self, conn: PeerConnection) -> str | None:
+        """Drop `conn` from the connection table, but only if it is still the
+        current connection for its peer_id.
+
+        Guards the duplicate-connection race: if a newer connection has already
+        replaced this one under the same peer_id (reconnect, or a second dial),
+        an unconditional `pop(peer_id)` from this connection's ended read loop
+        would evict the *newer, live* connection. Returns the peer_id (for
+        reconnect scheduling) regardless of whether anything was removed.
+        """
+        peer_id = conn.peer_info.peer_id if conn.peer_info else None
+        if peer_id and self._connections.get(peer_id) is conn:
+            self._connections.pop(peer_id, None)
+        return peer_id
+
     async def _read_loop(self, conn: PeerConnection) -> None:
         try:
             while self._running:
@@ -728,9 +761,7 @@ class MalphasNode:
         except (asyncio.IncompleteReadError, ConnectionResetError, OSError, Exception):
             pass
         finally:
-            peer_id = conn.peer_info.peer_id if conn.peer_info else None
-            if peer_id:
-                self._connections.pop(peer_id, None)
+            peer_id = self._forget_connection_if_current(conn)
             conn.close()
 
             # Schedule reconnect if this peer is in the address book
@@ -1321,6 +1352,13 @@ class MalphasNode:
         group = self._groups.get_by_id(group_id)
         if group is None:
             return False
+        # Only the creator may mutate membership. Every peer's receive side
+        # already rejects a `group_member_change` that is not from the creator
+        # (see _handle_group_member_change), so a non-creator's local edit
+        # would be applied here but refused by everyone else, forking the
+        # group_id. Refuse it locally too.
+        if group.creator != self.identity.peer_id:
+            return False
         if peer_id in group.members:
             return True  # idempotent
         if not self.discovery.get_peer(peer_id):
@@ -1349,6 +1387,10 @@ class MalphasNode:
         deliberate: see THREAT_MODEL.md TM-01)."""
         group = self._groups.get_by_id(group_id)
         if group is None:
+            return False
+        # Only the creator may mutate membership (see add_group_member);
+        # otherwise a non-creator forks the group_id against everyone else.
+        if group.creator != self.identity.peer_id:
             return False
         if peer_id not in group.members:
             return True   # idempotent
@@ -1579,7 +1621,10 @@ class MalphasNode:
     # ── Handshake ─────────────────────────────────────────────────────────────
 
     async def _perform_handshake(
-        self, conn: PeerConnection, outbound: bool
+        self,
+        conn: PeerConnection,
+        outbound: bool,
+        expected_peer: tuple[str, bytes, bytes] | None = None,
     ) -> bool:
         try:
             eph_priv, eph_pub = generate_ephemeral_keypair()
@@ -1611,7 +1656,7 @@ class MalphasNode:
 
             expected = MSG_HANDSHAKE_ACK if outbound else MSG_HANDSHAKE
             msg_type, their_hello = await asyncio.wait_for(
-                conn.recv_raw(), timeout=10.0
+                conn.recv_raw(max_bytes=HANDSHAKE_MAX_FRAME_BYTES), timeout=10.0
             )
             if msg_type != expected:
                 return False
@@ -1653,6 +1698,22 @@ class MalphasNode:
                 peer_ed_pub.verify(their_eph_sig, their_eph + their_x25519)
             except Exception:
                 return False  # signature invalid — reject handshake
+
+            # Invite/dial authentication: when the caller told us WHICH peer we
+            # meant to reach (from an invite or an address-book entry), the
+            # endpoint must actually be that peer. Without this, the handshake
+            # only proves the endpoint's identity is internally consistent, so
+            # any peer answering the address could impersonate a "connected"
+            # state under its own key and poison our pins. Compare before the
+            # TOFU pin so a mismatched endpoint is never persisted.
+            if expected_peer is not None:
+                exp_peer_id, exp_ed25519, exp_x25519 = expected_peer
+                if (
+                    their_peer_id != exp_peer_id
+                    or not hmac.compare_digest(their_ed25519, exp_ed25519)
+                    or not hmac.compare_digest(their_x25519, exp_x25519)
+                ):
+                    return False  # endpoint is not the peer we intended to reach
 
             # Key pinning (TOFU): verify Ed25519 key matches the pinned key
             # for this peer_id. First contact pins the key; subsequent contacts
@@ -1738,9 +1799,19 @@ class MalphasNode:
     def panic(self) -> None:
         """
         Emergency in-memory wipe.
-        Clears all sensitive state as fast as possible.
-        Does NOT stop the event loop — call stop() separately.
-        Designed to be called before physical device compromise.
+
+        Clears all logical sensitive state (stores, routing table, pins,
+        ratchets, per-connection session/HMAC keys) as fast as possible and
+        closes every connection. Does NOT stop the event loop; call stop()
+        separately; the UIs terminate the process immediately afterwards,
+        which is the real protection.
+
+        NOTE: this is best-effort, not guaranteed zeroization. The long-lived
+        identity private keys, the address-book/pin-store encryption keys, and
+        any immutable `bytes`/`str` copies (ratchet keys, message plaintext)
+        remain resident until the process exits; CPython cannot overwrite
+        immutable objects in place. Rely on process termination for full
+        clearance.
         """
         # Wipe message store
         self.store.wipe()
@@ -1774,10 +1845,17 @@ class MalphasNode:
         self._reconnect_tasks.clear()
         self._reconnect_book = None
 
-        # Wipe ratchet states
+        # Drop ratchet states and per-connection symmetric keys. These are the
+        # session material we actually hold references to; null them before the
+        # connections dict is cleared so they are not left dangling on live
+        # connection objects.
         for conn in self._connections.values():
             if hasattr(conn, 'ratchet'):
                 conn.ratchet = None
+            if hasattr(conn, 'session_key'):
+                conn.session_key = None
+            if hasattr(conn, 'hmac_key'):
+                conn.hmac_key = None
 
         # Close all active connections immediately
         for conn in list(self._connections.values()):

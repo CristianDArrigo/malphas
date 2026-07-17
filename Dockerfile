@@ -1,4 +1,6 @@
-FROM python:3.12-slim
+# Pinned to the Debian bookworm slim variant (not the floating `slim` tag).
+# TODO(#20): pin to an immutable sha256 digest and run as a non-root user.
+FROM python:3.12-slim-bookworm
 
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends tor procps && \
@@ -22,7 +24,10 @@ RUN cat > /entrypoint.sh << 'EOF'
 #!/bin/bash
 service tor start
 sleep 3
-chmod o+r /run/tor/control.authcookie 2>/dev/null
+# The Tor control-auth cookie is owned by debian-tor and readable by this
+# process (which runs as root). Do NOT `chmod o+r` it; that exposed the
+# cookie to every other (potentially compromised) local user in the
+# container, letting them drive the Tor ControlPort. See issue #20.
 exec malphas "$@"
 EOF
 RUN chmod +x /entrypoint.sh

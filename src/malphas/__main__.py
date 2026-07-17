@@ -138,8 +138,12 @@ def _open_book_with_migration(
             raise
 
         # Migration succeeded under the legacy key. Re-emit the contacts
-        # under the new (per-user-salt-derived) key.
+        # under the new (per-user-salt-derived) key. The destination book's
+        # load() failed above (wrong key), so it is not marked loaded, so mark
+        # it as a fresh empty book before add()/_save() or the migration
+        # crashes with "Address book not loaded".
         print("  address book: migrating from pre-0.7.0 fixed-salt format…")
+        book.init_empty()
         for c in legacy_book.all():
             book.add(c)
         legacy_book.wipe_memory()

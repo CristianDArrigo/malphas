@@ -152,6 +152,12 @@ class ReceiptTracker:
         if valid:
             pr.resolved = True
             pr.received = True
+            # Drop the resolved receipt immediately. Otherwise it (and its
+            # 40-char plaintext content_preview) lingers in _pending for the
+            # whole session; the timeout loop only ever reaps *unresolved*
+            # entries. The `pr` object stays alive for the callback below via
+            # this local reference.
+            self._pending.pop(msg_id, None)
             if self._on_receipt:
                 asyncio.create_task(
                     self._maybe_call(self._on_receipt, msg_id, pr.dest_peer_id, True)
