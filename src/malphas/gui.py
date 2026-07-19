@@ -1223,12 +1223,15 @@ class MalphasGUI:
     # ── Menu actions ────────────────────────────────────────────────────────
 
     def _action_export(self) -> None:
-        host = self.node.host
+        host = self.node.public_address
         port = self.node.port
         onion = self.node.transport.public_address \
             if self.node.transport.public_address \
             and self.node.transport.public_address.endswith(".onion") else None
-        url = generate_invite(self.node.identity, host, port, onion=onion)
+        url = generate_invite(
+            self.node.identity, host, port, onion=onion,
+            spk=self.node.signed_prekey_pub,
+            opks=self.node.one_time_prekeys_pub)
         self.root.clipboard_clear()
         self.root.clipboard_append(url)
         messagebox.showinfo("Invite copied",

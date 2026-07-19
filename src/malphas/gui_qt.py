@@ -1528,12 +1528,15 @@ class MalphasQtWindow(QtWidgets.QMainWindow):
     def _action_export(self) -> None:
         if self.node is None:
             return
-        host = self.node.host
+        host = self.node.public_address
         port = self.node.port
         onion = self.node.transport.public_address or None
         if onion and not onion.endswith(".onion"):
             onion = None
-        url = generate_invite(self.node.identity, host, port, onion=onion)
+        url = generate_invite(
+            self.node.identity, host, port, onion=onion,
+            spk=self.node.signed_prekey_pub,
+            opks=self.node.one_time_prekeys_pub)
         QtWidgets.QApplication.clipboard().setText(url)
         QtWidgets.QMessageBox.information(
             self, "Invite copied",
